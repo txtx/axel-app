@@ -461,6 +461,30 @@ final class SyncService {
     }
     #endif
 
+    // MARK: - Platform-Aware Sync Dispatch
+
+    /// Unified sync dispatch: uses workspace-scoped sync on macOS, global sync on iOS/visionOS.
+    func performPlatformSync(globalContext: ModelContext?) async {
+        switch PlatformServices.syncMode {
+        case .workspaceScoped:
+            #if os(macOS)
+            print("[SyncService] Platform sync: workspace-scoped, active IDs: \(activeWorkspaceIds)")
+            if activeWorkspaceIds.isEmpty {
+                print("[SyncService] WARNING: No active workspaces registered!")
+            }
+            for workspaceId in activeWorkspaceIds {
+                await performWorkspaceSyncWithContext(workspaceId: workspaceId)
+            }
+            #endif
+        case .global:
+            if let context = globalContext {
+                await performFullSync(context: context)
+            } else {
+                print("[SyncService] No context available for global sync")
+            }
+        }
+    }
+
     // MARK: - Active Workspace Management
 
     /// Register a workspace as active (e.g., when opening a workspace window)
@@ -846,10 +870,10 @@ final class SyncService {
     // MARK: - Push Local Tasks
 
     private func pushLocalTasks(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global task push on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global task push (workspace-scoped sync mode)")
+            return
+        }
         print("[SyncService] Pushing local tasks...")
         guard let userId = AuthService.shared.currentUser?.id else {
             print("[SyncService] Cannot push tasks: not authenticated")
@@ -908,10 +932,10 @@ final class SyncService {
     // MARK: - Push Task Updates
 
     private func pushTaskUpdates(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global task updates push on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global task updates push (workspace-scoped sync mode)")
+            return
+        }
         print("[SyncService] Pushing task updates...")
 
         let descriptor = FetchDescriptor<WorkTask>()
@@ -963,10 +987,10 @@ final class SyncService {
     // MARK: - Push Local Skills
 
     private func pushLocalSkills(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global skills push on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global skills push (workspace-scoped sync mode)")
+            return
+        }
         let descriptor = FetchDescriptor<Skill>()
         let localSkills = try context.fetch(descriptor)
 
@@ -1007,10 +1031,10 @@ final class SyncService {
     // MARK: - Push Local Contexts
 
     private func pushLocalContexts(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global contexts push on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global contexts push (workspace-scoped sync mode)")
+            return
+        }
         let descriptor = FetchDescriptor<Context>()
         let localContexts = try context.fetch(descriptor)
 
@@ -1051,10 +1075,10 @@ final class SyncService {
     // MARK: - Push Local Hints
 
     private func pushLocalHints(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global hints push on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global hints push (workspace-scoped sync mode)")
+            return
+        }
         let descriptor = FetchDescriptor<Hint>()
         let localHints = try context.fetch(descriptor)
 
@@ -1096,10 +1120,10 @@ final class SyncService {
     // MARK: - Push Local Terminals
 
     private func pushLocalTerminals(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global terminals push on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global terminals push (workspace-scoped sync mode)")
+            return
+        }
         let descriptor = FetchDescriptor<Terminal>()
         let localTerminals = try context.fetch(descriptor)
 
@@ -1554,12 +1578,10 @@ final class SyncService {
     }
 
     private func syncTasks(context: ModelContext) async throws {
-        #if os(macOS)
-        // On macOS, tasks are in workspace-specific databases
-        // Use performWorkspaceSync instead
-        print("[SyncService] Skipping global task sync on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global task sync (workspace-scoped sync mode)")
+            return
+        }
 
         print("[SyncService] Fetching tasks from Supabase...")
         let remoteTasks: [SyncTask] = try await fetchFromSupabase(.tasks)
@@ -1589,10 +1611,10 @@ final class SyncService {
     // MARK: - Skills Sync
 
     private func syncSkills(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global skills sync on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global skills sync (workspace-scoped sync mode)")
+            return
+        }
         let remoteSkills: [SyncSkill] = try await fetchFromSupabase(.skills)
 
         let descriptor = FetchDescriptor<Skill>()
@@ -1646,10 +1668,10 @@ final class SyncService {
     // MARK: - Contexts Sync
 
     private func syncContexts(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global contexts sync on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global contexts sync (workspace-scoped sync mode)")
+            return
+        }
         let remoteContexts: [SyncContext] = try await fetchFromSupabase(.contexts)
 
         let descriptor = FetchDescriptor<Context>()
@@ -1703,10 +1725,10 @@ final class SyncService {
     // MARK: - Terminals Sync
 
     private func syncTerminals(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global terminals sync on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global terminals sync (workspace-scoped sync mode)")
+            return
+        }
         let remoteTerminals: [SyncTerminal] = try await fetchFromSupabase(.terminals)
 
         let descriptor = FetchDescriptor<Terminal>()
@@ -1767,10 +1789,10 @@ final class SyncService {
     // MARK: - Hints Sync
 
     private func syncHints(context: ModelContext) async throws {
-        #if os(macOS)
-        print("[SyncService] Skipping global hints sync on macOS (use workspace-scoped sync)")
-        return
-        #endif
+        guard PlatformServices.syncMode == .global else {
+            print("[SyncService] Skipping global hints sync (workspace-scoped sync mode)")
+            return
+        }
         let remoteHints: [SyncHint] = try await fetchFromSupabase(.hints)
 
         let descriptor = FetchDescriptor<Hint>()
@@ -2471,22 +2493,6 @@ final class SyncScheduler {
             return
         }
 
-        #if os(macOS)
-        // macOS: sync each active workspace using its container
-        print("[SyncScheduler] Active workspace IDs: \(syncService.activeWorkspaceIds)")
-        if syncService.activeWorkspaceIds.isEmpty {
-            print("[SyncScheduler] WARNING: No active workspaces registered!")
-        }
-        for workspaceId in syncService.activeWorkspaceIds {
-            await syncService.performWorkspaceSyncWithContext(workspaceId: workspaceId)
-        }
-        #else
-        // iOS: use the shared context
-        if let context = iosContext {
-            await syncService.performFullSync(context: context)
-        } else {
-            print("[SyncScheduler] No iOS context available for sync")
-        }
-        #endif
+        await syncService.performPlatformSync(globalContext: iosContext)
     }
 }

@@ -21,14 +21,8 @@ struct SwipeableCardView<Content: View>: View {
     /// Swipe threshold to commit (in points)
     private let swipeThreshold: CGFloat = 150
 
-    /// Screen width for off-screen animation
-    #if os(macOS)
-    private let screenWidth: CGFloat = NSScreen.main?.frame.width ?? 1000
-    #elseif os(visionOS)
+    /// Off-screen distance for swipe-away animation
     private let screenWidth: CGFloat = 1000
-    #else
-    private let screenWidth: CGFloat = UIScreen.main.bounds.width
-    #endif
 
     init(@ViewBuilder content: () -> Content, onSwiped: @escaping (SwipeDirection) -> Void) {
         self.content = content()
@@ -186,13 +180,8 @@ struct SwipeableCardViewControlled<Content: View>: View {
 
     private let maxRotation: Double = 15
     private let swipeThreshold: CGFloat = 150
-    #if os(macOS)
-    private let screenWidth: CGFloat = NSScreen.main?.frame.width ?? 1000
-    #elseif os(visionOS)
+    /// Off-screen distance for swipe-away animation
     private let screenWidth: CGFloat = 1000
-    #else
-    private let screenWidth: CGFloat = UIScreen.main.bounds.width
-    #endif
 
     init(
         controller: Binding<SwipeController>,
@@ -305,11 +294,7 @@ struct SwipeableCardViewControlled<Content: View>: View {
                 .foregroundStyle(.secondary)
         }
         .frame(width: 300, height: 400)
-        #if os(macOS)
-        .background(Color(NSColor.windowBackgroundColor))
-        #else
-        .background(Color(UIColor.systemBackground))
-        #endif
+        .background(.background)
         .shadow(radius: 8)
     } onSwiped: { direction in
         print("Swiped \(direction)")

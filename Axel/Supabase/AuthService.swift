@@ -2,7 +2,6 @@ import Foundation
 import SwiftUI
 import SwiftData
 import Supabase
-import AuthenticationServices
 
 // MARK: - Auth Service
 
@@ -68,13 +67,8 @@ final class AuthService {
             }.value
 
             print("[AuthService] Opening URL: \(url)")
-            #if os(macOS)
-            let opened = NSWorkspace.shared.open(url)
+            let opened = await PlatformServices.urlOpener.open(url)
             print("[AuthService] Browser opened: \(opened)")
-            #else
-            let opened = await UIApplication.shared.open(url)
-            print("[AuthService] Safari opened: \(opened)")
-            #endif
         } catch {
             authError = error
             print("[AuthService] GitHub sign in error: \(error)")

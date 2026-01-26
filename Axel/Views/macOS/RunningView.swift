@@ -182,6 +182,8 @@ final class TerminalSession: Identifiable {
         window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
         window.isOpaque = false
         window.backgroundColor = .clear
+        window.alphaValue = 0  // Completely invisible - prevents window from showing during view transitions
+        window.ignoresMouseEvents = true  // Cannot interact with the invisible window
 
         // Add the terminal view to the offscreen window
         let terminalView = surface.terminalView
