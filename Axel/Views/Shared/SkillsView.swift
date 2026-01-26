@@ -588,9 +588,7 @@ struct LocalAgentDetailView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(16)
                     }
-                    #if os(macOS)
-                    .background(Color(nsColor: .textBackgroundColor))
-                    #endif
+                    .background(.background)
                     .frame(width: showPreview ? geometry.size.width / 2 : geometry.size.width)
 
                     if showPreview {
@@ -697,7 +695,7 @@ struct MarkdownEditorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(16)
         }
-        .background(Color(nsColor: .textBackgroundColor))
+        .background(.background)
         #else
         TextEditor(text: $text)
             .font(.system(.body, design: .monospaced))

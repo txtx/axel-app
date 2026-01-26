@@ -153,11 +153,7 @@ struct PermissionCardContent: View {
             // Action buttons
             actionButtons
         }
-        #if os(macOS)
-        .background(Color(NSColor.windowBackgroundColor))
-        #else
-        .background(Color(UIColor.systemBackground))
-        #endif
+        .background(.background)
     }
 
     // MARK: - Header Section
@@ -367,11 +363,7 @@ struct PermissionCardContentCompact: View {
 
             Spacer()
         }
-        #if os(macOS)
-        .background(Color(NSColor.windowBackgroundColor))
-        #else
-        .background(Color(UIColor.systemBackground))
-        #endif
+        .background(.background)
     }
 }
 
