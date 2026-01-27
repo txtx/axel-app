@@ -42,7 +42,8 @@ struct AxelApp: App {
                 TaskDispatch.self,
                 Hint.self,
                 Skill.self,
-                Context.self
+                Context.self,
+                TaskSkill.self
             ])
 
             let baseDir = FileManager.default.homeDirectoryForCurrentUser
@@ -78,7 +79,8 @@ struct AxelApp: App {
                 TaskDispatch.self,
                 Hint.self,
                 Skill.self,
-                Context.self
+                Context.self,
+                TaskSkill.self
             ])
 
             let configuration = ModelConfiguration(

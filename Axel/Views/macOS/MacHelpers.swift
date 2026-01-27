@@ -1037,6 +1037,7 @@ struct TaskDetailView: View {
     @State private var isPreviewingMarkdown: Bool = false
     @State private var syncService = SyncService.shared
     @State private var showDeleteConfirmation: Bool = false
+    @State private var showSkillPicker: Bool = false
     @FocusState private var isTitleFocused: Bool
 
     private var statusColor: Color {
@@ -1242,6 +1243,59 @@ struct TaskDetailView: View {
 
                     Divider()
 
+                    // Skills
+                    VStack(alignment: .leading, spacing: 12) {
+                        HStack {
+                            Text("Skills")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+
+                            Spacer()
+
+                            Button {
+                                showSkillPicker = true
+                            } label: {
+                                Image(systemName: "plus")
+                                    .font(.callout)
+                            }
+                            .buttonStyle(.bordered)
+                        }
+
+                        if task.skills.isEmpty {
+                            Text("No skills attached")
+                                .font(.callout)
+                                .foregroundStyle(.tertiary)
+                                .italic()
+                        } else {
+                            ScrollView(.horizontal, showsIndicators: false) {
+                                HStack(spacing: 8) {
+                                    ForEach(task.skills, id: \.id) { skill in
+                                        HStack(spacing: 6) {
+                                            Image(systemName: "sparkles")
+                                                .font(.caption)
+                                            Text(skill.name)
+                                                .font(.callout)
+                                            Button {
+                                                removeSkill(skill)
+                                            } label: {
+                                                Image(systemName: "xmark")
+                                                    .font(.caption2)
+                                            }
+                                            .buttonStyle(.plain)
+                                            .foregroundStyle(.secondary)
+                                        }
+                                        .padding(.horizontal, 10)
+                                        .padding(.vertical, 6)
+                                        .background(Color.purple.opacity(0.1))
+                                        .clipShape(Capsule())
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    Divider()
+
                     // Delete
                     HStack {
                         Spacer()
@@ -1273,6 +1327,9 @@ struct TaskDetailView: View {
             }
         } message: {
             Text("Are you sure you want to delete \"\(task.title)\"? This action cannot be undone.")
+        }
+        .sheet(isPresented: $showSkillPicker) {
+            TaskSkillPickerView(task: task)
         }
         .onAppear {
             editedTitle = task.title
@@ -1310,6 +1367,158 @@ struct TaskDetailView: View {
         case .completed: .secondary
         case .inReview: .yellow
         case .aborted: .red
+        }
+    }
+
+    private func removeSkill(_ skill: Skill) {
+        if let taskSkill = task.taskSkills.first(where: { $0.skill?.id == skill.id }) {
+            modelContext.delete(taskSkill)
+        }
+    }
+}
+
+// MARK: - Task Skill Picker View
+
+struct TaskSkillPickerView: View {
+    let task: WorkTask
+    @Environment(\.dismiss) private var dismiss
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \Skill.name) private var allSkills: [Skill]
+    @ObservedObject private var skillManager = SkillManager.shared
+    @State private var selectedSkillIds: Set<UUID> = []
+
+    private var availableSkills: [Skill] {
+        let attachedIds = Set(task.skills.map { $0.id })
+        return allSkills.filter { !attachedIds.contains($0.id) }
+    }
+
+    private var hasAnySkills: Bool {
+        !allSkills.isEmpty || !skillManager.allLocalSkills.isEmpty
+    }
+
+    var body: some View {
+        NavigationStack {
+            VStack(spacing: 0) {
+                if !hasAnySkills {
+                    emptyState
+                } else if availableSkills.isEmpty && skillManager.allLocalSkills.isEmpty {
+                    VStack(spacing: 12) {
+                        Spacer()
+                        Image(systemName: "checkmark.circle")
+                            .font(.system(size: 40))
+                            .foregroundStyle(.green)
+                        Text("All skills attached")
+                            .font(.headline)
+                            .foregroundStyle(.secondary)
+                        Spacer()
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    List(selection: $selectedSkillIds) {
+                        // Local skills section (read-only, cannot be attached)
+                        if !skillManager.allLocalSkills.isEmpty {
+                            Section {
+                                ForEach(skillManager.allLocalSkills) { skill in
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "doc.text")
+                                            .font(.title3)
+                                            .foregroundStyle(.blue)
+
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(skill.name)
+                                                .font(.body)
+
+                                            Text("Local skill - read only")
+                                                .font(.caption)
+                                                .foregroundStyle(.tertiary)
+                                        }
+
+                                        Spacer()
+
+                                        Image(systemName: "lock.fill")
+                                            .font(.caption)
+                                            .foregroundStyle(.tertiary)
+                                    }
+                                }
+                            } header: {
+                                Label("Local Skills", systemImage: "folder")
+                            }
+                        }
+
+                        // Custom skills section (can be attached)
+                        if !availableSkills.isEmpty {
+                            Section {
+                                ForEach(availableSkills) { skill in
+                                    HStack(spacing: 12) {
+                                        Image(systemName: "sparkles")
+                                            .font(.title3)
+                                            .foregroundStyle(.purple)
+
+                                        VStack(alignment: .leading, spacing: 2) {
+                                            Text(skill.name)
+                                                .font(.body)
+
+                                            if !skill.content.isEmpty {
+                                                Text(skill.content.prefix(60) + (skill.content.count > 60 ? "..." : ""))
+                                                    .font(.caption)
+                                                    .foregroundStyle(.tertiary)
+                                                    .lineLimit(1)
+                                            }
+                                        }
+                                    }
+                                    .tag(skill.id)
+                                }
+                            } header: {
+                                Label("Custom Skills", systemImage: "sparkles")
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Add Skills")
+            #if os(macOS)
+            .frame(minWidth: 400, minHeight: 300)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                }
+                ToolbarItem(placement: .confirmationAction) {
+                    Button("Add") {
+                        addSelectedSkills()
+                        dismiss()
+                    }
+                    .disabled(selectedSkillIds.isEmpty)
+                }
+            }
+        }
+    }
+
+    private var emptyState: some View {
+        VStack(spacing: 12) {
+            Spacer()
+            Image(systemName: "sparkles")
+                .font(.system(size: 40))
+                .foregroundStyle(.quaternary)
+            Text("No Skills Available")
+                .font(.headline)
+                .foregroundStyle(.secondary)
+            Text("Create skills in the Agents section first")
+                .font(.callout)
+                .foregroundStyle(.tertiary)
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func addSelectedSkills() {
+        for skillId in selectedSkillIds {
+            if let skill = allSkills.first(where: { $0.id == skillId }) {
+                let taskSkill = TaskSkill(task: task, skill: skill)
+                modelContext.insert(taskSkill)
+            }
         }
     }
 }

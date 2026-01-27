@@ -37,6 +37,8 @@ extension Notification.Name {
     static let showAgents = Notification.Name("showAgents")
     static let showInbox = Notification.Name("showInbox")
     static let showSkills = Notification.Name("showSkills")
+    static let runTaskTriggered = Notification.Name("runTaskTriggered")
+    static let deleteTasksTriggered = Notification.Name("deleteTasksTriggered")
 }
 
 // MARK: - Focused Scene Values for Window-Specific Actions
@@ -46,6 +48,10 @@ struct NewTaskActionKey: FocusedValueKey {
 }
 
 struct RunTaskActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+struct DeleteTasksActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
 
@@ -59,6 +65,11 @@ extension FocusedValues {
         get { self[RunTaskActionKey.self] }
         set { self[RunTaskActionKey.self] = newValue }
     }
+
+    var deleteTasksAction: (() -> Void)? {
+        get { self[DeleteTasksActionKey.self] }
+        set { self[DeleteTasksActionKey.self] = newValue }
+    }
 }
 
 // MARK: - macOS Scene Builder
@@ -69,6 +80,7 @@ struct MacScenes: Scene {
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.newTaskAction) private var newTaskAction
     @FocusedValue(\.runTaskAction) private var runTaskAction
+    @FocusedValue(\.deleteTasksAction) private var deleteTasksAction
 
     var body: some Scene {
         // Workspace Picker Window (launcher) - uses shared container for workspace metadata
@@ -113,6 +125,14 @@ struct MacScenes: Scene {
                 }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(runTaskAction == nil)
+
+                Divider()
+
+                Button("Delete") {
+                    deleteTasksAction?()
+                }
+                .keyboardShortcut(.delete, modifiers: .command)
+                .disabled(deleteTasksAction == nil)
             }
 
             // Add to existing View menu

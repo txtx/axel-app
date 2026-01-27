@@ -112,7 +112,7 @@ struct WorkspaceContentView: View {
         modelContext.insert(terminal)
 
         // Build command with pane-id and port
-        var command = "axel claude --pane-id=\(paneId) --port=\(port)"
+        var command = "axel claude --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
@@ -478,8 +478,12 @@ struct WorkspaceContentView: View {
         }
         .focusedSceneValue(\.runTaskAction, selectedTask != nil ? {
             if let task = selectedTask, task.taskStatus == .queued {
+                NotificationCenter.default.post(name: .runTaskTriggered, object: nil)
                 startTerminal(for: task)
             }
+        } : nil)
+        .focusedSceneValue(\.deleteTasksAction, selectedTask != nil ? {
+            NotificationCenter.default.post(name: .deleteTasksTriggered, object: nil)
         } : nil)
         .onReceive(NotificationCenter.default.publisher(for: .showTasks)) { _ in
             sidebarSelection = .queue(.queued)
@@ -824,6 +828,7 @@ struct WorkspaceQueueListView: View {
     @Binding var highlightedTask: WorkTask?
     var onNewTask: () -> Void
     var onStartTerminal: ((WorkTask) -> Void)?
+    var onDeleteTasks: (([WorkTask]) -> Void)?
     @State private var expandedTask: WorkTask?
     @State private var lastTapTime: Date = .distantPast
     @State private var lastTapTaskId: UUID?
@@ -831,6 +836,10 @@ struct WorkspaceQueueListView: View {
     @State private var showTerminal = false
     @State private var draggingTask: WorkTask?
     @State private var dropTargetTaskId: UUID?
+    @State private var selectedTaskIds: Set<UUID> = []
+    @State private var lastSelectedTaskId: UUID?
+    @State private var showDeleteConfirmation = false
+    @FocusState private var isListFocused: Bool
 
     // Running tasks (sorted by priority)
     private var runningTasks: [WorkTask] {
@@ -856,6 +865,137 @@ struct WorkspaceQueueListView: View {
         }
     }
 
+    /// All visible tasks in display order (running first, then queued)
+    private var visibleTasksInOrder: [WorkTask] {
+        if filter == .queued {
+            return runningTasks + queuedTasks
+        }
+        return allFilteredTasks
+    }
+
+    /// Selected tasks based on selectedTaskIds
+    private var selectedTasks: [WorkTask] {
+        visibleTasksInOrder.filter { selectedTaskIds.contains($0.id) }
+    }
+
+    /// Check if a task is selected
+    private func isTaskSelected(_ task: WorkTask) -> Bool {
+        selectedTaskIds.contains(task.id)
+    }
+
+    /// Select a single task (clears other selections)
+    private func selectTask(_ task: WorkTask) {
+        selectedTaskIds = [task.id]
+        lastSelectedTaskId = task.id
+        highlightedTask = task
+    }
+
+    /// Toggle selection of a task (Cmd+click behavior)
+    private func toggleTaskSelection(_ task: WorkTask) {
+        if selectedTaskIds.contains(task.id) {
+            selectedTaskIds.remove(task.id)
+            if selectedTaskIds.isEmpty {
+                highlightedTask = nil
+                lastSelectedTaskId = nil
+            } else if highlightedTask?.id == task.id {
+                highlightedTask = visibleTasksInOrder.first { selectedTaskIds.contains($0.id) }
+            }
+        } else {
+            selectedTaskIds.insert(task.id)
+            lastSelectedTaskId = task.id
+            highlightedTask = task
+        }
+    }
+
+    /// Extend selection to a task (Shift+click behavior)
+    private func extendSelectionTo(_ task: WorkTask) {
+        guard let lastId = lastSelectedTaskId,
+              let lastIndex = visibleTasksInOrder.firstIndex(where: { $0.id == lastId }),
+              let targetIndex = visibleTasksInOrder.firstIndex(where: { $0.id == task.id }) else {
+            selectTask(task)
+            return
+        }
+
+        let range = lastIndex < targetIndex ? lastIndex...targetIndex : targetIndex...lastIndex
+        for i in range {
+            selectedTaskIds.insert(visibleTasksInOrder[i].id)
+        }
+        highlightedTask = task
+    }
+
+    /// Select all tasks in current filter
+    private func selectAllTasks() {
+        selectedTaskIds = Set(visibleTasksInOrder.map(\.id))
+        if let first = visibleTasksInOrder.first {
+            highlightedTask = first
+        }
+    }
+
+    /// Move selection up
+    private func moveSelectionUp(extendSelection: Bool = false) {
+        guard !visibleTasksInOrder.isEmpty else { return }
+
+        if let currentId = highlightedTask?.id,
+           let currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == currentId }),
+           currentIndex > 0 {
+            let newTask = visibleTasksInOrder[currentIndex - 1]
+            if extendSelection {
+                selectedTaskIds.insert(newTask.id)
+                highlightedTask = newTask
+            } else {
+                selectTask(newTask)
+            }
+        } else {
+            // No selection or at top, select first
+            if let first = visibleTasksInOrder.first {
+                selectTask(first)
+            }
+        }
+    }
+
+    /// Move selection down
+    private func moveSelectionDown(extendSelection: Bool = false) {
+        guard !visibleTasksInOrder.isEmpty else { return }
+
+        if let currentId = highlightedTask?.id,
+           let currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == currentId }),
+           currentIndex < visibleTasksInOrder.count - 1 {
+            let newTask = visibleTasksInOrder[currentIndex + 1]
+            if extendSelection {
+                selectedTaskIds.insert(newTask.id)
+                highlightedTask = newTask
+            } else {
+                selectTask(newTask)
+            }
+        } else if highlightedTask == nil {
+            // No selection, select first
+            if let first = visibleTasksInOrder.first {
+                selectTask(first)
+            }
+        }
+    }
+
+    /// Delete selected tasks
+    private func deleteSelectedTasks() {
+        let tasksToDelete = selectedTasks
+        guard !tasksToDelete.isEmpty else { return }
+
+        for task in tasksToDelete {
+            modelContext.delete(task)
+        }
+
+        // Clear selection
+        selectedTaskIds.removeAll()
+        highlightedTask = nil
+        expandedTask = nil
+
+        // Sync changes
+        Task {
+            let workspaceId = workspace.syncId ?? workspace.id
+            await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: modelContext)
+        }
+    }
+
     private var headerTitle: String {
         switch filter {
         case .queued: "Tasks"
@@ -865,7 +1005,7 @@ struct WorkspaceQueueListView: View {
         }
     }
 
-    private func handleTap(on task: WorkTask) {
+    private func handleTap(on task: WorkTask, modifiers: EventModifiers = []) {
         let now = Date()
         let isDoubleTap = lastTapTaskId == task.id && now.timeIntervalSince(lastTapTime) < 0.3
 
@@ -880,9 +1020,19 @@ struct WorkspaceQueueListView: View {
             }
             lastTapTime = .distantPast
             lastTapTaskId = nil
+        } else if modifiers.contains(.shift) {
+            // Shift+click: extend selection
+            extendSelectionTo(task)
+            lastTapTime = now
+            lastTapTaskId = task.id
+        } else if modifiers.contains(.command) {
+            // Cmd+click: toggle selection
+            toggleTaskSelection(task)
+            lastTapTime = now
+            lastTapTaskId = task.id
         } else {
             // Single click: select
-            highlightedTask = task
+            selectTask(task)
             lastTapTime = now
             lastTapTaskId = task.id
         }
@@ -890,165 +1040,242 @@ struct WorkspaceQueueListView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            // Header
-            HStack(alignment: .center) {
-                Image(systemName: "rectangle.stack")
-                    .font(.system(size: 16))
-                    .foregroundStyle(.blue)
-
-                Text(headerTitle)
-                    .font(.system(size: 20, weight: .bold))
-
-                Text("\(allFilteredTasks.count)")
-                    .font(.system(size: 12, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.tertiary)
-                    .padding(.leading, 4)
-
-                Spacer()
-
-                Button(action: onNewTask) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 14, weight: .medium))
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .contentShape(Rectangle())
-            }
-            .frame(maxWidth: 1000)
-            .padding(.horizontal, 40)
-            .frame(maxWidth: .infinity, alignment: .center)
-            .padding(.top, 20)
-            .padding(.bottom, 24)
-
-            if allFilteredTasks.isEmpty {
-                emptyView
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 1) {
-                        if filter == .queued {
-                            // Running tasks
-                            if !runningTasks.isEmpty {
-                                sectionHeader("Running")
-                                ForEach(runningTasks, id: \.id) { task in
-                                    TaskRow(
-                                        task: task,
-                                        isHighlighted: highlightedTask?.id == task.id,
-                                        isExpanded: expandedTask?.id == task.id,
-                                        onTap: { handleTap(on: task) },
-                                        onToggleComplete: { toggleComplete(task) },
-                                        onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
-                                        onStatusChange: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } }
-                                    )
-                                }
-                            }
-                            // Queued tasks
-                            if !queuedTasks.isEmpty && !runningTasks.isEmpty {
-                                sectionHeader("Up Next")
-                            }
-                            ForEach(Array(queuedTasks.enumerated()), id: \.element.id) { index, task in
-                                TaskRow(
-                                    task: task,
-                                    position: index + 1,
-                                    isHighlighted: highlightedTask?.id == task.id,
-                                    isExpanded: expandedTask?.id == task.id,
-                                    isDragTarget: dropTargetTaskId == task.id,
-                                    onTap: { handleTap(on: task) },
-                                    onRun: { onStartTerminal?(task) },
-                                    onToggleComplete: { toggleComplete(task) },
-                                    onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
-                                    onStatusChange: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } }
-                                )
-                                .opacity(draggingTask?.id == task.id ? 0.5 : 1.0)
-                                .draggable(task.id.uuidString) {
-                                    // Drag preview
-                                    HStack(spacing: 8) {
-                                        Image(systemName: "line.3.horizontal")
-                                            .font(.system(size: 12))
-                                            .foregroundStyle(.secondary)
-                                        Text(task.title)
-                                            .font(.system(size: 14))
-                                            .lineLimit(1)
-                                    }
-                                    .padding(.horizontal, 12)
-                                    .padding(.vertical, 8)
-                                    .background(
-                                        RoundedRectangle(cornerRadius: 8)
-                                            .fill(Color(white: 0.25))
-                                            .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
-                                    )
-                                    .onAppear { draggingTask = task }
-                                }
-                                .dropDestination(for: String.self) { items, _ in
-                                    guard let droppedIdString = items.first,
-                                          let droppedId = UUID(uuidString: droppedIdString),
-                                          let droppedTask = queuedTasks.first(where: { $0.id == droppedId }),
-                                          droppedTask.id != task.id else {
-                                        return false
-                                    }
-                                    reorderTask(droppedTask, before: task)
-                                    return true
-                                } isTargeted: { isTargeted in
-                                    withAnimation(.easeInOut(duration: 0.15)) {
-                                        dropTargetTaskId = isTargeted ? task.id : nil
-                                    }
-                                }
-                            }
-                            .onDrop(of: [.text], isTargeted: nil) { _ in
-                                draggingTask = nil
-                                return false
-                            }
-                        } else {
-                            ForEach(allFilteredTasks, id: \.id) { task in
-                                TaskRow(
-                                    task: task,
-                                    isHighlighted: highlightedTask?.id == task.id,
-                                    isExpanded: expandedTask?.id == task.id,
-                                    onTap: { handleTap(on: task) },
-                                    onToggleComplete: { toggleComplete(task) },
-                                    onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
-                                    onStatusChange: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } }
-                                )
-                            }
-                        }
-                    }
-                    .frame(maxWidth: 1000)
-                    .padding(.horizontal, 40)
-                    .padding(.bottom, 20)
-                    .frame(maxWidth: .infinity)
-                }
-                .animation(.easeInOut(duration: 0.2), value: allFilteredTasks.map(\.id))
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                        expandedTask = nil
-                    }
-                    highlightedTask = nil
-                }
-            }
+            headerView
+            taskListView
         }
-        .background(
-            Color(white: 27.0 / 255.0) // #1B1B1B
-                .onTapGesture {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                        expandedTask = nil
-                    }
-                    highlightedTask = nil
-                }
-        )
+        .background(backgroundView)
         .focusable()
+        .focused($isListFocused)
         .focusEffectDisabled()
-        .onKeyPress(.escape) {
-            if expandedTask != nil {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                    expandedTask = nil
-                }
-                return .handled
+        .modifier(TaskListKeyboardModifier(
+            expandedTask: $expandedTask,
+            selectedTaskIds: $selectedTaskIds,
+            highlightedTask: $highlightedTask,
+            showDeleteConfirmation: $showDeleteConfirmation,
+            onMoveUp: { extendSelection in moveSelectionUp(extendSelection: extendSelection) },
+            onMoveDown: { extendSelection in moveSelectionDown(extendSelection: extendSelection) },
+            onSelectAll: selectAllTasks
+        ))
+        .alert("Delete Tasks?", isPresented: $showDeleteConfirmation) {
+            Button("Cancel", role: .cancel) { }
+            Button("Delete", role: .destructive) {
+                deleteSelectedTasks()
             }
-            if highlightedTask != nil {
-                highlightedTask = nil
-                return .handled
-            }
-            return .ignored
+        } message: {
+            Text("Are you sure you want to delete \(selectedTaskIds.count) \(selectedTaskIds.count == 1 ? "task" : "tasks")? This action cannot be undone.")
         }
+        .onReceive(NotificationCenter.default.publisher(for: .runTaskTriggered)) { _ in
+            withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                expandedTask = nil
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .deleteTasksTriggered)) { _ in
+            if !selectedTaskIds.isEmpty {
+                showDeleteConfirmation = true
+            }
+        }
+        .onChange(of: highlightedTask) { _, newValue in
+            if let task = newValue, !selectedTaskIds.contains(task.id) {
+                selectedTaskIds = [task.id]
+                lastSelectedTaskId = task.id
+            }
+        }
+        .onChange(of: expandedTask) { oldValue, newValue in
+            // Restore focus to list when task collapses
+            if oldValue != nil && newValue == nil {
+                // Need async to let the view hierarchy update before restoring focus
+                DispatchQueue.main.async {
+                    isListFocused = true
+                }
+            }
+        }
+    }
+
+    private var headerView: some View {
+        HStack(alignment: .center) {
+            Image(systemName: "rectangle.stack")
+                .font(.system(size: 16))
+                .foregroundStyle(.blue)
+
+            Text(headerTitle)
+                .font(.system(size: 20, weight: .bold))
+
+            Text("\(allFilteredTasks.count)")
+                .font(.system(size: 12, weight: .medium).monospacedDigit())
+                .foregroundStyle(.tertiary)
+                .padding(.leading, 4)
+
+            Spacer()
+
+            Button(action: onNewTask) {
+                Image(systemName: "plus")
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.secondary)
+            }
+            .buttonStyle(.plain)
+            .contentShape(Rectangle())
+        }
+        .frame(maxWidth: 1000)
+        .padding(.horizontal, 40)
+        .frame(maxWidth: .infinity, alignment: .center)
+        .padding(.top, 20)
+        .padding(.bottom, 24)
+    }
+
+    @ViewBuilder
+    private var taskListView: some View {
+        if allFilteredTasks.isEmpty {
+            emptyView
+        } else {
+            ScrollView {
+                LazyVStack(spacing: 1) {
+                    taskListContent
+                }
+                .frame(maxWidth: 1000)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 20)
+                .frame(maxWidth: .infinity)
+            }
+            .animation(.easeInOut(duration: 0.2), value: allFilteredTasks.map(\.id))
+            .onTapGesture {
+                clearSelection()
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var taskListContent: some View {
+        if filter == .queued {
+            runningTasksSection
+            queuedTasksSection
+        } else {
+            filteredTasksSection
+        }
+    }
+
+    @ViewBuilder
+    private var runningTasksSection: some View {
+        if !runningTasks.isEmpty {
+            sectionHeader("Running")
+            ForEach(runningTasks, id: \.id) { task in
+                makeTaskRow(task: task, position: nil, isDraggable: false)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var queuedTasksSection: some View {
+        if !queuedTasks.isEmpty && !runningTasks.isEmpty {
+            sectionHeader("Up Next")
+        }
+        ForEach(Array(queuedTasks.enumerated()), id: \.element.id) { index, task in
+            makeDraggableTaskRow(task: task, position: index + 1)
+        }
+        .onDrop(of: [.text], isTargeted: nil) { _ in
+            draggingTask = nil
+            return false
+        }
+    }
+
+    @ViewBuilder
+    private var filteredTasksSection: some View {
+        ForEach(allFilteredTasks, id: \.id) { task in
+            makeTaskRow(task: task, position: nil, isDraggable: false)
+        }
+    }
+
+    private func makeTaskRow(task: WorkTask, position: Int?, isDraggable: Bool) -> some View {
+        TaskRow(
+            task: task,
+            position: position,
+            isHighlighted: isTaskSelected(task),
+            isExpanded: expandedTask?.id == task.id,
+            isDragTarget: false,
+            onTap: { modifiers in handleTap(on: task, modifiers: modifiers) },
+            onRun: task.taskStatus == .queued ? { onStartTerminal?(task) } : nil,
+            onToggleComplete: { toggleComplete(task) },
+            onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
+            onStatusChange: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
+            onDelete: {
+                selectTask(task)
+                showDeleteConfirmation = true
+            }
+        )
+    }
+
+    private func makeDraggableTaskRow(task: WorkTask, position: Int) -> some View {
+        TaskRow(
+            task: task,
+            position: position,
+            isHighlighted: isTaskSelected(task),
+            isExpanded: expandedTask?.id == task.id,
+            isDragTarget: dropTargetTaskId == task.id,
+            onTap: { modifiers in handleTap(on: task, modifiers: modifiers) },
+            onRun: { onStartTerminal?(task) },
+            onToggleComplete: { toggleComplete(task) },
+            onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
+            onStatusChange: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
+            onDelete: {
+                selectTask(task)
+                showDeleteConfirmation = true
+            }
+        )
+        .opacity(draggingTask?.id == task.id ? 0.5 : 1.0)
+        .draggable(task.id.uuidString) {
+            dragPreview(for: task)
+        }
+        .dropDestination(for: String.self) { items, _ in
+            handleDrop(items: items, targetTask: task)
+        } isTargeted: { isTargeted in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                dropTargetTaskId = isTargeted ? task.id : nil
+            }
+        }
+    }
+
+    private func dragPreview(for task: WorkTask) -> some View {
+        HStack(spacing: 8) {
+            Image(systemName: "line.3.horizontal")
+                .font(.system(size: 12))
+                .foregroundStyle(.secondary)
+            Text(task.title)
+                .font(.system(size: 14))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(
+            RoundedRectangle(cornerRadius: 8)
+                .fill(Color(white: 0.25))
+                .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+        )
+        .onAppear { draggingTask = task }
+    }
+
+    private func handleDrop(items: [String], targetTask: WorkTask) -> Bool {
+        guard let droppedIdString = items.first,
+              let droppedId = UUID(uuidString: droppedIdString),
+              let droppedTask = queuedTasks.first(where: { $0.id == droppedId }),
+              droppedTask.id != targetTask.id else {
+            return false
+        }
+        reorderTask(droppedTask, before: targetTask)
+        return true
+    }
+
+    private var backgroundView: some View {
+        Color(white: 27.0 / 255.0)
+            .onTapGesture {
+                clearSelection()
+            }
+    }
+
+    private func clearSelection() {
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            expandedTask = nil
+        }
+        selectedTaskIds.removeAll()
+        highlightedTask = nil
     }
 
     private func sectionHeader(_ title: String) -> some View {
@@ -1138,6 +1365,70 @@ struct WorkspaceQueueListView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+}
+
+// MARK: - Task List Keyboard Modifier
+
+struct TaskListKeyboardModifier: ViewModifier {
+    @Binding var expandedTask: WorkTask?
+    @Binding var selectedTaskIds: Set<UUID>
+    @Binding var highlightedTask: WorkTask?
+    @Binding var showDeleteConfirmation: Bool
+    var onMoveUp: (_ extendSelection: Bool) -> Void
+    var onMoveDown: (_ extendSelection: Bool) -> Void
+    var onSelectAll: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onKeyPress(.escape) {
+                if expandedTask != nil {
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                        expandedTask = nil
+                    }
+                    return .handled
+                }
+                if !selectedTaskIds.isEmpty {
+                    selectedTaskIds.removeAll()
+                    highlightedTask = nil
+                    return .handled
+                }
+                return .ignored
+            }
+            .onKeyPress(keys: [.upArrow], phases: .down) { keyPress in
+                onMoveUp(keyPress.modifiers.contains(.shift))
+                return .handled
+            }
+            .onKeyPress(keys: [.downArrow], phases: .down) { keyPress in
+                onMoveDown(keyPress.modifiers.contains(.shift))
+                return .handled
+            }
+            .onKeyPress(.return) {
+                // Toggle expansion using bindings directly to avoid closure capture issues
+                guard let task = highlightedTask else { return .ignored }
+                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+                    if expandedTask?.id == task.id {
+                        expandedTask = nil
+                    } else {
+                        expandedTask = task
+                    }
+                }
+                return .handled
+            }
+            .onKeyPress(keys: [KeyEquivalent("a")], phases: .down) { keyPress in
+                if keyPress.modifiers.contains(.command) {
+                    onSelectAll()
+                    return .handled
+                }
+                return .ignored
+            }
+            .onKeyPress(keys: [.delete], phases: .down) { keyPress in
+                if keyPress.modifiers.contains(.command) && !selectedTaskIds.isEmpty {
+                    showDeleteConfirmation = true
+                    return .handled
+                }
+                return .ignored
+            }
     }
 }
 
@@ -1440,15 +1731,18 @@ struct TaskRow: View {
     var isHighlighted: Bool = false
     var isExpanded: Bool = false
     var isDragTarget: Bool = false
-    var onTap: (() -> Void)?
+    var onTap: ((EventModifiers) -> Void)?
     var onRun: (() -> Void)?
     var onToggleComplete: (() -> Void)?
     var onCollapse: (() -> Void)?
     var onStatusChange: (() -> Void)?
+    var onDelete: (() -> Void)?
+    @Environment(\.modelContext) private var modelContext
     @State private var showNotes: Bool = false
     @State private var isHovering: Bool = false
     @State private var isTitleFocused: Bool = false
     @State private var isStatusHovering: Bool = false
+    @State private var showSkillPicker: Bool = false
 
     private var isRunning: Bool {
         task.taskStatus == .running
@@ -1548,8 +1842,46 @@ struct TaskRow: View {
                 }
             }
             .contentShape(Rectangle())
+            .gesture(
+                TapGesture()
+                    .modifiers(.shift)
+                    .onEnded { onTap?(.shift) }
+            )
+            .gesture(
+                TapGesture()
+                    .modifiers(.command)
+                    .onEnded { onTap?(.command) }
+            )
             .onTapGesture {
-                onTap?()
+                onTap?([])
+            }
+            .contextMenu {
+                if isQueued, let onRun = onRun {
+                    Button {
+                        onRun()
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                    }
+                    Divider()
+                }
+
+                Button {
+                    onToggleComplete?()
+                } label: {
+                    if isCompleted {
+                        Label("Mark as Incomplete", systemImage: "circle")
+                    } else {
+                        Label("Mark as Complete", systemImage: "checkmark.circle.fill")
+                    }
+                }
+
+                Divider()
+
+                Button(role: .destructive) {
+                    onDelete?()
+                } label: {
+                    Label("Delete", systemImage: "trash")
+                }
             }
 
             // Notes (only in expanded)
@@ -1570,9 +1902,58 @@ struct TaskRow: View {
                 .opacity(showNotes ? 1 : 0)
                 .animation(.easeIn(duration: 0.12), value: showNotes)
 
-                // Status dropdown - bottom right
-                HStack {
+                // Skills and Status row - bottom
+                HStack(spacing: 8) {
+                    // Attached skills chips
+                    ForEach(task.taskSkills, id: \.id) { taskSkill in
+                        if let skill = taskSkill.skill {
+                            HStack(spacing: 4) {
+                                Image(systemName: "hammer.fill")
+                                    .font(.system(size: 9))
+                                Text(skill.name)
+                                    .font(.system(size: 11, weight: .medium))
+                                    .lineLimit(1)
+                                Button {
+                                    // Remove skill
+                                    modelContext.delete(taskSkill)
+                                } label: {
+                                    Image(systemName: "xmark")
+                                        .font(.system(size: 8, weight: .bold))
+                                }
+                                .buttonStyle(.plain)
+                            }
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(
+                                Capsule()
+                                    .fill(Color.purple.opacity(0.8))
+                            )
+                        }
+                    }
+
+                    // Add skill button
+                    Button {
+                        showSkillPicker = true
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 22, height: 22)
+                            .background(
+                                Circle()
+                                    .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .help("Attach skill")
+                    .sheet(isPresented: $showSkillPicker) {
+                        TaskSkillPickerView(task: task)
+                    }
+
                     Spacer()
+
+                    // Status dropdown
                     Menu {
                         ForEach(TaskStatus.allCases, id: \.self) { status in
                             Button(action: {

@@ -62,6 +62,9 @@ final class WorkTask {
     @Relationship(deleteRule: .cascade, inverse: \Hint.task)
     var hints: [Hint] = []
 
+    @Relationship(deleteRule: .cascade, inverse: \TaskSkill.task)
+    var taskSkills: [TaskSkill] = []
+
     // Sync
     var syncId: UUID?
 
@@ -73,6 +76,11 @@ final class WorkTask {
     /// Convenience accessor for assigned profiles
     var assignees: [Profile] {
         taskAssignees.compactMap { $0.profile }
+    }
+
+    /// Convenience accessor for attached skills
+    var skills: [Skill] {
+        taskSkills.compactMap { $0.skill }
     }
 
     var isCompleted: Bool {

@@ -100,7 +100,7 @@ struct ContentView: View {
         modelContext.insert(terminal)
 
         // Build command with pane-id and port
-        var command = "axel claude --pane-id=\(paneId) --port=\(port)"
+        var command = "axel claude --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {

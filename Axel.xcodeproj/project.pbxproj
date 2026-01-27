@@ -21,6 +21,8 @@
 		A1000001201A0010 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0010 /* TerminalPanelView.swift */; };
 		A1000001201A0011 /* SwiftTermWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0011 /* SwiftTermWrapper.swift */; };
 		A1000001201A0012 /* Skill.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0012 /* Skill.swift */; };
+		A1000001201A0103 /* TaskSkill.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0103 /* TaskSkill.swift */; };
+		A1000001201A0104 /* SkillManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0104 /* SkillManager.swift */; };
 		A1000001201A0013 /* SkillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0013 /* SkillsView.swift */; };
 		A1000001201A0014 /* Context.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0014 /* Context.swift */; };
 		A1000001201A0015 /* ContextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0015 /* ContextView.swift */; };
@@ -99,6 +101,8 @@
 		A1000001101A0010 /* TerminalPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPanelView.swift; sourceTree = "<group>"; };
 		A1000001101A0011 /* SwiftTermWrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftTermWrapper.swift; sourceTree = "<group>"; };
 		A1000001101A0012 /* Skill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Skill.swift; sourceTree = "<group>"; };
+		A1000001101A0103 /* TaskSkill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskSkill.swift; sourceTree = "<group>"; };
+		A1000001101A0104 /* SkillManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillManager.swift; sourceTree = "<group>"; };
 		A1000001101A0013 /* SkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsView.swift; sourceTree = "<group>"; };
 		A1000001101A0014 /* Context.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Context.swift; sourceTree = "<group>"; };
 		A1000001101A0015 /* ContextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextView.swift; sourceTree = "<group>"; };
@@ -220,6 +224,8 @@
 				A1000001101A0029 /* Hint.swift */,
 				A100000110A10030 /* TaskAssignee.swift */,
 				A1000001101A0012 /* Skill.swift */,
+				A1000001101A0103 /* TaskSkill.swift */,
+				A1000001101A0104 /* SkillManager.swift */,
 				A1000001101A0014 /* Context.swift */,
 				A1000001101A0040 /* InboxEvent.swift */,
 				A1000001101A0043 /* TaskMetrics.swift */,
@@ -476,6 +482,8 @@
 				A1000001201A0010 /* TerminalPanelView.swift in Sources */,
 				A1000001201A0011 /* SwiftTermWrapper.swift in Sources */,
 				A1000001201A0012 /* Skill.swift in Sources */,
+				A1000001201A0103 /* TaskSkill.swift in Sources */,
+				A1000001201A0104 /* SkillManager.swift in Sources */,
 				A1000001201A0013 /* SkillsView.swift in Sources */,
 				A1000001201A0014 /* Context.swift in Sources */,
 				A1000001201A0015 /* ContextView.swift in Sources */,
