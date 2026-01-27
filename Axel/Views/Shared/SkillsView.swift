@@ -4,31 +4,6 @@ import SwiftData
 import AppKit
 #endif
 
-// MARK: - Local Agent File
-
-/// Represents an agent file loaded from the filesystem
-struct LocalAgentFile: Identifiable, Hashable {
-    let id: String
-    let name: String
-    let path: URL
-    let content: String
-
-    init(path: URL) {
-        self.id = path.absoluteString
-        self.path = path
-        self.name = path.deletingPathExtension().lastPathComponent
-        self.content = (try? String(contentsOf: path, encoding: .utf8)) ?? ""
-    }
-
-    func hash(into hasher: inout Hasher) {
-        hasher.combine(id)
-    }
-
-    static func == (lhs: LocalAgentFile, rhs: LocalAgentFile) -> Bool {
-        lhs.id == rhs.id
-    }
-}
-
 // MARK: - Agent Selection
 
 /// Unified selection type for agents from different sources
@@ -57,15 +32,14 @@ struct SkillsListView: View {
     let workspace: Workspace?
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Skill.updatedAt, order: .reverse) private var skills: [Skill]
+    @ObservedObject private var skillManager = SkillManager.shared
 
     @Binding var selection: AgentSelection?
     @State private var isCreatingSkill = false
-    @State private var localAgents: [LocalAgentFile] = []
-    @State private var globalAgents: [LocalAgentFile] = []
 
-    /// Total count of all agents
+    /// Total count of all skills
     private var totalCount: Int {
-        localAgents.count + globalAgents.count + skills.count
+        skillManager.workspaceSkills.count + skillManager.userSkills.count + skills.count
     }
 
     var body: some View {
@@ -92,27 +66,27 @@ struct SkillsListView: View {
                 emptyState
             } else {
                 List(selection: $selection) {
-                    // Workspace Agents Section
-                    if !localAgents.isEmpty {
+                    // Workspace Skills Section
+                    if !skillManager.workspaceSkills.isEmpty {
                         Section {
-                            ForEach(localAgents) { agent in
-                                LocalAgentRow(agent: agent)
-                                    .tag(AgentSelection.local(agent))
+                            ForEach(skillManager.workspaceSkills) { skill in
+                                LocalAgentRow(agent: skill)
+                                    .tag(AgentSelection.local(skill))
                             }
                         } header: {
                             Label("Workspace", systemImage: "folder")
                         }
                     }
 
-                    // Global Agents Section
-                    if !globalAgents.isEmpty {
+                    // User Skills Section
+                    if !skillManager.userSkills.isEmpty {
                         Section {
-                            ForEach(globalAgents) { agent in
-                                LocalAgentRow(agent: agent)
-                                    .tag(AgentSelection.local(agent))
+                            ForEach(skillManager.userSkills) { skill in
+                                LocalAgentRow(agent: skill)
+                                    .tag(AgentSelection.local(skill))
                             }
                         } header: {
-                            Label("Global", systemImage: "globe")
+                            Label("User", systemImage: "person")
                         }
                     }
 
@@ -150,10 +124,7 @@ struct SkillsListView: View {
         #endif
         .background(.background)
         .onAppear {
-            loadLocalAgents()
-            #if os(macOS)
-            loadGlobalAgents()
-            #endif
+            skillManager.loadWorkspaceSkills(from: workspace?.path)
         }
         .sheet(isPresented: $isCreatingSkill) {
             CreateSkillView(isPresented: $isCreatingSkill, onCreated: { skill in
@@ -174,7 +145,7 @@ struct SkillsListView: View {
                 .font(.headline)
                 .foregroundStyle(.secondary)
 
-            Text("Add agents to ./agents, ~/.config/axel/agents, or create custom ones")
+            Text("Add skills to ./skills, ~/.config/axel/skills, or create custom ones")
                 .font(.callout)
                 .foregroundStyle(.tertiary)
                 .multilineTextAlignment(.center)
@@ -191,81 +162,6 @@ struct SkillsListView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
-
-    private func loadLocalAgents() {
-        guard let workspacePath = workspace?.path else {
-            localAgents = []
-            return
-        }
-
-        let agentsDir = URL(fileURLWithPath: workspacePath).appendingPathComponent("agents")
-
-        guard FileManager.default.fileExists(atPath: agentsDir.path) else {
-            localAgents = []
-            return
-        }
-
-        do {
-            let files = try FileManager.default.contentsOfDirectory(
-                at: agentsDir,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles]
-            )
-
-            localAgents = files
-                .filter { $0.pathExtension == "md" }
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }
-                .map { LocalAgentFile(path: $0) }
-        } catch {
-            print("[SkillsView] Failed to load agents: \(error)")
-            localAgents = []
-        }
-    }
-
-    #if os(macOS)
-    private func loadGlobalAgents() {
-        let homeDir = FileManager.default.homeDirectoryForCurrentUser
-        let globalAgentsDir = homeDir.appendingPathComponent(".config/axel/agents")
-
-        guard FileManager.default.fileExists(atPath: globalAgentsDir.path) else {
-            globalAgents = []
-            return
-        }
-
-        do {
-            // Global agents use directory structure: <name>/AGENT.md
-            let contents = try FileManager.default.contentsOfDirectory(
-                at: globalAgentsDir,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles]
-            )
-
-            var agents: [LocalAgentFile] = []
-
-            for item in contents {
-                var isDirectory: ObjCBool = false
-                if FileManager.default.fileExists(atPath: item.path, isDirectory: &isDirectory),
-                   isDirectory.boolValue {
-                    // Check for AGENT.md inside the directory
-                    let agentFile = item.appendingPathComponent("AGENT.md")
-                    if FileManager.default.fileExists(atPath: agentFile.path) {
-                        agents.append(LocalAgentFile(path: agentFile))
-                    }
-                } else if item.pathExtension == "md" {
-                    // Also support flat .md files (excluding index.md)
-                    if item.lastPathComponent != "index.md" {
-                        agents.append(LocalAgentFile(path: item))
-                    }
-                }
-            }
-
-            globalAgents = agents.sorted { $0.name < $1.name }
-        } catch {
-            print("[SkillsView] Failed to load global agents: \(error)")
-            globalAgents = []
-        }
-    }
-    #endif
 
     private func deleteSkills(at offsets: IndexSet) {
         for index in offsets {
