@@ -20,7 +20,7 @@ enum TerminalEmulator {
 extension TerminalEmulator {
     /// Theme configuration for the embedded terminal
     struct TerminalTheme {
-        var background: String = "000000"
+        var background: String = "18262F"
         var foreground: String = "e4e4e7"
         var cursorColor: String = "22d3ee"
         var selectionBackground: String = "3f3f46"
@@ -191,38 +191,50 @@ extension TerminalEmulator {
         }
 
         private func setupTerminalView() {
-            // Layer setup
-            wantsLayer = true
-            layer?.isOpaque = true
-            layer?.backgroundColor = NSColor.black.cgColor
+            // Add terminal view as subview - let theme handle colors
+            terminalView.translatesAutoresizingMaskIntoConstraints = true
+            terminalView.autoresizingMask = [.width, .height]
+            terminalView.frame = bounds
+            addSubview(terminalView)
         }
 
         private func applyTheme(_ theme: TerminalTheme) {
-            // Apply colors
-//            terminalView.nativeBackgroundColor = TerminalTheme.colorFromHex(theme.background)
-//            terminalView.nativeForegroundColor = TerminalTheme.colorFromHex(theme.foreground)
-//            terminalView.caretColor = TerminalTheme.colorFromHex(theme.cursorColor)
-//            terminalView.selectedTextBackgroundColor = TerminalTheme.colorFromHex(theme.selectionBackground)
-//
-//            // Apply font
-//            let fontSize = theme.fontSize
-//            if let font = NSFont(name: theme.fontFamily, size: fontSize) {
-//                terminalView.font = font
-//            } else {
-//                // Fallback to system monospace font
-//                terminalView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
-//            }
-//
-//            // Apply palette colors using SwiftTerm.Color
-//            var colors: [SwiftTerm.Color] = []
-//            for hex in theme.palette.prefix(16) {
-//                colors.append(TerminalTheme.swiftTermColorFromHex(hex))
-//            }
-//
-//            // SwiftTerm uses installColors to set the ANSI palette
-//            if colors.count == 16 {
-//                terminalView.installColors(colors)
-//            }
+            // Apply colors - terminal will handle its own background
+            terminalView.nativeBackgroundColor = TerminalTheme.colorFromHex(theme.background)
+            terminalView.nativeForegroundColor = TerminalTheme.colorFromHex(theme.foreground)
+            terminalView.caretColor = TerminalTheme.colorFromHex(theme.cursorColor)
+            terminalView.selectedTextBackgroundColor = TerminalTheme.colorFromHex(theme.selectionBackground)
+
+            // Apply font
+            let fontSize = theme.fontSize
+            if let font = NSFont(name: theme.fontFamily, size: fontSize) {
+                terminalView.font = font
+            } else {
+                // Fallback to system monospace font
+                terminalView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            }
+
+            // Build palette with background color as color 0 (default background)
+            var colors: [SwiftTerm.Color] = []
+            // Use our background color as the first color (ANSI black/background)
+            colors.append(TerminalTheme.swiftTermColorFromHex(theme.background))
+            // Rest of the palette (skip index 0)
+            for hex in theme.palette.dropFirst().prefix(15) {
+                colors.append(TerminalTheme.swiftTermColorFromHex(hex))
+            }
+
+            // SwiftTerm uses installColors to set the ANSI palette
+            if colors.count == 16 {
+                terminalView.installColors(colors)
+            }
+
+            // Set terminal's default background/foreground colors
+            let terminal = terminalView.getTerminal()
+            terminal.backgroundColor = TerminalTheme.swiftTermColorFromHex(theme.background)
+            terminal.foregroundColor = TerminalTheme.swiftTermColorFromHex(theme.foreground)
+
+            // Force redraw
+            terminalView.setNeedsDisplay(terminalView.bounds)
         }
 
         private func startShell(config: SurfaceConfiguration?) {
@@ -379,8 +391,6 @@ class TerminalHostViewController: NSViewController, NSMenuItemValidation {
 
     override func loadView() {
         let container = TerminalContainerViewWithDrop(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        container.wantsLayer = true
-        container.layer?.backgroundColor = NSColor.black.cgColor
         container.terminalView = terminalView
         self.view = container
     }
@@ -393,6 +403,7 @@ class TerminalHostViewController: NSViewController, NSMenuItemValidation {
             terminalView.translatesAutoresizingMaskIntoConstraints = true
             terminalView.autoresizingMask = [.width, .height]
             terminalView.frame = view.bounds
+
             view.addSubview(terminalView)
 
             // Configure scrollback buffer for better scrolling

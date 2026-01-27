@@ -1,4 +1,6 @@
+import SwiftData
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// Events we care about: PermissionRequest, Stop
 private let relevantEventTypes = ["PermissionRequest", "Stop"]
@@ -242,7 +244,7 @@ struct InboxListView: View {
                 VStack(spacing: 12) {
                     Spacer()
 
-                    Image(systemName: "rectangle.stack")
+                    Image(systemName: "tray.fill")
                         .font(.system(size: 48))
                         .foregroundStyle(.quaternary)
 
@@ -400,6 +402,30 @@ struct InboxEventDetailView: View {
     let event: InboxEvent
     @Binding var selection: InboxEvent?
     @State private var inboxService = InboxService.shared
+    @State private var costTracker = CostTracker.shared
+    @Environment(\.modelContext) private var modelContext
+    #if os(macOS)
+    @Environment(\.terminalSessionManager) private var sessionManager
+    #endif
+
+    /// Hints associated with this terminal/task (for completion events)
+    @State private var taskHints: [Hint] = []
+
+    /// Permission request events from the same pane (in-memory)
+    @State private var permissionEvents: [InboxEvent] = []
+
+    /// Next queued tasks in the workspace
+    @State private var nextQueuedTasks: [WorkTask] = []
+
+    /// Drag-and-drop state for task reordering
+    @State private var draggingTaskId: UUID?
+    @State private var dropTargetIndex: Int?
+
+    /// Task cost segments from CostTracker
+    @State private var taskSegments: [TaskSegment] = []
+
+    /// The workspace for this event (used for starting next task)
+    @State private var eventWorkspace: Workspace?
 
     /// Get metrics snapshot for this event (only for completion events)
     private var metricsSnapshot: MetricsSnapshot? {
@@ -441,20 +467,100 @@ struct InboxEventDetailView: View {
         }
     }
 
+    /// The task title for this terminal (fetched on appear)
+    @State private var taskTitle: String?
+
+    /// Fetch task context and related data
+    private func fetchEventData() {
+        let paneId = event.paneId
+
+        // Fetch permission request events from the same pane (in-memory)
+        permissionEvents = inboxService.events.filter { evt in
+            evt.paneId == paneId && evt.event.hookEventName == "PermissionRequest"
+        }
+
+        // Fetch terminal by paneId
+        var terminalDescriptor = FetchDescriptor<Terminal>()
+        terminalDescriptor.predicate = #Predicate<Terminal> { terminal in
+            terminal.paneId == paneId
+        }
+
+        if let terminal = try? modelContext.fetch(terminalDescriptor).first {
+            // Get task title
+            taskTitle = terminal.task?.title
+
+            // Get workspace from task or terminal
+            eventWorkspace = terminal.task?.workspace ?? terminal.workspace
+
+            // Only fetch hints for completion events
+            guard isCompletionEvent else { return }
+
+            // Get hints for this terminal OR for the associated task
+            let terminalId = terminal.id
+            let taskId = terminal.task?.id
+            let hintDescriptor = FetchDescriptor<Hint>(
+                sortBy: [SortDescriptor(\Hint.createdAt, order: .reverse)]
+            )
+            if let allHints = try? modelContext.fetch(hintDescriptor) {
+                // Include hints linked to this terminal OR to the task
+                taskHints = allHints.filter { hint in
+                    hint.terminal?.id == terminalId || (taskId != nil && hint.task?.id == taskId)
+                }
+            }
+        }
+
+        // Fetch queued tasks for completion events
+        guard isCompletionEvent else { return }
+
+        // Get queued tasks from workspace, or all queued tasks if no workspace
+        let queuedStatus = TaskStatus.queued.rawValue
+        // Sort by priority ascending (lower = top of queue), then by createdAt
+        let taskDescriptor = FetchDescriptor<WorkTask>(
+            sortBy: [SortDescriptor(\WorkTask.priority, order: .forward), SortDescriptor(\WorkTask.createdAt)]
+        )
+
+        if let tasks = try? modelContext.fetch(taskDescriptor) {
+            if let workspace = eventWorkspace {
+                // Filter to workspace
+                let workspaceId = workspace.id
+                nextQueuedTasks = Array(tasks.filter { $0.status == queuedStatus && $0.workspace?.id == workspaceId }.prefix(5))
+            } else {
+                // No workspace context - show all queued tasks
+                nextQueuedTasks = Array(tasks.filter { $0.status == queuedStatus }.prefix(5))
+            }
+        }
+
+        // Fetch task cost segments from CostTracker (use paneId)
+        if let tracker = costTracker.taskTracker(forPaneId: event.paneId) {
+            taskSegments = tracker.segments
+        }
+    }
+
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 // Header
                 header
 
+                // Task context for permission requests
+                if isPermissionRequest, let title = taskTitle {
+                    HStack(spacing: 8) {
+                        Image(systemName: "doc.text.fill")
+                            .foregroundStyle(.secondary)
+                        Text("Task: \(title)")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 // Allow/Deny buttons for permission requests
                 if isPermissionRequest && !isResolved {
                     HStack(spacing: 12) {
+                        Spacer()
                         Button {
                             sendPermissionResponse(allow: false)
                         } label: {
                             Label("Deny", systemImage: "xmark.circle.fill")
-                                .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.bordered)
                         .tint(.red)
@@ -464,7 +570,6 @@ struct InboxEventDetailView: View {
                             sendPermissionResponse(allow: true)
                         } label: {
                             Label("Allow", systemImage: "checkmark.circle.fill")
-                                .frame(maxWidth: .infinity)
                         }
                         .buttonStyle(.borderedProminent)
                         .tint(.green)
@@ -472,31 +577,66 @@ struct InboxEventDetailView: View {
                     }
                 }
 
-                // Confirm button for completion events
-                if isCompletionEvent && !isResolved {
-                    Button {
-                        inboxService.resolveEvent(event.id)
-                        selection = nil
-                    } label: {
-                        Label("Confirm", systemImage: "checkmark.circle.fill")
-                            .frame(maxWidth: .infinity)
-                    }
-                    .buttonStyle(.borderedProminent)
-                    .tint(.green)
-                    .controlSize(.large)
-                }
-
                 // Task metrics snapshot (only available for completion events)
                 if let snapshot = metricsSnapshot {
                     metricsSection(snapshot)
                 }
 
-                Divider()
+                // Cost breakdown by segments (from CostTracker)
+                if isCompletionEvent && !taskSegments.isEmpty {
+                    Divider()
+                    costBreakdownSection
+                }
 
-                // Event details
-                detailsSection
+                // Permissions recap for completion events
+                if isCompletionEvent && !permissionEvents.isEmpty {
+                    Divider()
+                    permissionsRecapSection
+                }
 
-                // Tool input section (with diff view for Edit/Write tools)
+                // Next queued tasks for completion events
+                if isCompletionEvent {
+                    Divider()
+                    nextTasksSection
+                }
+
+                // Confirm button for completion events (after queue section)
+                if isCompletionEvent && !isResolved {
+                    HStack {
+                        Spacer()
+                        Button {
+                            // Resolve the current event
+                            inboxService.resolveEvent(event.id)
+
+                            // Start the next queued task if available
+                            #if os(macOS)
+                            if let nextTask = nextQueuedTasks.first,
+                               let workspaceId = nextTask.workspace?.id {
+                                // Update task status to running
+                                nextTask.status = TaskStatus.running.rawValue
+                                try? modelContext.save()
+
+                                // Start the terminal session for this task
+                                let workingDir = nextTask.workspace?.path ?? FileManager.default.currentDirectoryPath
+                                _ = sessionManager.startSession(
+                                    for: nextTask,
+                                    workingDirectory: workingDir,
+                                    workspaceId: workspaceId
+                                )
+                            }
+                            #endif
+
+                            selection = nil
+                        } label: {
+                            Label(nextQueuedTasks.isEmpty ? "Done" : "Complete and Continue", systemImage: nextQueuedTasks.isEmpty ? "checkmark.circle.fill" : "arrow.right.circle.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(nextQueuedTasks.isEmpty ? .green : .blue)
+                        .controlSize(.large)
+                    }
+                }
+
+                // Tool input section for permission requests (with diff view for Edit/Write tools)
                 if let input = event.event.toolInput {
                     if event.event.toolName == "Edit",
                        let filePath = input["file_path"]?.value as? String,
@@ -538,6 +678,236 @@ struct InboxEventDetailView: View {
             .padding()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            fetchEventData()
+        }
+    }
+
+    // MARK: - Cost Breakdown Section
+
+    @ViewBuilder
+    private var costBreakdownSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "chart.bar.fill")
+                    .foregroundStyle(.purple)
+                Text("Cost Breakdown")
+                    .font(.headline)
+                Spacer()
+                Text("\(taskSegments.count) segments")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            // Segment bars visualization
+            VStack(spacing: 4) {
+                let maxTokens = taskSegments.map { $0.tokensUsed }.max() ?? 1
+                ForEach(taskSegments) { segment in
+                    HStack(spacing: 8) {
+                        // Segment bar
+                        GeometryReader { geo in
+                            let width = maxTokens > 0 ? CGFloat(segment.tokensUsed) / CGFloat(maxTokens) * geo.size.width : 0
+                            RoundedRectangle(cornerRadius: 3)
+                                .fill(Color.purple.opacity(0.6))
+                                .frame(width: max(4, width))
+                        }
+                        .frame(height: 12)
+                        .frame(maxWidth: 100)
+
+                        // Segment info
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(segment.description)
+                                .font(.caption)
+                                .fontWeight(.medium)
+                                .lineLimit(1)
+                            HStack(spacing: 8) {
+                                Text(formatTokens(segment.tokensUsed))
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                                Text(String(format: "$%.4f", segment.costUsed))
+                                    .font(.caption2)
+                                    .foregroundStyle(.purple)
+                            }
+                        }
+                        Spacer()
+                    }
+                }
+            }
+
+            // Total summary
+            HStack {
+                Spacer()
+                let totalTokens = taskSegments.reduce(0) { $0 + $1.tokensUsed }
+                let totalCost = taskSegments.reduce(0.0) { $0 + $1.costUsed }
+                Text("Total: \(formatTokens(totalTokens)) tokens")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(String(format: "$%.4f", totalCost))
+                    .font(.caption)
+                    .fontWeight(.medium)
+                    .foregroundStyle(.purple)
+            }
+        }
+    }
+
+    // MARK: - Permissions Recap Section
+
+    @ViewBuilder
+    private var permissionsRecapSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "checkmark.shield.fill")
+                    .foregroundStyle(.orange)
+                Text("Permissions Granted")
+                    .font(.headline)
+                Spacer()
+                Text("\(permissionEvents.count)")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            ForEach(permissionEvents) { permEvent in
+                PermissionRecapRow(event: permEvent, isResolved: inboxService.isResolved(permEvent.id))
+            }
+        }
+    }
+
+    // MARK: - Next Tasks Section
+
+    @ViewBuilder
+    private var nextTasksSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "list.bullet.clipboard.fill")
+                    .foregroundStyle(.blue)
+                Text("Up Next")
+                    .font(.headline)
+                Spacer()
+                if !nextQueuedTasks.isEmpty {
+                    Text("\(nextQueuedTasks.count) queued")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if nextQueuedTasks.isEmpty {
+                HStack {
+                    Image(systemName: "checkmark.circle")
+                        .foregroundStyle(.green)
+                    Text("No tasks in queue")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                .padding(.vertical, 8)
+            } else {
+                ForEach(Array(nextQueuedTasks.enumerated()), id: \.element.id) { index, task in
+                    HStack(spacing: 8) {
+                        Image(systemName: "line.3.horizontal")
+                            .foregroundStyle(.tertiary)
+                            .font(.caption)
+
+                        Circle()
+                            .fill(task.priority > 0 ? Color.orange : Color.secondary.opacity(0.3))
+                            .frame(width: 8, height: 8)
+
+                        Text(task.title)
+                            .font(.subheadline)
+                            .lineLimit(1)
+
+                        Spacer()
+
+                        if task.priority > 0 {
+                            Text("P\(task.priority)")
+                                .font(.caption)
+                                .foregroundStyle(.orange)
+                        }
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(draggingTaskId == task.id ? Color.accentColor.opacity(0.1) : Color.clear)
+                    )
+                    .contentShape(Rectangle())
+                    .onDrag {
+                        draggingTaskId = task.id
+                        return NSItemProvider(object: task.id.uuidString as NSString)
+                    }
+                    .onDrop(of: [.text], isTargeted: Binding(
+                        get: { dropTargetIndex == index },
+                        set: { isTargeted in
+                            if isTargeted {
+                                dropTargetIndex = index
+                            } else if dropTargetIndex == index {
+                                dropTargetIndex = nil
+                            }
+                        }
+                    )) { providers in
+                        guard let provider = providers.first else { return false }
+
+                        provider.loadObject(ofClass: NSString.self) { item, _ in
+                            guard let droppedId = item as? String,
+                                  let droppedUUID = UUID(uuidString: droppedId),
+                                  let fromIndex = nextQueuedTasks.firstIndex(where: { $0.id == droppedUUID }),
+                                  fromIndex != index else {
+                                return
+                            }
+                            DispatchQueue.main.async {
+                                moveTask(from: fromIndex, to: index)
+                            }
+                        }
+                        return true
+                    }
+                    .overlay {
+                        if dropTargetIndex == index && draggingTaskId != task.id {
+                            RoundedRectangle(cornerRadius: 6)
+                                .fill(Color(red: 0.078, green: 0.078, blue: 0.078))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Handle drag-and-drop reordering of queued tasks
+    private func moveTask(from sourceIndex: Int, to destinationIndex: Int) {
+        let movedTask = nextQueuedTasks[sourceIndex]
+
+        // Calculate new priority based on neighbors (midpoint algorithm)
+        // Priority is sorted descending, so higher priority = earlier in list
+        let newPriority: Int
+
+        if destinationIndex == 0 {
+            // Moving to top - take priority above the current first item
+            let firstPriority = nextQueuedTasks.first?.priority ?? 0
+            newPriority = firstPriority + 100
+        } else if destinationIndex >= nextQueuedTasks.count - 1 || (destinationIndex == nextQueuedTasks.count - 1 && sourceIndex != nextQueuedTasks.count - 1) {
+            // Moving to bottom - take priority below the last item
+            let lastPriority = nextQueuedTasks.last?.priority ?? 0
+            newPriority = max(0, lastPriority - 100)
+        } else {
+            // Moving between two items - use midpoint
+            let adjustedDest = sourceIndex < destinationIndex ? destinationIndex : destinationIndex - 1
+            let aboveIndex = adjustedDest
+            let belowIndex = adjustedDest + 1
+            let abovePriority = nextQueuedTasks[aboveIndex].priority
+            let belowPriority = nextQueuedTasks[belowIndex].priority
+            newPriority = (abovePriority + belowPriority) / 2
+        }
+
+        // Update the array for immediate UI feedback
+        nextQueuedTasks.remove(at: sourceIndex)
+        let insertIndex = sourceIndex < destinationIndex ? destinationIndex : destinationIndex
+        nextQueuedTasks.insert(movedTask, at: insertIndex)
+
+        // Clear drag state
+        draggingTaskId = nil
+        dropTargetIndex = nil
+
+        // Persist the new priority
+        Task { @MainActor in
+            movedTask.updatePriority(newPriority)
+        }
     }
 
     @ViewBuilder
@@ -590,58 +960,11 @@ struct InboxEventDetailView: View {
         case "PermissionRequest":
             return "Permission Request"
         case "Stop":
-            return "Task Completed"
+            return taskTitle ?? "Task Completed"
         case "SubagentStop":
             return "Subagent Completed"
         default:
             return event.eventType
-        }
-    }
-
-    @ViewBuilder
-    private var detailsSection: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("Details")
-                .font(.headline)
-
-            Grid(alignment: .leading, horizontalSpacing: 16, verticalSpacing: 8) {
-                if let toolName = event.event.toolName {
-                    GridRow {
-                        Text("Tool")
-                            .foregroundStyle(.secondary)
-                        Text(toolName)
-                            .fontWeight(.medium)
-                    }
-                }
-
-                if let cwd = event.event.cwd {
-                    GridRow {
-                        Text("Directory")
-                            .foregroundStyle(.secondary)
-                        Text(cwd)
-                            .textSelection(.enabled)
-                    }
-                }
-
-                if let sessionId = event.event.claudeSessionId {
-                    GridRow {
-                        Text("Session")
-                            .foregroundStyle(.secondary)
-                        Text(sessionId)
-                            .font(.system(.body, design: .monospaced))
-                            .textSelection(.enabled)
-                    }
-                }
-
-                if let permissionMode = event.event.permissionMode {
-                    GridRow {
-                        Text("Mode")
-                            .foregroundStyle(.secondary)
-                        Text(permissionMode)
-                    }
-                }
-            }
-            .font(.body)
         }
     }
 
@@ -824,6 +1147,177 @@ struct TokenBreakdownItem: View {
             return String(format: "%.1fK", Double(count) / 1_000)
         }
         return "\(count)"
+    }
+}
+
+// MARK: - Permission Recap Row (expandable)
+
+/// An expandable row for permission recap in task completed view
+struct PermissionRecapRow: View {
+    let event: InboxEvent
+    let isResolved: Bool
+
+    @State private var isExpanded = false
+
+    private var toolName: String {
+        event.event.toolName ?? "Unknown"
+    }
+
+    private var filePath: String? {
+        event.event.toolInput?["file_path"]?.value as? String
+    }
+
+    private var command: String? {
+        event.event.toolInput?["command"]?.value as? String
+    }
+
+    private var iconName: String {
+        switch toolName {
+        case "Edit": return "pencil.tip.crop.circle.fill"
+        case "Write": return "square.and.pencil.circle.fill"
+        case "Read": return "doc.text.fill"
+        case "Bash": return "terminal.fill"
+        case "Glob", "Grep": return "magnifyingglass.circle.fill"
+        case "WebFetch", "WebSearch": return "globe"
+        default: return "lock.shield.fill"
+        }
+    }
+
+    private var summary: String {
+        if let path = filePath {
+            return URL(fileURLWithPath: path).lastPathComponent
+        } else if let cmd = command {
+            return String(cmd.prefix(40)) + (cmd.count > 40 ? "..." : "")
+        }
+        return toolName
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            // Main row - tappable to expand
+            Button {
+                withAnimation(.easeInOut(duration: 0.2)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: iconName)
+                        .foregroundStyle(.orange)
+                        .frame(width: 20)
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(toolName)
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                            .foregroundStyle(.primary)
+
+                        Text(summary)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+
+                    Spacer()
+
+                    if isResolved {
+                        Image(systemName: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+
+                    Image(systemName: "chevron.right")
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+            }
+            .buttonStyle(.plain)
+            .padding(.vertical, 4)
+
+            // Expanded details
+            if isExpanded {
+                VStack(alignment: .leading, spacing: 8) {
+                    if let path = filePath {
+                        HStack(alignment: .top) {
+                            Text("File:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 60, alignment: .trailing)
+                            Text(path)
+                                .font(.caption)
+                                .foregroundStyle(.primary)
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    if let cmd = command {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Command:")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                            Text(cmd)
+                                .font(.system(.caption, design: .monospaced))
+                                .padding(8)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .background(Color.primary.opacity(0.05))
+                                .clipShape(RoundedRectangle(cornerRadius: 6))
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    // For Edit tool, show old/new strings
+                    if toolName == "Edit" {
+                        if let oldString = event.event.toolInput?["old_string"]?.value as? String {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Removed:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(String(oldString.prefix(200)) + (oldString.count > 200 ? "..." : ""))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.red.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .textSelection(.enabled)
+                            }
+                        }
+                        if let newString = event.event.toolInput?["new_string"]?.value as? String {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Added:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(String(newString.prefix(200)) + (newString.count > 200 ? "..." : ""))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.green.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+
+                    // For Write tool, show content preview
+                    if toolName == "Write" {
+                        if let content = event.event.toolInput?["content"]?.value as? String {
+                            VStack(alignment: .leading, spacing: 4) {
+                                Text("Content:")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                Text(String(content.prefix(200)) + (content.count > 200 ? "..." : ""))
+                                    .font(.system(.caption, design: .monospaced))
+                                    .padding(8)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .background(Color.green.opacity(0.1))
+                                    .clipShape(RoundedRectangle(cornerRadius: 6))
+                                    .textSelection(.enabled)
+                            }
+                        }
+                    }
+                }
+                .padding(.leading, 28)
+                .padding(.bottom, 8)
+            }
+        }
     }
 }
 

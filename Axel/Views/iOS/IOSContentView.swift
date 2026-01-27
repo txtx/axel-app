@@ -196,7 +196,7 @@ struct iPhoneTabView: View {
                 iPhoneInboxView(selection: $selectedHint)
             }
             .tabItem {
-                Label("Inbox", systemImage: "rectangle.stack")
+                Label("Inbox", systemImage: "tray.fill")
             }
             .tag(0)
 
@@ -205,7 +205,7 @@ struct iPhoneTabView: View {
                 iPhoneQueueView(viewModel: viewModel, selection: $selectedTask, appState: appState)
             }
             .tabItem {
-                Label("Tasks", systemImage: "tray.fill")
+                Label("Tasks", systemImage: "rectangle.stack")
             }
             .tag(1)
 
@@ -639,7 +639,7 @@ struct iPhoneQueueView: View {
                 // Header
                 VStack(alignment: .leading, spacing: 12) {
                     HStack(spacing: 12) {
-                        Image(systemName: "tray.fill")
+                        Image(systemName: "rectangle.stack")
                             .font(.system(size: 22))
                             .foregroundStyle(.blue)
 
@@ -1316,9 +1316,9 @@ struct iPadSplitView: View {
             )
         } content: {
             switch sidebarSelection {
-            case .skills:
+            case .optimizations(.skills):
                 SkillsListView(workspace: nil, selection: $selectedAgent)
-            case .context:
+            case .optimizations(.context):
                 ContextListView(selection: $selectedContext)
             case .team:
                 TeamListView(selectedMember: $selectedTeamMember)
@@ -1339,13 +1339,13 @@ struct iPadSplitView: View {
             }
         } detail: {
             switch sidebarSelection {
-            case .skills:
+            case .optimizations(.skills):
                 if let agent = selectedAgent {
                     AgentDetailView(agent: agent)
                 } else {
                     EmptySkillSelectionView()
                 }
-            case .context:
+            case .optimizations(.context):
                 if let context = selectedContext {
                     ContextDetailView(context: context)
                 } else {

@@ -30,9 +30,22 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 }
 
+// MARK: - Notification Names for View Switching
+
+extension Notification.Name {
+    static let showTasks = Notification.Name("showTasks")
+    static let showAgents = Notification.Name("showAgents")
+    static let showInbox = Notification.Name("showInbox")
+    static let showSkills = Notification.Name("showSkills")
+}
+
 // MARK: - Focused Scene Values for Window-Specific Actions
 
 struct NewTaskActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+struct RunTaskActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
 
@@ -40,6 +53,11 @@ extension FocusedValues {
     var newTaskAction: (() -> Void)? {
         get { self[NewTaskActionKey.self] }
         set { self[NewTaskActionKey.self] = newValue }
+    }
+
+    var runTaskAction: (() -> Void)? {
+        get { self[RunTaskActionKey.self] }
+        set { self[RunTaskActionKey.self] = newValue }
     }
 }
 
@@ -50,6 +68,7 @@ struct MacScenes: Scene {
     let sharedContainer: ModelContainer
     @Environment(\.openWindow) private var openWindow
     @FocusedValue(\.newTaskAction) private var newTaskAction
+    @FocusedValue(\.runTaskAction) private var runTaskAction
 
     var body: some Scene {
         // Workspace Picker Window (launcher) - uses shared container for workspace metadata
@@ -85,6 +104,48 @@ struct MacScenes: Scene {
                     openWindow(id: "workspace-picker")
                 }
                 .keyboardShortcut("n", modifiers: [.command, .shift])
+            }
+
+            // Task menu
+            CommandMenu("Task") {
+                Button("Run") {
+                    runTaskAction?()
+                }
+                .keyboardShortcut("r", modifiers: .command)
+                .disabled(runTaskAction == nil)
+            }
+
+            // Add to existing View menu
+            CommandGroup(after: .toolbar) {
+                Divider()
+
+                Button {
+                    NotificationCenter.default.post(name: .showTasks, object: nil)
+                } label: {
+                    Label("Show Tasks", systemImage: "rectangle.stack")
+                }
+                .keyboardShortcut("1", modifiers: .command)
+
+                Button {
+                    NotificationCenter.default.post(name: .showAgents, object: nil)
+                } label: {
+                    Label("Show Agents", systemImage: "terminal")
+                }
+                .keyboardShortcut("2", modifiers: .command)
+
+                Button {
+                    NotificationCenter.default.post(name: .showInbox, object: nil)
+                } label: {
+                    Label("Show Inbox", systemImage: "tray.fill")
+                }
+                .keyboardShortcut("3", modifiers: .command)
+
+                Button {
+                    NotificationCenter.default.post(name: .showSkills, object: nil)
+                } label: {
+                    Label("Show Optimizations", systemImage: "gauge.with.dots.needle.50percent")
+                }
+                .keyboardShortcut("4", modifiers: .command)
             }
         }
     }

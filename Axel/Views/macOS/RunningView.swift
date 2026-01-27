@@ -383,18 +383,13 @@ struct TerminalMiniatureView: View {
 
     // Calculate preview height based on width to maintain 16:9 aspect ratio
     private var previewHeight: CGFloat {
-        let contentWidth = width - 16 // Account for padding (8 on each side)
-        return contentWidth * (9.0 / 16.0)
+        width * (9.0 / 16.0)
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             // Terminal preview - dynamic height based on width for 16:9 ratio
-            ZStack(alignment: .topLeading) {
-                // Dark terminal background
-                RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.black)
-
+            ZStack(alignment: .bottomTrailing) {
                 // Previous thumbnail (stays visible as base layer)
                 if let previous = session.previousThumbnail {
                     GeometryReader { geo in
@@ -404,8 +399,6 @@ struct TerminalMiniatureView: View {
                             .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
                     }
                     .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .padding(4)
                 }
 
                 // Current thumbnail (fades in on top) - show top, crop bottom
@@ -417,42 +410,31 @@ struct TerminalMiniatureView: View {
                             .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
                     }
                     .clipped()
-                    .clipShape(RoundedRectangle(cornerRadius: 4))
-                    .padding(4)
                     .transition(.opacity.animation(.easeInOut(duration: 0.4)))
                     .id(session.thumbnailGeneration)
                 } else {
                     // Placeholder while waiting for first screenshot
+                    Color(red: 0x18/255.0, green: 0x26/255.0, blue: 0x2F/255.0)
                     VStack {
                         ProgressView()
                             .scaleEffect(0.7)
-                            .tint(.green)
+                            .tint(.orange)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
-                // Token histogram overlay (bottom-right, 1/4 width)
-                GeometryReader { geo in
-                    VStack {
-                        Spacer()
-                        HStack {
-                            Spacer()
-                            TokenHistogramOverlay()
-                                .frame(width: geo.size.width / 4)
-                        }
-                    }
+                // Token histogram overlay (bottom-right)
+                TokenHistogramOverlay(paneId: session.paneId)
                     .padding(8)
-                }
             }
             .frame(height: previewHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 6))
-            .padding(8)
+            .clipShape(RoundedRectangle(cornerRadius: 8))
 
             // Task info
             HStack(spacing: 6) {
                 Image(systemName: "terminal.fill")
                     .font(.caption)
-                    .foregroundStyle(.green)
+                    .foregroundStyle(.orange)
 
                 Text(session.taskTitle)
                     .font(.caption.weight(.medium))
@@ -460,16 +442,16 @@ struct TerminalMiniatureView: View {
 
                 Spacer()
             }
-            .padding(.horizontal, 12)
+            .padding(.horizontal, 8)
             .padding(.vertical, 8)
         }
         .background(
-            RoundedRectangle(cornerRadius: 12)
-                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
+            RoundedRectangle(cornerRadius: 8)
+                .fill(isSelected ? Color.orange.opacity(0.15) : Color.primary.opacity(0.05))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 12)
-                .stroke(isSelected ? Color.accentColor.opacity(0.5) : Color.clear, lineWidth: 2)
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(isSelected ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 2)
         )
     }
 }
@@ -570,24 +552,14 @@ struct RunningDetailView: View {
 struct TerminalFullView: View {
     @ObservedObject var surfaceView: TerminalEmulator.SurfaceView
 
-    private let terminalBackground = Color.black
-    private let padding: CGFloat = 12
-
     var body: some View {
         GeometryReader { geo in
-            let innerSize = CGSize(
-                width: max(0, geo.size.width - padding * 2),
-                height: max(0, geo.size.height - padding * 2)
-            )
-
-            TerminalEmulator.SurfaceRepresentable(view: surfaceView, size: innerSize)
-                .frame(width: innerSize.width, height: innerSize.height)
-                .padding(padding)
+            TerminalEmulator.SurfaceRepresentable(view: surfaceView, size: geo.size)
+                .frame(width: geo.size.width, height: geo.size.height)
                 .onTapGesture {
                     surfaceView.terminalView.window?.makeFirstResponder(surfaceView.terminalView)
                 }
         }
-        .background(terminalBackground)
     }
 }
 
@@ -622,63 +594,103 @@ struct EmptyRunningSelectionView: View {
 
 // MARK: - Token Histogram Overlay (Cross-platform)
 
+/// Claude logo shape for the histogram overlay
+struct ClaudeShape: Shape {
+    func path(in rect: CGRect) -> Path {
+        let scaleX = rect.width / 128
+        let scaleY = rect.height / 88
+
+        var path = Path()
+
+        // Main shape
+        path.move(to: CGPoint(x: 112 * scaleX, y: 35 * scaleY))
+        path.addLine(to: CGPoint(x: 128 * scaleX, y: 35 * scaleY))
+        path.addLine(to: CGPoint(x: 128 * scaleX, y: 53 * scaleY))
+        path.addLine(to: CGPoint(x: 112 * scaleX, y: 53 * scaleY))
+        path.addLine(to: CGPoint(x: 112 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 104 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 104 * scaleX, y: 88 * scaleY))
+        path.addLine(to: CGPoint(x: 96 * scaleX, y: 88 * scaleY))
+        path.addLine(to: CGPoint(x: 96 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 88 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 88 * scaleX, y: 88 * scaleY))
+        path.addLine(to: CGPoint(x: 80 * scaleX, y: 88 * scaleY))
+        path.addLine(to: CGPoint(x: 80 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 48 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 48 * scaleX, y: 88 * scaleY))
+        path.addLine(to: CGPoint(x: 40 * scaleX, y: 88 * scaleY))
+        path.addLine(to: CGPoint(x: 40 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 32 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 32 * scaleX, y: 88 * scaleY))
+        path.addLine(to: CGPoint(x: 24 * scaleX, y: 88 * scaleY))
+        path.addLine(to: CGPoint(x: 24 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 16 * scaleX, y: 70 * scaleY))
+        path.addLine(to: CGPoint(x: 16 * scaleX, y: 53 * scaleY))
+        path.addLine(to: CGPoint(x: 0 * scaleX, y: 53 * scaleY))
+        path.addLine(to: CGPoint(x: 0 * scaleX, y: 35 * scaleY))
+        path.addLine(to: CGPoint(x: 16 * scaleX, y: 35 * scaleY))
+        path.addLine(to: CGPoint(x: 16 * scaleX, y: 0 * scaleY))
+        path.addLine(to: CGPoint(x: 112 * scaleX, y: 0 * scaleY))
+        path.closeSubpath()
+
+        // Left eye (cutout)
+        path.move(to: CGPoint(x: 32 * scaleX, y: 35 * scaleY))
+        path.addLine(to: CGPoint(x: 40 * scaleX, y: 35 * scaleY))
+        path.addLine(to: CGPoint(x: 40 * scaleX, y: 17 * scaleY))
+        path.addLine(to: CGPoint(x: 32 * scaleX, y: 17 * scaleY))
+        path.closeSubpath()
+
+        // Right eye (cutout)
+        path.move(to: CGPoint(x: 88 * scaleX, y: 17 * scaleY))
+        path.addLine(to: CGPoint(x: 88 * scaleX, y: 35 * scaleY))
+        path.addLine(to: CGPoint(x: 96 * scaleX, y: 35 * scaleY))
+        path.addLine(to: CGPoint(x: 96 * scaleX, y: 17 * scaleY))
+        path.closeSubpath()
+
+        return path
+    }
+}
+
 struct TokenHistogramOverlay: View {
-    @State private var dataPoints: [TokenDataPoint] = TokenDataPoint.generateFakeHistory()
-    @State private var timer: Timer?
+    let paneId: String?
+    @State private var costTracker = CostTracker.shared
 
-    struct TokenDataPoint: Identifiable {
-        let id = UUID()
-        let value: Double
-
-        static func generateFakeHistory() -> [TokenDataPoint] {
-            (0..<12).map { i in
-                let base = Double(i) * 0.06
-                let variance = Double.random(in: 0...0.2)
-                return TokenDataPoint(value: min(1.0, base + variance + 0.1))
-            }
+    private var histogramValues: [Double] {
+        guard let paneId = paneId else {
+            return Array(repeating: 0.1, count: 12)
         }
+        return costTracker.histogramValues(forTerminal: paneId)
+    }
 
-        static func generateNext(after previous: [TokenDataPoint]) -> TokenDataPoint {
-            let lastValue = previous.last?.value ?? 0.5
-            let growth = Double.random(in: 0.02...0.15)
-            return TokenDataPoint(value: min(1.0, lastValue * 0.8 + growth))
-        }
+    private var totalTokens: Int {
+        guard let paneId = paneId else { return 0 }
+        return costTracker.totalTokens(forTerminal: paneId)
     }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            // Histogram bars - expand to fill width
-            HStack(alignment: .bottom, spacing: 2) {
-                ForEach(dataPoints) { point in
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(
-                            LinearGradient(
-                                colors: [Color.green.opacity(0.9), Color.green.opacity(0.5)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(maxWidth: .infinity, minHeight: 2, idealHeight: max(2, point.value * 18), maxHeight: max(2, point.value * 18))
+        HStack(spacing: 6) {
+            ClaudeShape()
+                .fill(.white.opacity(0.7))
+                .frame(width: 14, height: 10)
+
+            // Histogram bars
+            HStack(alignment: .bottom, spacing: 1.5) {
+                ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
+                    UnevenRoundedRectangle(topLeadingRadius: 1, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 1)
+                        .fill(Color.orange)
+                        .frame(width: 5, height: max(2, value * 12))
                 }
             }
-            .frame(height: 18)
+            .frame(height: 12)
 
-            // Bottom row: TOKENS label on left, count on right
-            HStack {
-                Text("TOKENS")
-                    .font(.system(size: 7, weight: .bold))
-                    .tracking(0.5)
-                    .foregroundStyle(.white.opacity(0.6))
-
-                Spacer()
-
-                Text(formatTokenCount())
-                    .font(.system(size: 8, weight: .medium, design: .monospaced))
-                    .foregroundStyle(.white.opacity(0.9))
-            }
+            Text(formatTokenCount(totalTokens))
+                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                .foregroundStyle(.white.opacity(0.9))
+                .lineLimit(1)
+                .fixedSize()
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 5)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .background(
             RoundedRectangle(cornerRadius: 6)
                 .fill(.black.opacity(0.75))
@@ -687,37 +699,15 @@ struct TokenHistogramOverlay: View {
                         .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
                 )
         )
-        .onAppear {
-            startTimer()
-        }
-        .onDisappear {
-            stopTimer()
-        }
     }
 
-    private func formatTokenCount() -> String {
-        // Simulate a growing token count based on data points
-        let totalActivity = dataPoints.reduce(0.0) { $0 + $1.value }
-        let tokens = Int(totalActivity * 8500)
-        if tokens >= 1000 {
-            return String(format: "%.1fK", Double(tokens) / 1000.0)
+    private func formatTokenCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        } else if count >= 1000 {
+            return String(format: "%.1fK", Double(count) / 1000.0)
         }
-        return "\(tokens)"
-    }
-
-    private func startTimer() {
-        timer = Timer.scheduledTimer(withTimeInterval: 10.0, repeats: true) { _ in
-            withAnimation(.easeInOut(duration: 0.5)) {
-                var newPoints = Array(dataPoints.dropFirst())
-                newPoints.append(TokenDataPoint.generateNext(after: newPoints))
-                dataPoints = newPoints
-            }
-        }
-    }
-
-    private func stopTimer() {
-        timer?.invalidate()
-        timer = nil
+        return "\(count)"
     }
 }
 
@@ -805,7 +795,7 @@ struct WorkerPickerRow: View {
             // Thumbnail
             ZStack {
                 RoundedRectangle(cornerRadius: 6)
-                    .fill(Color.black)
+                    .fill(Color(red: 0x18/255.0, green: 0x26/255.0, blue: 0x2F/255.0))
                     .frame(width: 60, height: 40)
 
                 if let thumbnail = session.currentThumbnail {

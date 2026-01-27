@@ -23,6 +23,10 @@ final class Terminal {
     /// This is the ID passed to `axel claude --pane-id=<uuid>`.
     var paneId: String?
 
+    /// Server port for this terminal's event server.
+    /// Each terminal gets its own embedded server on a unique port.
+    var serverPort: Int?
+
     // Relationships
     var workspace: Workspace?
     var task: WorkTask?

@@ -7,6 +7,7 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		0C9C9A37C0FF97B7DA4B0AA1 /* CostTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D28E5D714F17DA7A43A0182D /* CostTracker.swift */; };
 		4373D06F2F21DB1000C7DD88 /* Axel.icon in Resources */ = {isa = PBXBuildFile; fileRef = 4373D06E2F21DB1000C7DD88 /* Axel.icon */; };
 		43BD82722F1D63F40092A96C /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82712F1D63F40092A96C /* Supabase */; };
 		43BD82732F1D63F40092A96C /* AutomergeWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82742F1D63F40092A96C /* AutomergeWrapper */; };
@@ -66,10 +67,10 @@
 		A1000001201A0097 /* MacHelpers.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0097 /* MacHelpers.swift */; };
 		A1000001201A0098 /* MacScenes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0098 /* MacScenes.swift */; };
 		A1000001201A0099 /* MobileScene.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0099 /* MobileScene.swift */; };
-		A100000120A10030 /* TaskAssignee.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000110A10030 /* TaskAssignee.swift */; };
 		A1000001201A0100 /* ImmersiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0100 /* ImmersiveView.swift */; };
 		A1000001201A0101 /* CommandPanelViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0101 /* CommandPanelViews.swift */; };
 		A1000001201A0102 /* CommandCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0102 /* CommandCenterView.swift */; };
+		A100000120A10030 /* TaskAssignee.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000110A10030 /* TaskAssignee.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXCopyFilesBuildPhase section */
@@ -145,10 +146,11 @@
 		A1000001101A0097 /* MacHelpers.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacHelpers.swift; sourceTree = "<group>"; };
 		A1000001101A0098 /* MacScenes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MacScenes.swift; sourceTree = "<group>"; };
 		A1000001101A0099 /* MobileScene.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MobileScene.swift; sourceTree = "<group>"; };
-		A100000110A10030 /* TaskAssignee.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskAssignee.swift; sourceTree = "<group>"; };
 		A1000001101A0100 /* ImmersiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmersiveView.swift; sourceTree = "<group>"; };
 		A1000001101A0101 /* CommandPanelViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPanelViews.swift; sourceTree = "<group>"; };
 		A1000001101A0102 /* CommandCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterView.swift; sourceTree = "<group>"; };
+		A100000110A10030 /* TaskAssignee.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskAssignee.swift; sourceTree = "<group>"; };
+		D28E5D714F17DA7A43A0182D /* CostTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CostTracker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -278,6 +280,7 @@
 				A1000001101A0046 /* AutomergeSchemas.swift */,
 				A1000001101A0041 /* InboxService.swift */,
 				A1000001101A0047 /* WorkspaceContainerManager.swift */,
+				D28E5D714F17DA7A43A0182D /* CostTracker.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -424,9 +427,9 @@
 			);
 			mainGroup = A1000001401A0001;
 			packageReferences = (
-				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */,
+				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */,
 				43BD82702F1D5F650092A96C /* XCRemoteSwiftPackageReference "supabase-swift" */,
-				43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */,
+				43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */,
 			);
 			productRefGroup = A1000001401A0003 /* Products */;
 			projectDirPath = "";
@@ -512,6 +515,7 @@
 				A1000001201A0100 /* ImmersiveView.swift in Sources */,
 				A1000001201A0101 /* CommandPanelViews.swift in Sources */,
 				A1000001201A0102 /* CommandCenterView.swift in Sources */,
+				0C9C9A37C0FF97B7DA4B0AA1 /* CostTracker.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -764,11 +768,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */ = {
+		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AutomergeWrapper;
 		};
-		43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */ = {
+		43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/SwiftTermWrapper;
 		};
@@ -793,12 +797,12 @@
 		};
 		43BD82742F1D63F40092A96C /* AutomergeWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */;
+			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */;
 			productName = AutomergeWrapper;
 		};
 		43BD82772F1D63F50092A96C /* SwiftTermWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */;
+			package = 43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */;
 			productName = SwiftTermWrapper;
 		};
 /* End XCSwiftPackageProductDependency section */

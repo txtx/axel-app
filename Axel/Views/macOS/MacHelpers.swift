@@ -14,58 +14,73 @@ struct WorkspaceHeaderView: View {
 
     private let headerHeight: CGFloat = 35
 
-    private var terminalsCount: Int {
-        sessionManager.runningCount
+    var body: some View {
+        OrbView()
+            .frame(height: headerHeight, alignment: .center)
+    }
+}
+
+// Orb - Token usage histogram display (connected to CostTracker)
+struct OrbView: View {
+    @State private var costTracker = CostTracker.shared
+
+    private var histogramValues: [Double] {
+        costTracker.globalHistogramValues
     }
 
-    // TODO: Replace with actual queue count
-    private var queueCount: Int {
-        0
+    private var totalTokens: Int {
+        costTracker.globalTotalTokens
+    }
+
+    private var totalCost: Double {
+        costTracker.globalTotalCostUSD
     }
 
     var body: some View {
         HStack(spacing: 12) {
-            // Terminals count
-            HStack(spacing: 4) {
-                Image(systemName: "terminal")
-                    .font(.system(size: 11))
-                Text("\(terminalsCount)")
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+            // Histogram bars
+            HStack(alignment: .bottom, spacing: 2) {
+                ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(
+                            LinearGradient(
+                                colors: [.orange, .orange.opacity(0.7)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 5, height: max(3, CGFloat(value) * 20))
+                }
             }
-            .foregroundStyle(terminalsCount > 0 ? .green : .secondary)
+            .frame(height: 20)
 
-            // Queue count
-            HStack(spacing: 4) {
-                Image(systemName: "square.stack.3d.down.right.fill")
-                    .font(.system(size: 11))
-                Text("\(queueCount)")
+            // Token count and cost - wider display
+            HStack(spacing: 8) {
+                Text(formatTokenCount(totalTokens))
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(.orange)
+                if totalCost > 0 {
+                    Text(String(format: "$%.4f", totalCost))
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.orange.opacity(0.8))
+                }
             }
-            .foregroundStyle(queueCount > 0 ? .green : .secondary)
         }
-        .padding(.horizontal, 16)
-        .frame(height: headerHeight, alignment: .center)
-    }
-}
-
-// Orb - the capsule container that holds pills
-struct OrbView<Content: View>: View {
-    let content: Content
-
-    init(@ViewBuilder content: () -> Content) {
-        self.content = content()
+        .padding(.horizontal, 14)
+        .padding(.vertical, 6)
+        .background(
+            Capsule()
+                .fill(Color.orange.opacity(0.1))
+        )
     }
 
-    var body: some View {
-        content
-            .padding(.horizontal, 20)
-            .padding(.vertical, 0)
-            .padding(.bottom, 12)
-            .background(
-                Capsule()
-                    .fill(Color.primary.opacity(0.00))
-                    .offset(y: 0)
-            )
+    private func formatTokenCount(_ count: Int) -> String {
+        if count >= 1_000_000 {
+            return String(format: "%.1fM", Double(count) / 1_000_000)
+        } else if count >= 1_000 {
+            return String(format: "%.1fK", Double(count) / 1_000)
+        }
+        return "\(count)"
     }
 }
 
@@ -185,17 +200,16 @@ struct SidebarView: View {
                         if pendingHintsCount > 0 {
                             Text("\(pendingHintsCount)")
                                 .font(.callout.monospacedDigit())
-                                .foregroundStyle(.white)
+                                .foregroundStyle(.red)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(.red)
+                                .background(.red.opacity(0.15))
                                 .clipShape(Capsule())
                         }
                     }
                 } icon: {
-                    Image(systemName: "rectangle.stack")
-                        .symbolRenderingMode(.palette)
-                        .foregroundStyle(.red, .secondary)
+                    Image(systemName: "tray.fill")
+                        .foregroundStyle(.red)
                 }
                 .tag(SidebarSection.inbox(.pending))
 
@@ -208,6 +222,10 @@ struct SidebarView: View {
                             Text("\(answeredHintsCount)")
                                 .font(.callout.monospacedDigit())
                                 .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.secondary.opacity(0.15))
+                                .clipShape(Capsule())
                         }
                     }
                 } icon: {
@@ -225,11 +243,15 @@ struct SidebarView: View {
                         if queuedTasksCount > 0 {
                             Text("\(queuedTasksCount)")
                                 .font(.callout.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.blue)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.blue.opacity(0.15))
+                                .clipShape(Capsule())
                         }
                     }
                 } icon: {
-                    Image(systemName: "tray.fill")
+                    Image(systemName: "rectangle.stack")
                         .foregroundStyle(.blue)
                 }
                 .tag(SidebarSection.queue(.queued))
@@ -242,7 +264,11 @@ struct SidebarView: View {
                         if runningTasksCount > 0 {
                             Text("\(runningTasksCount)")
                                 .font(.callout.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.green)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.green.opacity(0.15))
+                                .clipShape(Capsule())
                         }
                     }
                 } icon: {
@@ -269,7 +295,11 @@ struct SidebarView: View {
                         if runningCount > 0 {
                             Text("\(runningCount)")
                                 .font(.callout.monospacedDigit())
-                                .foregroundStyle(.secondary)
+                                .foregroundStyle(.green)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.green.opacity(0.15))
+                                .clipShape(Capsule())
                         }
                     }
                 } icon: {
@@ -279,25 +309,29 @@ struct SidebarView: View {
                 .padding(.leading, 16)
                 .tag(SidebarSection.terminals)
 
-                // Skills (second under Coding Agents)
+                // Optimizations (shows Skills view)
                 Label {
                     HStack {
-                        Text("Skills")
+                        Text("Optimizations")
                         Spacer()
                         if !skills.isEmpty {
                             Text("\(skills.count)")
                                 .font(.callout.monospacedDigit())
                                 .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.secondary.opacity(0.15))
+                                .clipShape(Capsule())
                         }
                     }
                 } icon: {
-                    Image(systemName: "sparkles")
-                        .foregroundStyle(.secondary)
+                    Image(systemName: "gauge.with.dots.needle.50percent")
+                        .foregroundStyle(.purple)
                 }
                 .padding(.leading, 16)
-                .tag(SidebarSection.skills)
+                .tag(SidebarSection.optimizations(.skills))
 
-                // Context (third under Coding Agents)
+                // Context (under Optimizations)
                 Label {
                     HStack {
                         Text("Context")
@@ -306,14 +340,18 @@ struct SidebarView: View {
                             Text("\(contexts.count)")
                                 .font(.callout.monospacedDigit())
                                 .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.secondary.opacity(0.15))
+                                .clipShape(Capsule())
                         }
                     }
                 } icon: {
-                    Image(systemName: "doc.text")
+                    Image(systemName: "briefcase.fill")
                         .foregroundStyle(.secondary)
                 }
-                .padding(.leading, 16)
-                .tag(SidebarSection.context)
+                .padding(.leading, 28)
+                .tag(SidebarSection.optimizations(.context))
 
                 // Team (fourth under Coding Agents)
                 Label {
@@ -324,6 +362,10 @@ struct SidebarView: View {
                             Text("\(members.count)")
                                 .font(.callout.monospacedDigit())
                                 .foregroundStyle(.secondary)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.secondary.opacity(0.15))
+                                .clipShape(Capsule())
                         }
                     }
                 } icon: {
@@ -340,9 +382,9 @@ struct SidebarView: View {
                         Text(session.taskTitle)
                             .lineLimit(1)
                     } icon: {
-                        Circle()
-                            .fill(.green)
-                            .frame(width: 8, height: 8)
+                        Image(systemName: "terminal")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.green)
                     }
                     .padding(.leading, 32)
                     .font(.callout)
@@ -631,13 +673,6 @@ struct HintRowView: View {
             }
 
             Spacer()
-
-            // Status badge
-            if hint.hintStatus == .pending {
-                Circle()
-                    .fill(.blue)
-                    .frame(width: 8, height: 8)
-            }
         }
         .padding(.vertical, 10)
         .padding(.horizontal, 12)
@@ -1076,7 +1111,7 @@ struct TaskDetailView: View {
                             .textFieldStyle(.plain)
                             .onChange(of: editedTitle) { _, newValue in
                                 if task.title != newValue {
-                                    task.title = newValue
+                                    task.updateTitle(newValue)
                                 }
                             }
 

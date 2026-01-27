@@ -12,7 +12,6 @@ struct SimpleTerminalView: View {
     var body: some View {
         // Create terminal directly - no session management
         DirectTerminalView()
-            .background(Color.black)
     }
 }
 
@@ -24,11 +23,9 @@ class TerminalViewController: NSViewController, NSMenuItemValidation {
 
     override func loadView() {
         containerView = TerminalDropContainerView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        containerView.wantsLayer = true
-        containerView.layer?.backgroundColor = NSColor.black.cgColor
 
         terminalView = LocalProcessTerminalView(frame: containerView.bounds)
-        terminalView.nativeBackgroundColor = NSColor.black
+        // Let the terminal set its own background color
         terminalView.nativeForegroundColor = NSColor.white
         terminalView.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
         terminalView.translatesAutoresizingMaskIntoConstraints = true
@@ -201,7 +198,6 @@ struct TerminalFullViewSimple: View {
     var body: some View {
         TerminalSurfaceRepresentable(view: surfaceView, size: CGSize(width: 800, height: 600))
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.black)
     }
 }
 

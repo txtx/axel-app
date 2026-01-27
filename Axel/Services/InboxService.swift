@@ -36,8 +36,10 @@ final class InboxService {
     /// Last PermissionRequest event ID per session (for auto-resolving)
     private var lastPermissionRequestPerSession: [String: UUID] = [:]
 
-    /// Connection state
-    private(set) var isConnected = false
+    /// Connection state (true if at least one terminal is connected)
+    var isConnected: Bool {
+        !activeConnections.isEmpty
+    }
     private(set) var connectionError: Error?
 
     /// Whether notifications are enabled
@@ -46,10 +48,15 @@ final class InboxService {
     /// Maximum number of events to keep in memory
     private let maxEvents = 100
 
-    /// The base URL for the axel server
-    var serverURL: URL = URL(string: "http://localhost:4318")!
+    /// Active SSE connections by terminal paneId
+    private var activeConnections: [String: Task<Void?, Never>] = [:]
 
-    private var streamTask: Task<Void, Never>?
+    /// Port mapping: paneId -> port
+    private var panePortMapping: [String: Int] = [:]
+
+    /// Port allocator - starts at 4318 and increments
+    private var nextPort: Int = 4318
+
     private let decoder: JSONDecoder
     private let notificationCenter = UNUserNotificationCenter.current()
 
@@ -131,28 +138,57 @@ final class InboxService {
         return metrics
     }
 
+    // MARK: - Port Allocation
+
+    /// Allocate a unique port for a new terminal
+    func allocatePort() -> Int {
+        let port = nextPort
+        nextPort += 1
+        return port
+    }
+
     // MARK: - Public API
 
-    /// Connect to the SSE inbox endpoint and start receiving events
-    func connect() {
-        guard streamTask == nil else {
-            print("[InboxService] Already connected or connecting")
+    /// Connect to a terminal's SSE endpoint
+    func connect(paneId: String, port: Int) {
+        guard activeConnections[paneId] == nil else {
+            print("[InboxService] Already connected to pane \(paneId.prefix(8))...")
             return
         }
 
-        connectionError = nil
+        // Store the port mapping
+        panePortMapping[paneId] = port
 
-        streamTask = Task { [weak self] in
-            await self?.streamEvents()
+        let task = Task { [weak self] in
+            await self?.streamEvents(paneId: paneId, port: port)
+        }
+        activeConnections[paneId] = task
+        print("[InboxService] Connecting to terminal \(paneId.prefix(8))... on port \(port)")
+    }
+
+    /// Get the port for a paneId, defaults to 4318
+    func port(for paneId: String?) -> Int {
+        guard let paneId = paneId else { return 4318 }
+        return panePortMapping[paneId] ?? 4318
+    }
+
+    /// Disconnect from a specific terminal
+    func disconnect(paneId: String) {
+        panePortMapping.removeValue(forKey: paneId)
+        if let task = activeConnections.removeValue(forKey: paneId) {
+            task.cancel()
+            print("[InboxService] Disconnected from pane \(paneId.prefix(8))...")
         }
     }
 
-    /// Disconnect from the SSE endpoint
-    func disconnect() {
-        streamTask?.cancel()
-        streamTask = nil
-        isConnected = false
-        print("[InboxService] Disconnected")
+    /// Disconnect from all terminals
+    func disconnectAll() {
+        for (paneId, task) in activeConnections {
+            task.cancel()
+            print("[InboxService] Disconnected from pane \(paneId.prefix(8))...")
+        }
+        activeConnections.removeAll()
+        panePortMapping.removeAll()
     }
 
     /// Clear all events
@@ -187,16 +223,28 @@ final class InboxService {
         return blocked
     }
 
-    /// Reconnect to the server
+    /// Legacy connect() for backwards compatibility - does nothing now
+    /// Connections are established per-terminal via connect(paneId:port:)
+    func connect() {
+        // No-op - connections are now per-terminal
+        print("[InboxService] connect() called - connections are now per-terminal")
+    }
+
+    /// Legacy reconnect() - does nothing now
     func reconnect() {
-        disconnect()
-        connect()
+        // No-op - connections are now per-terminal
+        print("[InboxService] reconnect() called - connections are now per-terminal")
+    }
+
+    /// Legacy disconnect() - disconnects all
+    func disconnect() {
+        disconnectAll()
     }
 
     // MARK: - SSE Streaming
 
-    private func streamEvents() async {
-        let inboxURL = serverURL.appendingPathComponent("inbox")
+    private func streamEvents(paneId: String, port: Int) async {
+        let inboxURL = URL(string: "http://localhost:\(port)/inbox")!
         print("[InboxService] Connecting to \(inboxURL)")
 
         var request = URLRequest(url: inboxURL)
@@ -213,9 +261,8 @@ final class InboxService {
                 throw InboxServiceError.httpError(statusCode: httpResponse.statusCode)
             }
 
-            isConnected = true
             connectionError = nil
-            print("[InboxService] Connected successfully")
+            print("[InboxService] Connected to port \(port) successfully")
 
             var buffer = ""
 
@@ -231,22 +278,20 @@ final class InboxService {
                 }
             }
 
-            print("[InboxService] Stream ended")
+            print("[InboxService] Stream for port \(port) ended")
         } catch is CancellationError {
-            print("[InboxService] Stream cancelled")
+            print("[InboxService] Stream for port \(port) cancelled")
         } catch {
-            print("[InboxService] Connection error: \(error)")
+            print("[InboxService] Connection error on port \(port): \(error)")
             connectionError = error
         }
-
-        isConnected = false
 
         // Auto-reconnect after a delay if not cancelled
         if !Task.isCancelled {
             try? await Task.sleep(for: .seconds(5))
             if !Task.isCancelled {
-                print("[InboxService] Attempting to reconnect...")
-                await streamEvents()
+                print("[InboxService] Attempting to reconnect to port \(port)...")
+                await streamEvents(paneId: paneId, port: port)
             }
         }
     }
@@ -297,13 +342,20 @@ final class InboxService {
 
         // Handle OTEL metrics separately
         if eventType == "otel_metrics" {
-            parseOTELMetrics(json)
+            let otelPaneId = json["pane_id"] as? String
+            parseOTELMetrics(json, paneId: otelPaneId)
             return
         }
 
         // Parse as InboxEvent
         do {
             let event = try decoder.decode(InboxEvent.self, from: data)
+
+            // Register paneId to sessionId mapping for ANY event that has both
+            // This ensures the mapping exists before OTEL metrics arrive
+            if let sessionId = event.event.claudeSessionId {
+                CostTracker.shared.registerSession(paneId: event.paneId, sessionId: sessionId)
+            }
 
             // Add to front of array (newest first)
             events.insert(event, at: 0)
@@ -331,6 +383,13 @@ final class InboxService {
                     filePath: event.event.toolInput?["file_path"]?.value as? String
                 )
 
+                // Update CostTracker with permission request (use paneId)
+                CostTracker.shared.recordPermissionRequest(
+                    forPaneId: paneId,
+                    toolName: event.event.toolName,
+                    filePath: event.event.toolInput?["file_path"]?.value as? String
+                )
+
                 // Persist as Hint for Supabase sync (use paneId to find terminal)
                 persistPermissionRequestAsHint(event: event, paneId: paneId)
             }
@@ -355,6 +414,9 @@ final class InboxService {
                 }
                 lastPermissionRequestPerSession.removeValue(forKey: sessionId)
 
+                // Finalize task in CostTracker (use paneId)
+                CostTracker.shared.finalizeTask(forPaneId: event.paneId)
+
                 pendingStopEvents.append((eventId: event.id, sessionId: sessionId, timestamp: Date()))
             }
 
@@ -372,7 +434,7 @@ final class InboxService {
 
     // MARK: - OTEL Metrics Parsing
 
-    private func parseOTELMetrics(_ json: [String: Any]) {
+    private func parseOTELMetrics(_ json: [String: Any], paneId: String?) {
         guard let eventData = json["event"] as? [String: Any],
               let resourceMetrics = eventData["resourceMetrics"] as? [[String: Any]] else {
             return
@@ -389,7 +451,7 @@ final class InboxService {
                 }
 
                 for metric in metrics {
-                    parseMetric(metric)
+                    parseMetric(metric, paneId: paneId)
                 }
             }
         }
@@ -419,14 +481,12 @@ final class InboxService {
 
             // Update last snapshot values for next delta calculation
             lastSnapshotValues[pending.sessionId] = MetricsSnapshot(from: metrics)
-
-            print("[InboxService] Created snapshot for event \(pending.eventId): \(deltaSnapshot.formattedCost)")
         }
 
         pendingStopEvents.removeAll()
     }
 
-    private func parseMetric(_ metric: [String: Any]) {
+    private func parseMetric(_ metric: [String: Any], paneId eventPaneId: String?) {
         guard let name = metric["name"] as? String,
               let sum = metric["sum"] as? [String: Any],
               let dataPoints = sum["dataPoints"] as? [[String: Any]] else {
@@ -458,6 +518,13 @@ final class InboxService {
             }
 
             guard let sid = sessionId else { continue }
+
+            // If we have paneId from the event, register the mapping
+            if let paneId = eventPaneId {
+                // Register the mapping (this is idempotent - won't overwrite if already exists)
+                CostTracker.shared.registerSession(paneId: paneId, sessionId: sid)
+            }
+
             let metrics = self.metrics(for: sid)
 
             switch name {
@@ -494,6 +561,16 @@ final class InboxService {
             default:
                 break
             }
+
+            // Update CostTracker with the metrics
+            CostTracker.shared.recordMetrics(
+                forSession: sid,
+                inputTokens: metrics.inputTokens,
+                outputTokens: metrics.outputTokens,
+                cacheReadTokens: metrics.cacheReadTokens,
+                cacheCreationTokens: metrics.cacheCreationTokens,
+                costUSD: metrics.costUSD
+            )
         }
     }
 
@@ -507,7 +584,8 @@ final class InboxService {
 
     /// Send a permission response to the axel server
     func sendPermissionResponse(sessionId: String, allow: Bool, paneId: String? = nil) async throws {
-        let outboxURL = serverURL.appendingPathComponent("outbox")
+        let serverPort = port(for: paneId)
+        let outboxURL = URL(string: "http://localhost:\(serverPort)/outbox")!
 
         var body: [String: Any] = [
             "session_id": sessionId,
@@ -542,7 +620,8 @@ final class InboxService {
 
     /// Send a text response (for questions/hints)
     func sendTextResponse(sessionId: String, text: String, paneId: String? = nil) async throws {
-        let outboxURL = serverURL.appendingPathComponent("outbox")
+        let serverPort = port(for: paneId)
+        let outboxURL = URL(string: "http://localhost:\(serverPort)/outbox")!
 
         var body: [String: Any] = [
             "session_id": sessionId,
@@ -579,7 +658,6 @@ extension InboxService {
     /// Mark all pending hints for a pane as answered
     private func markHintsAnsweredForSession(sessionId: String, response: String) {
         guard let context = modelContext else {
-            print("[InboxService] No model context set, skipping hint update")
             return
         }
 
@@ -589,7 +667,6 @@ extension InboxService {
                 predicate: #Predicate { $0.paneId == sessionId }
             )
             guard let terminal = try context.fetch(terminalDescriptor).first else {
-                print("[InboxService] No terminal found for paneId: \(sessionId)")
                 return
             }
 
@@ -606,7 +683,6 @@ extension InboxService {
                 hint.markAnswered()
                 // Store the response
                 hint.responseData = try? JSONEncoder().encode(["response": response])
-                print("[InboxService] Marked hint as answered: \(hint.title)")
             }
 
             try context.save()
@@ -616,21 +692,15 @@ extension InboxService {
                 await SyncScheduler.shared.scheduleSync()
             }
         } catch {
-            print("[InboxService] Error marking hints as answered: \(error)")
+            // Error marking hints - handled silently
         }
     }
 
     /// Create a Hint from a PermissionRequest event and persist it to SwiftData
     private func persistPermissionRequestAsHint(event: InboxEvent, paneId: String) {
-        print("[InboxService] === HINT PERSISTENCE DEBUG ===")
-        print("[InboxService] Pane ID: \(paneId)")
-        print("[InboxService] CWD: \(event.event.cwd ?? "nil")")
-
         guard let context = modelContext else {
-            print("[InboxService] ERROR: No model context set, skipping hint persistence")
             return
         }
-        print("[InboxService] Model context available: YES")
 
         // Build title from tool info
         let toolName = event.event.toolName ?? "Unknown"
@@ -676,38 +746,21 @@ extension InboxService {
                 if let task = terminal.task {
                     hint.task = task
                     linkedToTask = true
-                    print("[InboxService] Linked hint to task via terminal: \(task.title)")
                 }
             }
 
             // Fallback: if not linked to task, try to find workspace by cwd and link to running task
             if !linkedToTask, let cwd = event.event.cwd {
-                print("[InboxService] Trying workspace fallback for cwd: \(cwd)")
-
                 // Find workspace that matches this cwd
                 let workspaceDescriptor = FetchDescriptor<Workspace>()
                 let workspaces = try context.fetch(workspaceDescriptor)
-                print("[InboxService] Found \(workspaces.count) workspaces")
-
-                for ws in workspaces {
-                    print("[InboxService]   - Workspace: \(ws.name), path: \(ws.path ?? "nil"), tasks: \(ws.tasks.count), syncId: \(ws.syncId?.uuidString ?? "nil")")
-                }
 
                 // Find workspace whose path is a prefix of cwd (or exact match)
                 if let workspace = workspaces.first(where: { ws in
                     guard let wsPath = ws.path else { return false }
-                    let matches = cwd.hasPrefix(wsPath) || wsPath.hasPrefix(cwd)
-                    if matches {
-                        print("[InboxService] Matched workspace: \(ws.name)")
-                    }
-                    return matches
+                    return cwd.hasPrefix(wsPath) || wsPath.hasPrefix(cwd)
                 }) {
                     // Find a running task in this workspace, or the most recent task
-                    print("[InboxService] Workspace \(workspace.name) has \(workspace.tasks.count) tasks")
-                    for task in workspace.tasks {
-                        print("[InboxService]   - Task: \(task.title), status: \(task.status), syncId: \(task.syncId?.uuidString ?? "nil")")
-                    }
-
                     let runningStatus = TaskStatus.running.rawValue
                     let runningTask = workspace.tasks.first { $0.status == runningStatus }
                     let fallbackTask = workspace.tasks.sorted { $0.createdAt > $1.createdAt }.first
@@ -715,34 +768,24 @@ extension InboxService {
                     if let task = runningTask ?? fallbackTask {
                         hint.task = task
                         linkedToTask = true
-                        print("[InboxService] Linked hint to task via workspace: \(task.title) (syncId: \(task.syncId?.uuidString ?? "nil"))")
-                    } else {
-                        print("[InboxService] No tasks found in workspace \(workspace.name)")
                     }
-                } else {
-                    print("[InboxService] No workspace matched cwd: \(cwd)")
                 }
             }
-
-            if !linkedToTask {
-                print("[InboxService] WARNING: Hint not linked to any task, won't sync to Supabase")
-            }
         } catch {
-            print("[InboxService] Error finding terminal/workspace: \(error)")
+            // Failed to link hint to task - it will be persisted without a task link
         }
 
         // Insert and save
         context.insert(hint)
         do {
             try context.save()
-            print("[InboxService] Persisted hint: \(title) (linked to task: \(linkedToTask))")
 
             // Trigger sync if available
             Task {
                 await SyncScheduler.shared.scheduleSync()
             }
         } catch {
-            print("[InboxService] Failed to save hint: \(error)")
+            // Hint persistence failed - user will need to handle this manually
         }
     }
 }

@@ -23,8 +23,8 @@ struct visionOSContentView: View {
 
         var icon: String {
             switch self {
-            case .inbox: return "rectangle.stack"
-            case .tasks: return "tray.fill"
+            case .inbox: return "tray.fill"
+            case .tasks: return "rectangle.stack"
             case .skills: return "sparkles"
             case .context: return "doc.text"
             case .settings: return "gear"
@@ -49,7 +49,7 @@ struct visionOSContentView: View {
                 }
             }
             .tabItem {
-                Label("Inbox", systemImage: "rectangle.stack")
+                Label("Inbox", systemImage: "tray.fill")
             }
             .tag(VisionTab.inbox)
 
@@ -61,7 +61,7 @@ struct visionOSContentView: View {
                     }
             }
             .tabItem {
-                Label("Tasks", systemImage: "tray.fill")
+                Label("Tasks", systemImage: "rectangle.stack")
             }
             .tag(VisionTab.tasks)
 
@@ -159,7 +159,7 @@ struct VisionInboxList: View {
         VStack(spacing: 0) {
             // Header
             HStack(alignment: .center) {
-                Image(systemName: "tray.fill")
+                Image(systemName: "rectangle.stack")
                     .font(.system(size: 18))
                     .foregroundStyle(.blue)
 
@@ -283,6 +283,8 @@ struct VisionTodoDetail: View {
     var viewModel: TodoViewModel
     @Environment(\.modelContext) private var modelContext
     @State private var editedTitle: String = ""
+    @State private var editedDescription: String = ""
+    @State private var isPreviewingMarkdown: Bool = false
 
     var body: some View {
         ScrollView {
@@ -294,7 +296,7 @@ struct VisionTodoDetail: View {
                         .onChange(of: editedTitle) { _, newValue in
                             // Only update if value actually changed
                             if todo.title != newValue {
-                                todo.title = newValue
+                                todo.updateTitle(newValue)
                             }
                         }
 
@@ -314,6 +316,63 @@ struct VisionTodoDetail: View {
                             .font(.title3)
                             .foregroundStyle(.green)
                         }
+                    }
+                }
+
+                // Notes/Description
+                VStack(alignment: .leading, spacing: 12) {
+                    HStack {
+                        Text("Notes")
+                            .font(.title3.weight(.medium))
+                            .foregroundStyle(.secondary)
+
+                        Spacer()
+
+                        Picker("Mode", selection: $isPreviewingMarkdown) {
+                            Text("Edit").tag(false)
+                            Text("Preview").tag(true)
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                    }
+
+                    if isPreviewingMarkdown {
+                        // Markdown preview
+                        if editedDescription.isEmpty {
+                            Text("No notes")
+                                .foregroundStyle(.tertiary)
+                                .italic()
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(16)
+                        } else {
+                            Text(LocalizedStringKey(editedDescription))
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(16)
+                        }
+                    } else {
+                        // Edit mode
+                        TextField("Add notes...", text: $editedDescription, axis: .vertical)
+                            .lineLimit(5...20)
+                            .font(.body)
+                            .padding(16)
+                            .background(Color.primary.opacity(0.05))
+                            .clipShape(RoundedRectangle(cornerRadius: 12))
+                            .onChange(of: editedDescription) { _, newValue in
+                                let newDesc = newValue.isEmpty ? nil : newValue
+                                if todo.taskDescription != newDesc {
+                                    todo.updateDescription(newDesc)
+                                }
+                            }
+
+                        // Markdown hints
+                        HStack(spacing: 16) {
+                            Text("**bold**")
+                            Text("*italic*")
+                            Text("`code`")
+                            Text("[link](url)")
+                        }
+                        .font(.caption)
+                        .foregroundStyle(.tertiary)
                     }
                 }
 
@@ -347,6 +406,22 @@ struct VisionTodoDetail: View {
         .navigationTitle("Task")
         .onAppear {
             editedTitle = todo.title
+            editedDescription = todo.taskDescription ?? ""
+        }
+        .onChange(of: todo.id) { _, _ in
+            editedTitle = todo.title
+            editedDescription = todo.taskDescription ?? ""
+        }
+        .onChange(of: todo.title) { _, newTitle in
+            if editedTitle != newTitle {
+                editedTitle = newTitle
+            }
+        }
+        .onChange(of: todo.taskDescription) { _, newDescription in
+            let newValue = newDescription ?? ""
+            if editedDescription != newValue {
+                editedDescription = newValue
+            }
         }
     }
 }
