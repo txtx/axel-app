@@ -39,6 +39,8 @@ extension Notification.Name {
     static let showSkills = Notification.Name("showSkills")
     static let runTaskTriggered = Notification.Name("runTaskTriggered")
     static let deleteTasksTriggered = Notification.Name("deleteTasksTriggered")
+    static let completeTaskTriggered = Notification.Name("completeTaskTriggered")
+    static let cancelTaskTriggered = Notification.Name("cancelTaskTriggered")
 }
 
 // MARK: - Focused Scene Values for Window-Specific Actions
@@ -52,6 +54,14 @@ struct RunTaskActionKey: FocusedValueKey {
 }
 
 struct DeleteTasksActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+struct CompleteTaskActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
+struct CancelTaskActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
 
@@ -70,6 +80,16 @@ extension FocusedValues {
         get { self[DeleteTasksActionKey.self] }
         set { self[DeleteTasksActionKey.self] = newValue }
     }
+
+    var completeTaskAction: (() -> Void)? {
+        get { self[CompleteTaskActionKey.self] }
+        set { self[CompleteTaskActionKey.self] = newValue }
+    }
+
+    var cancelTaskAction: (() -> Void)? {
+        get { self[CancelTaskActionKey.self] }
+        set { self[CancelTaskActionKey.self] = newValue }
+    }
 }
 
 // MARK: - macOS Scene Builder
@@ -81,6 +101,8 @@ struct MacScenes: Scene {
     @FocusedValue(\.newTaskAction) private var newTaskAction
     @FocusedValue(\.runTaskAction) private var runTaskAction
     @FocusedValue(\.deleteTasksAction) private var deleteTasksAction
+    @FocusedValue(\.completeTaskAction) private var completeTaskAction
+    @FocusedValue(\.cancelTaskAction) private var cancelTaskAction
 
     var body: some Scene {
         // Workspace Picker Window (launcher) - uses shared container for workspace metadata
@@ -125,6 +147,20 @@ struct MacScenes: Scene {
                 }
                 .keyboardShortcut("r", modifiers: .command)
                 .disabled(runTaskAction == nil)
+
+                Divider()
+
+                Button("Complete") {
+                    completeTaskAction?()
+                }
+                .keyboardShortcut("k", modifiers: .command)
+                .disabled(completeTaskAction == nil)
+
+                Button("Cancel") {
+                    cancelTaskAction?()
+                }
+                .keyboardShortcut("k", modifiers: [.command, .option])
+                .disabled(cancelTaskAction == nil)
 
                 Divider()
 

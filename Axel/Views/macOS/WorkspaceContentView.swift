@@ -304,7 +304,127 @@ struct WorkspaceContentView: View {
         }
     }
 
+    // MARK: - Toolbar Content
+
+    @ToolbarContentBuilder
+    private var toolbarContent: some ToolbarContent {
+        ToolbarItem(placement: .principal) {
+            WorkspaceToolbarHeader(workspace: workspace, showTerminal: $showTerminal)
+        }
+
+        ToolbarItemGroup(placement: .primaryAction) {
+            if !authService.isAuthenticated {
+                signInButton
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var signInButton: some View {
+        Button {
+            Task {
+                await authService.signInWithGitHub()
+            }
+        } label: {
+            signInButtonLabel
+        }
+        .buttonStyle(.borderless)
+        .help("Sign in with GitHub")
+    }
+
+    @ViewBuilder
+    private var signInButtonLabel: some View {
+        if authService.isLoading {
+            ProgressView()
+                .controlSize(.small)
+        } else if let error = authService.authError {
+            HStack(spacing: 6) {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 16))
+                Text("Error")
+                    .font(.system(size: 12))
+            }
+            .foregroundStyle(.red)
+            .padding(.horizontal, 16)
+            .help(error.localizedDescription)
+        } else {
+            HStack(spacing: 6) {
+                Image(systemName: "person.circle")
+                    .font(.system(size: 16))
+                Text("Sign in to Sync")
+                    .font(.system(size: 12))
+            }
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 16)
+        }
+    }
+
+    // MARK: - Floating Terminal Overlay
+
+    @ViewBuilder
+    private var floatingTerminalOverlay: some View {
+        if let session = floatingSession {
+            FloatingTerminalMiniature(
+                session: session,
+                onDismiss: { floatingSession = nil },
+                onTap: {
+                    sidebarSelection = .terminals
+                    selectedSession = session
+                    floatingSession = nil
+                }
+            )
+            .padding(20)
+        }
+    }
+
+    // MARK: - Body
+
     var body: some View {
+        mainContent
+            .modifier(WorkspaceKeyboardShortcuts(
+                selectedTask: selectedTask,
+                sidebarSelection: $sidebarSelection,
+                selectedSession: selectedSession,
+                showCloseTerminalConfirmation: $showCloseTerminalConfirmation,
+                onStartTerminal: { startTerminal() },
+                onStartTerminalForTask: { if let task = selectedTask { startTerminal(for: task) } }
+            ))
+            .modifier(WorkspaceAlertModifier(
+                showCloseTerminalConfirmation: $showCloseTerminalConfirmation,
+                selectedSession: selectedSession,
+                sessionManager: sessionManager,
+                onCloseSession: { selectedSession = nil }
+            ))
+            .modifier(WorkspaceSheetModifier(
+                workspace: workspace,
+                appState: appState,
+                showWorkerPicker: $showWorkerPicker,
+                availableWorkers: availableWorkers,
+                pendingTask: $pendingTask,
+                onStartTerminal: startTerminal,
+                onAssignTask: assignTaskToWorker,
+                onCreateNewTerminal: createNewTerminal
+            ))
+            .overlay(alignment: .bottomTrailing) { floatingTerminalOverlay }
+            .modifier(WorkspaceLifecycleModifier(
+                workspace: workspace,
+                selectedTask: $selectedTask,
+                showTerminal: $showTerminal,
+                authService: authService,
+                syncService: syncService,
+                modelContext: modelContext,
+                scenePhase: scenePhase,
+                performSync: performSync
+            ))
+            .modifier(WorkspaceFocusedValuesModifier(
+                selectedTask: selectedTask,
+                appState: appState,
+                onStartTerminal: { if let task = selectedTask, task.taskStatus == .queued { startTerminal(for: task) } }
+            ))
+            .modifier(WorkspaceNotificationModifier(sidebarSelection: $sidebarSelection))
+    }
+
+    private var mainContent: some View {
         NavigationSplitView {
             WorkspaceSidebarView(
                 workspace: workspace,
@@ -314,189 +434,178 @@ struct WorkspaceContentView: View {
             sectionView
         }
         .frame(minWidth: 1000, idealWidth: 1200, minHeight: 650, idealHeight: 800)
-        .toolbar {
-            ToolbarItem(placement: .principal) {
-                // Centered workspace info (Xcode style)
-                WorkspaceToolbarHeader(workspace: workspace, showTerminal: $showTerminal)
-            }
-
-            ToolbarItemGroup(placement: .primaryAction) {
-                // Sign in button (only when not authenticated)
-                if !authService.isAuthenticated {
-                    Button {
-                        Task {
-                            print("[WorkspaceContentView] Sign in button pressed")
-                            await authService.signInWithGitHub()
-                            print("[WorkspaceContentView] Sign in completed, error: \(String(describing: authService.authError))")
-                        }
-                    } label: {
-                        if authService.isLoading {
-                            ProgressView()
-                                .controlSize(.small)
-                        } else if let error = authService.authError {
-                            HStack(spacing: 6) {
-                                Image(systemName: "exclamationmark.triangle")
-                                    .font(.system(size: 16))
-                                Text("Error")
-                                    .font(.system(size: 12))
-                            }
-                            .foregroundStyle(.red)
-                            .padding(.horizontal, 16)
-                            .help(error.localizedDescription)
-                        } else {
-                            HStack(spacing: 6) {
-                                Image(systemName: "person.circle")
-                                    .font(.system(size: 16))
-                                Text("Sign in to Sync")
-                                    .font(.system(size: 12))
-                            }
-                            .foregroundStyle(.secondary)
-                            .padding(.horizontal, 16)
-                        }
-                    }
-                    .buttonStyle(.borderless)
-                    .help("Sign in with GitHub")
-                }
-            }
-        }
+        .toolbar { toolbarContent }
         .toolbarBackground(.visible, for: .windowToolbar)
         .toolbarTitleDisplayMode(.inlineLarge)
-        .keyboardShortcut(for: .runTerminal) {
-            if let task = selectedTask {
-                startTerminal(for: task)
-            }
-        }
-        .keyboardShortcut(for: .newTerminal) {
-            startTerminal()
-        }
-        .keyboardShortcut(for: .closeTerminal) {
-            // Only show confirmation when Agents sidebar is selected and a session is selected
-            if case .terminals = sidebarSelection, selectedSession != nil {
-                showCloseTerminalConfirmation = true
-            }
-        }
-        .keyboardShortcut(for: .showTasks) {
-            sidebarSelection = .queue(.queued)
-        }
-        .keyboardShortcut(for: .showAgents) {
-            sidebarSelection = .terminals
-        }
-        .keyboardShortcut(for: .showInbox) {
-            sidebarSelection = .inbox(.pending)
-        }
-        .keyboardShortcut(for: .showSkills) {
-            sidebarSelection = .optimizations(.skills)
-        }
-        .alert("Close Terminal?", isPresented: $showCloseTerminalConfirmation) {
-            Button("Cancel", role: .cancel) { }
-            Button("Close", role: .destructive) {
-                if let session = selectedSession {
-                    sessionManager.stopSession(session)
-                    selectedSession = nil
+        .navigationTitle(workspace.name)
+    }
+}
+
+// MARK: - Workspace View Modifiers
+
+private struct WorkspaceKeyboardShortcuts: ViewModifier {
+    let selectedTask: WorkTask?
+    @Binding var sidebarSelection: SidebarSection?
+    let selectedSession: TerminalSession?
+    @Binding var showCloseTerminalConfirmation: Bool
+    let onStartTerminal: () -> Void
+    let onStartTerminalForTask: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .keyboardShortcut(for: .runTerminal) { onStartTerminalForTask() }
+            .keyboardShortcut(for: .newTerminal) { onStartTerminal() }
+            .keyboardShortcut(for: .closeTerminal) {
+                if case .terminals = sidebarSelection, selectedSession != nil {
+                    showCloseTerminalConfirmation = true
                 }
             }
-        } message: {
-            Text("This will stop the running terminal session. Any unsaved work may be lost.")
-        }
-        .sheet(isPresented: $appState.isNewTaskPresented) {
-            WorkspaceCreateTaskView(workspace: workspace, isPresented: $appState.isNewTaskPresented) { task in
-                startTerminal(for: task)
-            }
-        }
-        .sheet(isPresented: $showWorkerPicker) {
-            WorkerPickerPanel(workers: availableWorkers) { selectedWorker in
-                if let task = pendingTask {
-                    if let worker = selectedWorker {
-                        // User selected an existing worker
-                        assignTaskToWorker(task, worker: worker)
-                    } else {
-                        // User chose to create a new agent
-                        createNewTerminal(for: task)
+            .keyboardShortcut(for: .showTasks) { sidebarSelection = .queue(.queued) }
+            .keyboardShortcut(for: .showAgents) { sidebarSelection = .terminals }
+            .keyboardShortcut(for: .showInbox) { sidebarSelection = .inbox(.pending) }
+            .keyboardShortcut(for: .showSkills) { sidebarSelection = .optimizations(.skills) }
+    }
+}
+
+private struct WorkspaceAlertModifier: ViewModifier {
+    @Binding var showCloseTerminalConfirmation: Bool
+    let selectedSession: TerminalSession?
+    let sessionManager: TerminalSessionManager
+    let onCloseSession: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .alert("Close Terminal?", isPresented: $showCloseTerminalConfirmation) {
+                Button("Cancel", role: .cancel) { }
+                Button("Close", role: .destructive) {
+                    if let session = selectedSession {
+                        sessionManager.stopSession(session)
+                        onCloseSession()
                     }
                 }
-                pendingTask = nil
+            } message: {
+                Text("This will stop the running terminal session. Any unsaved work may be lost.")
             }
-            .presentationDetents([.medium])
-        }
-        .overlay(alignment: .bottomTrailing) {
-            if let session = floatingSession {
-                FloatingTerminalMiniature(
-                    session: session,
-                    onDismiss: {
-                        floatingSession = nil
-                    },
-                    onTap: {
-                        // Navigate to terminals and select this session
-                        sidebarSelection = .terminals
-                        selectedSession = session
-                        floatingSession = nil
+    }
+}
+
+private struct WorkspaceSheetModifier: ViewModifier {
+    let workspace: Workspace
+    @Bindable var appState: AppState
+    @Binding var showWorkerPicker: Bool
+    let availableWorkers: [TerminalSession]
+    @Binding var pendingTask: WorkTask?
+    let onStartTerminal: (WorkTask) -> Void
+    let onAssignTask: (WorkTask, TerminalSession) -> Void
+    let onCreateNewTerminal: (WorkTask) -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .sheet(isPresented: $appState.isNewTaskPresented) {
+                WorkspaceCreateTaskView(workspace: workspace, isPresented: $appState.isNewTaskPresented) { task in
+                    onStartTerminal(task)
+                }
+            }
+            .sheet(isPresented: $showWorkerPicker) {
+                WorkerPickerPanel(workers: availableWorkers) { selectedWorker in
+                    if let task = pendingTask {
+                        if let worker = selectedWorker {
+                            onAssignTask(task, worker)
+                        } else {
+                            onCreateNewTerminal(task)
+                        }
                     }
-                )
-                .padding(20)
+                    pendingTask = nil
+                }
+                .presentationDetents([.medium])
             }
-        }
-        .onChange(of: selectedTask) { _, _ in
-            showTerminal = false
-        }
-        .task {
-            // Connect to inbox service early so we receive events even if inbox view isn't shown
-            InboxService.shared.connect()
+    }
+}
 
-            // Register this workspace as active for scoped syncing
-            let workspaceId = workspace.syncId ?? workspace.id
-            syncService.registerActiveWorkspace(workspaceId)
+private struct WorkspaceLifecycleModifier: ViewModifier {
+    let workspace: Workspace
+    @Binding var selectedTask: WorkTask?
+    @Binding var showTerminal: Bool
+    let authService: AuthService
+    let syncService: SyncService
+    let modelContext: ModelContext
+    let scenePhase: ScenePhase
+    let performSync: () -> Void
 
-            // Sync on launch if authenticated
-            performSync()
-            // Start real-time sync for THIS workspace only
-            if authService.isAuthenticated {
-                await syncService.startRealtimeSync(context: modelContext, workspaceId: workspaceId)
+    func body(content: Content) -> some View {
+        content
+            .onChange(of: selectedTask) { _, _ in
+                showTerminal = false
             }
-        }
-        .onDisappear {
-            // Unregister workspace when window closes
-            let workspaceId = workspace.syncId ?? workspace.id
-            syncService.unregisterActiveWorkspace(workspaceId)
-        }
-        .onChange(of: scenePhase) { _, newPhase in
-            if newPhase == .active {
+            .task {
+                InboxService.shared.connect()
+                let workspaceId = workspace.syncId ?? workspace.id
+                syncService.registerActiveWorkspace(workspaceId)
                 performSync()
-            }
-        }
-        .onChange(of: authService.isAuthenticated) { _, isAuthenticated in
-            if isAuthenticated {
-                performSync()
-                Task {
-                    let workspaceId = workspace.syncId ?? workspace.id
+                if authService.isAuthenticated {
                     await syncService.startRealtimeSync(context: modelContext, workspaceId: workspaceId)
                 }
             }
-        }
-        .navigationTitle(workspace.name)
-        .focusedSceneValue(\.newTaskAction) {
-            appState.isNewTaskPresented = true
-        }
-        .focusedSceneValue(\.runTaskAction, selectedTask != nil ? {
-            if let task = selectedTask, task.taskStatus == .queued {
-                NotificationCenter.default.post(name: .runTaskTriggered, object: nil)
-                startTerminal(for: task)
+            .onDisappear {
+                let workspaceId = workspace.syncId ?? workspace.id
+                syncService.unregisterActiveWorkspace(workspaceId)
             }
-        } : nil)
-        .focusedSceneValue(\.deleteTasksAction, selectedTask != nil ? {
-            NotificationCenter.default.post(name: .deleteTasksTriggered, object: nil)
-        } : nil)
-        .onReceive(NotificationCenter.default.publisher(for: .showTasks)) { _ in
-            sidebarSelection = .queue(.queued)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .showAgents)) { _ in
-            sidebarSelection = .terminals
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .showInbox)) { _ in
-            sidebarSelection = .inbox(.pending)
-        }
-        .onReceive(NotificationCenter.default.publisher(for: .showSkills)) { _ in
-            sidebarSelection = .optimizations(.skills)
-        }
+            .onChange(of: scenePhase) { _, newPhase in
+                if newPhase == .active { performSync() }
+            }
+            .onChange(of: authService.isAuthenticated) { _, isAuthenticated in
+                if isAuthenticated {
+                    performSync()
+                    Task {
+                        let workspaceId = workspace.syncId ?? workspace.id
+                        await syncService.startRealtimeSync(context: modelContext, workspaceId: workspaceId)
+                    }
+                }
+            }
+    }
+}
+
+private struct WorkspaceFocusedValuesModifier: ViewModifier {
+    let selectedTask: WorkTask?
+    @Bindable var appState: AppState
+    let onStartTerminal: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .focusedSceneValue(\.newTaskAction) { appState.isNewTaskPresented = true }
+            .focusedSceneValue(\.runTaskAction, selectedTask != nil ? {
+                NotificationCenter.default.post(name: .runTaskTriggered, object: nil)
+                onStartTerminal()
+            } : nil)
+            .focusedSceneValue(\.deleteTasksAction, selectedTask != nil ? {
+                NotificationCenter.default.post(name: .deleteTasksTriggered, object: nil)
+            } : nil)
+            .focusedSceneValue(\.completeTaskAction, selectedTask != nil ? {
+                NotificationCenter.default.post(name: .completeTaskTriggered, object: nil)
+            } : nil)
+            .focusedSceneValue(\.cancelTaskAction, selectedTask != nil ? {
+                NotificationCenter.default.post(name: .cancelTaskTriggered, object: nil)
+            } : nil)
+    }
+}
+
+private struct WorkspaceNotificationModifier: ViewModifier {
+    @Binding var sidebarSelection: SidebarSection?
+
+    func body(content: Content) -> some View {
+        content
+            .onReceive(NotificationCenter.default.publisher(for: .showTasks)) { _ in
+                sidebarSelection = .queue(.queued)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showAgents)) { _ in
+                sidebarSelection = .terminals
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showInbox)) { _ in
+                sidebarSelection = .inbox(.pending)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .showSkills)) { _ in
+                sidebarSelection = .optimizations(.skills)
+            }
     }
 }
 
@@ -822,7 +931,7 @@ struct WorkspaceSidebarView: View {
 // MARK: - Workspace Queue List View
 
 struct WorkspaceQueueListView: View {
-    let workspace: Workspace
+    @Bindable var workspace: Workspace
     @Environment(\.modelContext) private var modelContext
     let filter: TaskFilter
     @Binding var highlightedTask: WorkTask?
@@ -931,48 +1040,107 @@ struct WorkspaceQueueListView: View {
         }
     }
 
+    /// Sync selection state - ensures highlightedTask and selectedTaskIds are in sync
+    private func syncSelectionState() {
+        // First, check if selectedTaskIds has a valid selection
+        if let selectedTask = visibleTasksInOrder.first(where: { selectedTaskIds.contains($0.id) }) {
+            // Update highlightedTask to match the visual selection
+            highlightedTask = selectedTask
+        } else if let task = highlightedTask, visibleTasksInOrder.contains(where: { $0.id == task.id }) {
+            // selectedTaskIds is empty but highlightedTask has a valid value (e.g., after view recreation)
+            // Initialize selectedTaskIds from highlightedTask
+            selectedTaskIds = [task.id]
+            lastSelectedTaskId = task.id
+        } else {
+            // No valid selection anywhere - clear everything
+            highlightedTask = nil
+            selectedTaskIds.removeAll()
+        }
+    }
+
+    /// Toggle expansion of the currently selected task
+    private func toggleSelectedTaskExpansion() {
+        // Use selectedTaskIds as the source of truth to find the task to expand
+        guard let task = visibleTasksInOrder.first(where: { selectedTaskIds.contains($0.id) }) else {
+            return
+        }
+
+        // Also sync highlightedTask to ensure consistency
+        highlightedTask = task
+
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            if expandedTask?.id == task.id {
+                expandedTask = nil
+            } else {
+                expandedTask = task
+            }
+        }
+    }
+
     /// Move selection up
     private func moveSelectionUp(extendSelection: Bool = false) {
         guard !visibleTasksInOrder.isEmpty else { return }
 
-        if let currentId = highlightedTask?.id,
-           let currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == currentId }),
-           currentIndex > 0 {
+        // When extending selection, use highlightedTask (cursor position)
+        // Otherwise, use first selected task
+        let currentIndex: Int?
+        if extendSelection, let highlighted = highlightedTask {
+            currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == highlighted.id })
+        } else {
+            currentIndex = visibleTasksInOrder.firstIndex(where: { selectedTaskIds.contains($0.id) })
+        }
+
+        if let currentIndex, currentIndex > 0 {
             let newTask = visibleTasksInOrder[currentIndex - 1]
             if extendSelection {
                 selectedTaskIds.insert(newTask.id)
-                highlightedTask = newTask
             } else {
-                selectTask(newTask)
+                selectedTaskIds = [newTask.id]
             }
-        } else {
-            // No selection or at top, select first
-            if let first = visibleTasksInOrder.first {
-                selectTask(first)
+            highlightedTask = newTask
+            lastSelectedTaskId = newTask.id
+        } else if currentIndex == nil {
+            // No selection in current list - select last task
+            if let last = visibleTasksInOrder.last {
+                selectedTaskIds = [last.id]
+                highlightedTask = last
+                lastSelectedTaskId = last.id
             }
         }
+        // If at top (currentIndex == 0), do nothing (don't wrap around)
     }
 
     /// Move selection down
     private func moveSelectionDown(extendSelection: Bool = false) {
         guard !visibleTasksInOrder.isEmpty else { return }
 
-        if let currentId = highlightedTask?.id,
-           let currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == currentId }),
-           currentIndex < visibleTasksInOrder.count - 1 {
+        // When extending selection, use highlightedTask (cursor position)
+        // Otherwise, use first selected task
+        let currentIndex: Int?
+        if extendSelection, let highlighted = highlightedTask {
+            currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == highlighted.id })
+        } else {
+            currentIndex = visibleTasksInOrder.firstIndex(where: { selectedTaskIds.contains($0.id) })
+        }
+
+        if let currentIndex, currentIndex < visibleTasksInOrder.count - 1 {
             let newTask = visibleTasksInOrder[currentIndex + 1]
             if extendSelection {
                 selectedTaskIds.insert(newTask.id)
-                highlightedTask = newTask
             } else {
-                selectTask(newTask)
+                selectedTaskIds = [newTask.id]
             }
-        } else if highlightedTask == nil {
-            // No selection, select first
+            highlightedTask = newTask
+            lastSelectedTaskId = newTask.id
+        } else if currentIndex == nil {
+            // No selection in current list - select first task
             if let first = visibleTasksInOrder.first {
-                selectTask(first)
+                selectedTaskIds = [first.id]
+                highlightedTask = first
+                lastSelectedTaskId = first.id
             }
         }
+        // If at bottom, do nothing (don't wrap around)
     }
 
     /// Delete selected tasks
@@ -980,14 +1148,96 @@ struct WorkspaceQueueListView: View {
         let tasksToDelete = selectedTasks
         guard !tasksToDelete.isEmpty else { return }
 
-        for task in tasksToDelete {
-            modelContext.delete(task)
-        }
-
-        // Clear selection
+        // Clear selection first
         selectedTaskIds.removeAll()
         highlightedTask = nil
         expandedTask = nil
+
+        // Explicitly remove from relationship and delete to trigger SwiftUI observation
+        for task in tasksToDelete {
+            workspace.tasks.removeAll { $0.id == task.id }
+            modelContext.delete(task)
+        }
+        try? modelContext.save()
+
+        // Sync changes (detached to avoid main actor contention)
+        let workspaceId = workspace.syncId ?? workspace.id
+        Task.detached {
+            await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: self.modelContext)
+        }
+    }
+
+    /// Mark selected task(s) as completed and select next task
+    private func markSelectedComplete() {
+        guard let task = highlightedTask else { return }
+        let newStatus: TaskStatus = task.taskStatus == .completed ? .queued : .completed
+
+        // Find next task before changing status (which may remove it from visible list)
+        if let currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == task.id }) {
+            let nextTask = currentIndex < visibleTasksInOrder.count - 1
+                ? visibleTasksInOrder[currentIndex + 1]
+                : (currentIndex > 0 ? visibleTasksInOrder[currentIndex - 1] : nil)
+
+            task.updateStatus(newStatus)
+
+            // Select next task if the current one will disappear from this view
+            if let next = nextTask, newStatus == .completed && filter != .completed && filter != .all {
+                selectTask(next)
+            }
+        } else {
+            task.updateStatus(newStatus)
+        }
+    }
+
+    /// Mark selected task(s) as cancelled/aborted and select next task
+    private func markSelectedCancelled() {
+        guard let task = highlightedTask else { return }
+
+        // Find next task before changing status
+        if let currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == task.id }) {
+            let nextTask = currentIndex < visibleTasksInOrder.count - 1
+                ? visibleTasksInOrder[currentIndex + 1]
+                : (currentIndex > 0 ? visibleTasksInOrder[currentIndex - 1] : nil)
+
+            task.updateStatus(.aborted)
+
+            // Select next task if the current one will disappear from this view
+            if let next = nextTask, filter != .all {
+                selectTask(next)
+            }
+        } else {
+            task.updateStatus(.aborted)
+        }
+    }
+
+    /// Move selected task up in priority (lower priority number = higher in list)
+    private func moveSelectedPriorityUp() {
+        guard let task = highlightedTask else { return }
+        guard let currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == task.id }),
+              currentIndex > 0 else { return }
+
+        let taskAbove = visibleTasksInOrder[currentIndex - 1]
+        let tempPriority = task.priority
+        task.priority = taskAbove.priority
+        taskAbove.priority = tempPriority
+
+        // Sync changes
+        Task {
+            let workspaceId = workspace.syncId ?? workspace.id
+            await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: modelContext)
+        }
+    }
+
+    /// Move selected task down in priority (higher priority number = lower in list)
+    private func moveSelectedPriorityDown() {
+        guard let task = highlightedTask else { return }
+        guard let currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == task.id }),
+              currentIndex < visibleTasksInOrder.count - 1 else { return }
+
+        let taskBelow = visibleTasksInOrder[currentIndex + 1]
+        let tempPriority = task.priority
+        task.priority = taskBelow.priority
+        taskBelow.priority = tempPriority
 
         // Sync changes
         Task {
@@ -1047,6 +1297,20 @@ struct WorkspaceQueueListView: View {
         .focusable()
         .focused($isListFocused)
         .focusEffectDisabled()
+        .onAppear {
+            // Focus the list and sync selection state on appear
+            DispatchQueue.main.async {
+                isListFocused = true
+                syncSelectionState()
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showTasks)) { _ in
+            // Restore focus and sync selection when switching back to tasks via Cmd+1
+            DispatchQueue.main.async {
+                isListFocused = true
+                syncSelectionState()
+            }
+        }
         .modifier(TaskListKeyboardModifier(
             expandedTask: $expandedTask,
             selectedTaskIds: $selectedTaskIds,
@@ -1054,7 +1318,12 @@ struct WorkspaceQueueListView: View {
             showDeleteConfirmation: $showDeleteConfirmation,
             onMoveUp: { extendSelection in moveSelectionUp(extendSelection: extendSelection) },
             onMoveDown: { extendSelection in moveSelectionDown(extendSelection: extendSelection) },
-            onSelectAll: selectAllTasks
+            onSelectAll: selectAllTasks,
+            onToggleExpand: toggleSelectedTaskExpansion,
+            onMarkComplete: markSelectedComplete,
+            onMarkCancelled: markSelectedCancelled,
+            onMovePriorityUp: moveSelectedPriorityUp,
+            onMovePriorityDown: moveSelectedPriorityDown
         ))
         .alert("Delete Tasks?", isPresented: $showDeleteConfirmation) {
             Button("Cancel", role: .cancel) { }
@@ -1074,10 +1343,31 @@ struct WorkspaceQueueListView: View {
                 showDeleteConfirmation = true
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .completeTaskTriggered)) { _ in
+            markSelectedComplete()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .cancelTaskTriggered)) { _ in
+            markSelectedCancelled()
+        }
         .onChange(of: highlightedTask) { _, newValue in
             if let task = newValue, !selectedTaskIds.contains(task.id) {
                 selectedTaskIds = [task.id]
                 lastSelectedTaskId = task.id
+            }
+        }
+        .onChange(of: selectedTaskIds) { _, newValue in
+            // Ensure highlightedTask stays in sync with selectedTaskIds
+            // But don't reset it if it's already part of the selection (preserves cursor for multi-select)
+            if let highlighted = highlightedTask, newValue.contains(highlighted.id) {
+                // highlightedTask is valid and in selection - leave it alone
+                return
+            }
+
+            // highlightedTask is not in selection - sync it to first selected task
+            if let firstSelected = visibleTasksInOrder.first(where: { newValue.contains($0.id) }) {
+                highlightedTask = firstSelected
+            } else if newValue.isEmpty {
+                highlightedTask = nil
             }
         }
         .onChange(of: expandedTask) { oldValue, newValue in
@@ -1378,6 +1668,11 @@ struct TaskListKeyboardModifier: ViewModifier {
     var onMoveUp: (_ extendSelection: Bool) -> Void
     var onMoveDown: (_ extendSelection: Bool) -> Void
     var onSelectAll: () -> Void
+    var onToggleExpand: () -> Void
+    var onMarkComplete: () -> Void
+    var onMarkCancelled: () -> Void
+    var onMovePriorityUp: () -> Void
+    var onMovePriorityDown: () -> Void
 
     func body(content: Content) -> some View {
         content
@@ -1396,24 +1691,47 @@ struct TaskListKeyboardModifier: ViewModifier {
                 return .ignored
             }
             .onKeyPress(keys: [.upArrow], phases: .down) { keyPress in
+                // Don't capture arrow keys when a task is expanded (let text fields handle them)
+                guard expandedTask == nil else { return .ignored }
+
+                if keyPress.modifiers.contains(.command) {
+                    // Cmd+Up: move task priority up
+                    onMovePriorityUp()
+                    return .handled
+                }
                 onMoveUp(keyPress.modifiers.contains(.shift))
                 return .handled
             }
             .onKeyPress(keys: [.downArrow], phases: .down) { keyPress in
+                // Don't capture arrow keys when a task is expanded (let text fields handle them)
+                guard expandedTask == nil else { return .ignored }
+
+                if keyPress.modifiers.contains(.command) {
+                    // Cmd+Down: move task priority down
+                    onMovePriorityDown()
+                    return .handled
+                }
                 onMoveDown(keyPress.modifiers.contains(.shift))
                 return .handled
             }
             .onKeyPress(.return) {
-                // Toggle expansion using bindings directly to avoid closure capture issues
-                guard let task = highlightedTask else { return .ignored }
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                    if expandedTask?.id == task.id {
-                        expandedTask = nil
-                    } else {
-                        expandedTask = task
-                    }
-                }
+                guard !selectedTaskIds.isEmpty else { return .ignored }
+                onToggleExpand()
                 return .handled
+            }
+            .onKeyPress(keys: [KeyEquivalent("k")], phases: .down) { keyPress in
+                guard expandedTask == nil else { return .ignored }
+
+                if keyPress.modifiers == [.command, .option] {
+                    // Alt+Cmd+K: mark as cancelled
+                    onMarkCancelled()
+                    return .handled
+                } else if keyPress.modifiers == .command {
+                    // Cmd+K: mark as completed
+                    onMarkComplete()
+                    return .handled
+                }
+                return .ignored
             }
             .onKeyPress(keys: [KeyEquivalent("a")], phases: .down) { keyPress in
                 if keyPress.modifiers.contains(.command) {
@@ -1583,18 +1901,12 @@ struct WorkspaceContextListView: View {
 // MARK: - Workspace Create Task View
 
 struct WorkspaceCreateTaskView: View {
-    let workspace: Workspace
+    @Bindable var workspace: Workspace
     @Binding var isPresented: Bool
     var onRun: ((WorkTask) -> Void)?
     @Environment(\.modelContext) private var modelContext
     @State private var title = ""
     @FocusState private var isFocused: Bool
-
-    init(workspace: Workspace, isPresented: Binding<Bool>, onRun: ((WorkTask) -> Void)? = nil) {
-        self.workspace = workspace
-        self._isPresented = isPresented
-        self.onRun = onRun
-    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1677,6 +1989,9 @@ struct WorkspaceCreateTaskView: View {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return }
 
+        // Close sheet immediately for responsive UI
+        isPresented = false
+
         // Get highest priority among existing queued tasks (lower priority = top of queue)
         let maxPriority = workspace.tasks
             .filter { $0.taskStatus == .queued }
@@ -1684,15 +1999,17 @@ struct WorkspaceCreateTaskView: View {
             .max() ?? 0
 
         let task = WorkTask(title: trimmedTitle)
-        task.workspace = workspace
         task.priority = maxPriority + 50  // New tasks go to bottom of queue with room for reordering
         modelContext.insert(task)
-        isPresented = false
 
-        // Sync to push the new task to Supabase
-        Task {
-            let workspaceId = workspace.syncId ?? workspace.id
-            await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: modelContext)
+        // Explicitly add to relationship and save to trigger SwiftUI observation
+        workspace.tasks.append(task)
+        try? modelContext.save()
+
+        // Sync to push the new task to Supabase (detached to avoid main actor contention)
+        let workspaceId = workspace.syncId ?? workspace.id
+        Task.detached {
+            await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: self.modelContext)
         }
     }
 
@@ -1700,6 +2017,9 @@ struct WorkspaceCreateTaskView: View {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return }
 
+        // Close sheet immediately for responsive UI
+        isPresented = false
+
         // Get highest priority among existing queued tasks (lower priority = top of queue)
         let maxPriority = workspace.tasks
             .filter { $0.taskStatus == .queued }
@@ -1707,19 +2027,21 @@ struct WorkspaceCreateTaskView: View {
             .max() ?? 0
 
         let task = WorkTask(title: trimmedTitle)
-        task.workspace = workspace
         task.priority = maxPriority + 50
         modelContext.insert(task)
-        isPresented = false
 
-        // Sync to push the new task to Supabase, then run
-        Task {
-            let workspaceId = workspace.syncId ?? workspace.id
-            await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: modelContext)
-        }
+        // Explicitly add to relationship and save to trigger SwiftUI observation
+        workspace.tasks.append(task)
+        try? modelContext.save()
 
-        // Start the terminal for this task
+        // Start the terminal for this task immediately
         onRun?(task)
+
+        // Sync to push the new task to Supabase (detached to avoid main actor contention)
+        let workspaceId = workspace.syncId ?? workspace.id
+        Task.detached {
+            await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: self.modelContext)
+        }
     }
 }
 
@@ -1741,6 +2063,7 @@ struct TaskRow: View {
     @State private var showNotes: Bool = false
     @State private var isHovering: Bool = false
     @State private var isTitleFocused: Bool = false
+    @State private var isDescriptionFocused: Bool = false
     @State private var isStatusHovering: Bool = false
     @State private var showSkillPicker: Bool = false
 
@@ -1815,24 +2138,29 @@ struct TaskRow: View {
                         .foregroundStyle(isCompleted ? .tertiary : .primary)
                         .strikethrough(isCompleted, color: .secondary)
                         .lineLimit(isExpanded ? nil : 1)
+                        .truncationMode(.tail)
+                        .fixedSize(horizontal: false, vertical: true)
                         .opacity(showNotes ? 0 : 1)
 
                     // Editable field (appears after expand animation)
                     if showNotes {
-                        CursorAtEndTextField(
+                        MultilineTitleField(
                             text: Binding(
                                 get: { task.title },
                                 set: { task.updateTitle($0) }
                             ),
-                            shouldFocus: isTitleFocused,
                             font: .systemFont(ofSize: 14),
-                            onEscape: onCollapse
+                            shouldFocus: isTitleFocused,
+                            onEscape: onCollapse,
+                            onTab: {
+                                isTitleFocused = false
+                                isDescriptionFocused = true
+                            }
                         )
                     }
                 }
+                .frame(maxWidth: .infinity, alignment: .leading)
                 .allowsHitTesting(showNotes) // Allow text field interaction when expanded
-
-                Spacer()
 
                 // Subtle time indicator (only in compact)
                 if !isExpanded && !isRunning && !isCompleted {
@@ -1840,20 +2168,6 @@ struct TaskRow: View {
                         .font(.system(size: 11))
                         .foregroundStyle(.quaternary)
                 }
-            }
-            .contentShape(Rectangle())
-            .gesture(
-                TapGesture()
-                    .modifiers(.shift)
-                    .onEnded { onTap?(.shift) }
-            )
-            .gesture(
-                TapGesture()
-                    .modifiers(.command)
-                    .onEnded { onTap?(.command) }
-            )
-            .onTapGesture {
-                onTap?([])
             }
             .contextMenu {
                 if isQueued, let onRun = onRun {
@@ -1884,25 +2198,41 @@ struct TaskRow: View {
                 }
             }
 
-            // Notes (only in expanded)
+            // Description - visible in both states
             if isExpanded {
+                // Editable in expanded state
                 GrowingTextView(
                     text: Binding(
                         get: { task.taskDescription ?? "" },
                         set: { task.updateDescription($0.isEmpty ? nil : $0) }
                     ),
                     placeholder: "Notes",
-                    font: .systemFont(ofSize: 14),
-                    shouldFocus: showNotes && !isTitleFocused,
-                    onEscape: onCollapse
+                    font: .systemFont(ofSize: 13),
+                    shouldFocus: isDescriptionFocused,
+                    onEscape: onCollapse,
+                    onShiftTab: {
+                        isDescriptionFocused = false
+                        isTitleFocused = true
+                    }
                 )
-                .frame(maxWidth: .infinity, minHeight: 40, alignment: .topLeading)
-                .padding(.top, 12)
+                .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+                .padding(.top, 6)
                 .padding(.leading, 32)
                 .opacity(showNotes ? 1 : 0)
                 .animation(.easeIn(duration: 0.12), value: showNotes)
+            } else if let description = task.taskDescription, !description.isEmpty {
+                // Read-only preview in collapsed state
+                Text(description)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.tail)
+                    .padding(.top, 4)
+                    .padding(.leading, 32)
+            }
 
-                // Skills and Status row - bottom
+            // Skills and Status row - only in expanded state
+            if isExpanded {
                 HStack(spacing: 8) {
                     // Attached skills chips
                     ForEach(task.taskSkills, id: \.id) { taskSkill in
@@ -2023,6 +2353,20 @@ struct TaskRow: View {
             }
         }
         .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isDragTarget)
+        .contentShape(Rectangle())
+        .gesture(
+            TapGesture()
+                .modifiers(.shift)
+                .onEnded { onTap?(.shift) }
+        )
+        .gesture(
+            TapGesture()
+                .modifiers(.command)
+                .onEnded { onTap?(.command) }
+        )
+        .onTapGesture {
+            onTap?([])
+        }
         .onHover { hovering in
             isHovering = hovering
         }
@@ -2035,10 +2379,12 @@ struct TaskRow: View {
                     showNotes = true
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
                         isTitleFocused = true
+                        isDescriptionFocused = false
                     }
                 }
             } else {
                 isTitleFocused = false
+                isDescriptionFocused = false
                 showNotes = false
             }
         }
@@ -2048,6 +2394,8 @@ struct TaskRow: View {
                 onStatusChange?()
             }
         }
+        .accessibilityIdentifier("TaskRow")
+        .accessibilityLabel(task.title)
     }
 }
 
@@ -2237,7 +2585,7 @@ struct ContextRow: View {
     }
 }
 
-// MARK: - Cursor At End TextField
+// MARK: - Cursor At End TextField (Single Line)
 
 struct CursorAtEndTextField: NSViewRepresentable {
     typealias NSViewType = NSTextField
@@ -2246,6 +2594,7 @@ struct CursorAtEndTextField: NSViewRepresentable {
     var shouldFocus: Bool
     var font: NSFont
     var onEscape: (() -> Void)?
+    var onTab: (() -> Void)?
 
     func makeNSView(context: NSViewRepresentableContext<CursorAtEndTextField>) -> NSTextField {
         let field = NSTextField()
@@ -2294,7 +2643,123 @@ struct CursorAtEndTextField: NSViewRepresentable {
                 parent.onEscape?()
                 return true
             }
+            if commandSelector == #selector(NSResponder.insertTab(_:)) {
+                parent.onTab?()
+                return true
+            }
             return false
+        }
+    }
+}
+
+// MARK: - Multiline Title Field
+
+private class TitleTextView: NSTextView {
+    var onEscape: (() -> Void)?
+    var onTab: (() -> Void)?
+
+    override func cancelOperation(_ sender: Any?) {
+        window?.makeFirstResponder(nil)
+        onEscape?()
+    }
+
+    override func insertTab(_ sender: Any?) {
+        onTab?()
+    }
+
+    override var intrinsicContentSize: NSSize {
+        guard let container = textContainer, let manager = layoutManager else {
+            return super.intrinsicContentSize
+        }
+        manager.ensureLayout(for: container)
+        let usedRect = manager.usedRect(for: container)
+        let inset = textContainerInset
+        return NSSize(
+            width: NSView.noIntrinsicMetric,
+            height: usedRect.height + inset.height * 2
+        )
+    }
+
+    override func didChangeText() {
+        super.didChangeText()
+        invalidateIntrinsicContentSize()
+    }
+}
+
+struct MultilineTitleField: NSViewRepresentable {
+    typealias NSViewType = NSScrollView
+
+    @Binding var text: String
+    var font: NSFont
+    var shouldFocus: Bool
+    var onEscape: (() -> Void)?
+    var onTab: (() -> Void)?
+
+    func makeNSView(context: NSViewRepresentableContext<MultilineTitleField>) -> NSScrollView {
+        let scrollView = NSScrollView()
+        scrollView.hasVerticalScroller = false
+        scrollView.hasHorizontalScroller = false
+        scrollView.drawsBackground = false
+        scrollView.borderType = .noBorder
+
+        let textView = TitleTextView()
+        textView.onEscape = onEscape
+        textView.onTab = onTab
+        textView.isRichText = false
+        textView.allowsUndo = true
+        textView.font = font
+        textView.textColor = .labelColor
+        textView.backgroundColor = .clear
+        textView.drawsBackground = false
+        textView.isEditable = true
+        textView.isSelectable = true
+        textView.isVerticallyResizable = true
+        textView.isHorizontallyResizable = false
+        textView.textContainerInset = .zero
+        textView.textContainer?.lineFragmentPadding = 0
+        textView.textContainer?.widthTracksTextView = true
+        textView.delegate = context.coordinator
+        textView.isAutomaticQuoteSubstitutionEnabled = false
+        textView.isAutomaticDashSubstitutionEnabled = false
+        textView.focusRingType = .none
+        textView.string = text
+
+        scrollView.documentView = textView
+        return scrollView
+    }
+
+    func updateNSView(_ scrollView: NSScrollView, context: NSViewRepresentableContext<MultilineTitleField>) {
+        guard let textView = scrollView.documentView as? TitleTextView else { return }
+
+        textView.onEscape = onEscape
+        textView.onTab = onTab
+
+        if textView.string != text {
+            textView.string = text
+        }
+
+        if shouldFocus && textView.window?.firstResponder != textView {
+            DispatchQueue.main.async {
+                textView.window?.makeFirstResponder(textView)
+                textView.setSelectedRange(NSRange(location: textView.string.count, length: 0))
+            }
+        }
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(self)
+    }
+
+    class Coordinator: NSObject, NSTextViewDelegate {
+        var parent: MultilineTitleField
+
+        init(_ parent: MultilineTitleField) {
+            self.parent = parent
+        }
+
+        func textDidChange(_ notification: Notification) {
+            guard let textView = notification.object as? NSTextView else { return }
+            parent.text = textView.string
         }
     }
 }
@@ -2305,10 +2770,15 @@ private class PlaceholderTextView: NSTextView {
     var placeholderString: String = ""
     var placeholderFont: NSFont = .systemFont(ofSize: 14)
     var onEscape: (() -> Void)?
+    var onShiftTab: (() -> Void)?
 
     override func cancelOperation(_ sender: Any?) {
         window?.makeFirstResponder(nil)
         onEscape?()
+    }
+
+    override func insertBacktab(_ sender: Any?) {
+        onShiftTab?()
     }
 
     override func draw(_ dirtyRect: NSRect) {
@@ -2357,6 +2827,7 @@ struct GrowingTextView: NSViewRepresentable {
     var font: NSFont
     var shouldFocus: Bool
     var onEscape: (() -> Void)?
+    var onShiftTab: (() -> Void)?
 
     func makeNSView(context: NSViewRepresentableContext<GrowingTextView>) -> NSScrollView {
         let scrollView = NSScrollView()
@@ -2369,6 +2840,7 @@ struct GrowingTextView: NSViewRepresentable {
         textView.placeholderString = placeholder
         textView.placeholderFont = font
         textView.onEscape = onEscape
+        textView.onShiftTab = onShiftTab
         textView.isRichText = false
         textView.allowsUndo = true
         textView.font = font
@@ -2396,6 +2868,7 @@ struct GrowingTextView: NSViewRepresentable {
         guard let textView = scrollView.documentView as? PlaceholderTextView else { return }
 
         textView.onEscape = onEscape
+        textView.onShiftTab = onShiftTab
 
         if textView.string != text {
             textView.string = text

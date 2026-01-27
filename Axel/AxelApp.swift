@@ -1,6 +1,11 @@
 import SwiftUI
 import SwiftData
 
+/// Check if running UI tests
+var isUITesting: Bool {
+    ProcessInfo.processInfo.arguments.contains("--ui-testing")
+}
+
 @Observable
 final class AppState {
     var isNewTaskPresented = false
@@ -46,21 +51,30 @@ struct AxelApp: App {
                 TaskSkill.self
             ])
 
-            let baseDir = FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".config")
-                .appendingPathComponent("axel")
+            // Use in-memory database for UI tests
+            if isUITesting {
+                let config = ModelConfiguration(
+                    schema: schema,
+                    isStoredInMemoryOnly: true
+                )
+                sharedContainer = try ModelContainer(for: schema, configurations: [config])
+            } else {
+                let baseDir = FileManager.default.homeDirectoryForCurrentUser
+                    .appendingPathComponent(".config")
+                    .appendingPathComponent("axel")
 
-            // Create directory if needed
-            try? FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
+                // Create directory if needed
+                try? FileManager.default.createDirectory(at: baseDir, withIntermediateDirectories: true)
 
-            let sharedDbUrl = baseDir.appendingPathComponent("shared.sqlite")
-            let config = ModelConfiguration(
-                schema: schema,
-                url: sharedDbUrl,
-                allowsSave: true
-            )
+                let sharedDbUrl = baseDir.appendingPathComponent("shared.sqlite")
+                let config = ModelConfiguration(
+                    schema: schema,
+                    url: sharedDbUrl,
+                    allowsSave: true
+                )
 
-            sharedContainer = try ModelContainer(for: schema, configurations: [config])
+                sharedContainer = try ModelContainer(for: schema, configurations: [config])
+            }
         } catch {
             fatalError("Failed to initialize shared ModelContainer: \(error)")
         }
