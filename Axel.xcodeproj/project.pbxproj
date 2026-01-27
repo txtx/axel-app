@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 60;
+	objectVersion = 70;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -21,8 +21,6 @@
 		A1000001201A0010 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0010 /* TerminalPanelView.swift */; };
 		A1000001201A0011 /* SwiftTermWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0011 /* SwiftTermWrapper.swift */; };
 		A1000001201A0012 /* Skill.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0012 /* Skill.swift */; };
-		A1000001201A0103 /* TaskSkill.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0103 /* TaskSkill.swift */; };
-		A1000001201A0104 /* SkillManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0104 /* SkillManager.swift */; };
 		A1000001201A0013 /* SkillsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0013 /* SkillsView.swift */; };
 		A1000001201A0014 /* Context.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0014 /* Context.swift */; };
 		A1000001201A0015 /* ContextView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0015 /* ContextView.swift */; };
@@ -72,8 +70,20 @@
 		A1000001201A0100 /* ImmersiveView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0100 /* ImmersiveView.swift */; };
 		A1000001201A0101 /* CommandPanelViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0101 /* CommandPanelViews.swift */; };
 		A1000001201A0102 /* CommandCenterView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0102 /* CommandCenterView.swift */; };
+		A1000001201A0103 /* TaskSkill.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0103 /* TaskSkill.swift */; };
+		A1000001201A0104 /* SkillManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0104 /* SkillManager.swift */; };
 		A100000120A10030 /* TaskAssignee.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000110A10030 /* TaskAssignee.swift */; };
 /* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		43E774782F298D900093DEC6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000001701A0001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1000001501A0001;
+			remoteInfo = Axel;
+		};
+/* End PBXContainerItemProxy section */
 
 /* Begin PBXCopyFilesBuildPhase section */
 		A1000001301A0010 /* Embed Frameworks */ = {
@@ -90,6 +100,7 @@
 
 /* Begin PBXFileReference section */
 		4373D06E2F21DB1000C7DD88 /* Axel.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Axel.icon; sourceTree = "<group>"; };
+		43E774722F298D900093DEC6 /* AxelUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AxelUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000001001A0001 /* Axel.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Axel.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000001101A0001 /* AxelApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AxelApp.swift; sourceTree = "<group>"; };
 		A1000001101A0002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
@@ -101,8 +112,6 @@
 		A1000001101A0010 /* TerminalPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPanelView.swift; sourceTree = "<group>"; };
 		A1000001101A0011 /* SwiftTermWrapper.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwiftTermWrapper.swift; sourceTree = "<group>"; };
 		A1000001101A0012 /* Skill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Skill.swift; sourceTree = "<group>"; };
-		A1000001101A0103 /* TaskSkill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskSkill.swift; sourceTree = "<group>"; };
-		A1000001101A0104 /* SkillManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillManager.swift; sourceTree = "<group>"; };
 		A1000001101A0013 /* SkillsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillsView.swift; sourceTree = "<group>"; };
 		A1000001101A0014 /* Context.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Context.swift; sourceTree = "<group>"; };
 		A1000001101A0015 /* ContextView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContextView.swift; sourceTree = "<group>"; };
@@ -153,11 +162,24 @@
 		A1000001101A0100 /* ImmersiveView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImmersiveView.swift; sourceTree = "<group>"; };
 		A1000001101A0101 /* CommandPanelViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandPanelViews.swift; sourceTree = "<group>"; };
 		A1000001101A0102 /* CommandCenterView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CommandCenterView.swift; sourceTree = "<group>"; };
+		A1000001101A0103 /* TaskSkill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskSkill.swift; sourceTree = "<group>"; };
+		A1000001101A0104 /* SkillManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillManager.swift; sourceTree = "<group>"; };
 		A100000110A10030 /* TaskAssignee.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskAssignee.swift; sourceTree = "<group>"; };
 		D28E5D714F17DA7A43A0182D /* CostTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CostTracker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
+/* Begin PBXFileSystemSynchronizedRootGroup section */
+		43E774732F298D900093DEC6 /* AxelUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = AxelUITests; sourceTree = "<group>"; };
+/* End PBXFileSystemSynchronizedRootGroup section */
+
 /* Begin PBXFrameworksBuildPhase section */
+		43E7746F2F298D900093DEC6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A1000001301A0001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -175,6 +197,7 @@
 			isa = PBXGroup;
 			children = (
 				A1000001401A0002 /* Axel */,
+				43E774732F298D900093DEC6 /* AxelUITests */,
 				A1000001401A0008 /* Frameworks */,
 				A1000001401A0003 /* Products */,
 			);
@@ -204,6 +227,7 @@
 			isa = PBXGroup;
 			children = (
 				A1000001001A0001 /* Axel.app */,
+				43E774722F298D900093DEC6 /* AxelUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -390,6 +414,29 @@
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
+		43E774712F298D900093DEC6 /* AxelUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 43E7747C2F298D900093DEC6 /* Build configuration list for PBXNativeTarget "AxelUITests" */;
+			buildPhases = (
+				43E7746E2F298D900093DEC6 /* Sources */,
+				43E7746F2F298D900093DEC6 /* Frameworks */,
+				43E774702F298D900093DEC6 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				43E774792F298D900093DEC6 /* PBXTargetDependency */,
+			);
+			fileSystemSynchronizedGroups = (
+				43E774732F298D900093DEC6 /* AxelUITests */,
+			);
+			name = AxelUITests;
+			packageProductDependencies = (
+			);
+			productName = AxelUITests;
+			productReference = 43E774722F298D900093DEC6 /* AxelUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 		A1000001501A0001 /* Axel */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = A1000001601A0001 /* Build configuration list for PBXNativeTarget "Axel" */;
@@ -415,9 +462,13 @@
 			isa = PBXProject;
 			attributes = {
 				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1500;
+				LastSwiftUpdateCheck = 2600;
 				LastUpgradeCheck = 1500;
 				TargetAttributes = {
+					43E774712F298D900093DEC6 = {
+						CreatedOnToolsVersion = 26.0;
+						TestTargetID = A1000001501A0001;
+					};
 					A1000001501A0001 = {
 						CreatedOnToolsVersion = 15.0;
 					};
@@ -433,20 +484,28 @@
 			);
 			mainGroup = A1000001401A0001;
 			packageReferences = (
-				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */,
+				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */,
 				43BD82702F1D5F650092A96C /* XCRemoteSwiftPackageReference "supabase-swift" */,
-				43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */,
+				43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */,
 			);
 			productRefGroup = A1000001401A0003 /* Products */;
 			projectDirPath = "";
 			projectRoot = "";
 			targets = (
 				A1000001501A0001 /* Axel */,
+				43E774712F298D900093DEC6 /* AxelUITests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
+		43E774702F298D900093DEC6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A1000001501A0003 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -459,6 +518,13 @@
 /* End PBXResourcesBuildPhase section */
 
 /* Begin PBXSourcesBuildPhase section */
+		43E7746E2F298D900093DEC6 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		A1000001501A0002 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
@@ -529,7 +595,60 @@
 		};
 /* End PBXSourcesBuildPhase section */
 
+/* Begin PBXTargetDependency section */
+		43E774792F298D900093DEC6 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = A1000001501A0001 /* Axel */;
+			targetProxy = 43E774782F298D900093DEC6 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
 /* Begin XCBuildConfiguration section */
+		43E7747A2F298D900093DEC6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8ZJ55A62XN;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Axel;
+			};
+			name = Debug;
+		};
+		43E7747B2F298D900093DEC6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEVELOPMENT_TEAM = 8ZJ55A62XN;
+				GENERATE_INFOPLIST_FILE = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = iphoneos;
+				STRING_CATALOG_GENERATE_SYMBOLS = NO;
+				SWIFT_APPROACHABLE_CONCURRENCY = YES;
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
+				SWIFT_VERSION = 5.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+				TEST_TARGET_NAME = Axel;
+				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
 		A1000001801A0001 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
@@ -755,6 +874,15 @@
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
+		43E7747C2F298D900093DEC6 /* Build configuration list for PBXNativeTarget "AxelUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				43E7747A2F298D900093DEC6 /* Debug */,
+				43E7747B2F298D900093DEC6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		A1000001601A0001 /* Build configuration list for PBXNativeTarget "Axel" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -776,11 +904,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */ = {
+		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AutomergeWrapper;
 		};
-		43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */ = {
+		43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/SwiftTermWrapper;
 		};
@@ -805,12 +933,12 @@
 		};
 		43BD82742F1D63F40092A96C /* AutomergeWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */;
+			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */;
 			productName = AutomergeWrapper;
 		};
 		43BD82772F1D63F50092A96C /* SwiftTermWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */;
+			package = 43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */;
 			productName = SwiftTermWrapper;
 		};
 /* End XCSwiftPackageProductDependency section */
