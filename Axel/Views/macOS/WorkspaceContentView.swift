@@ -99,16 +99,20 @@ struct WorkspaceContentView: View {
         // Generate a pane ID for this terminal session
         let paneId = UUID().uuidString
 
+        // Allocate a unique port for this terminal's server
+        let port = InboxService.shared.allocatePort()
+
         // Create a Terminal model
         let terminal = Terminal()
         terminal.paneId = paneId
+        terminal.serverPort = port
         terminal.task = task
         terminal.workspace = workspace
         terminal.status = TerminalStatus.running.rawValue
         modelContext.insert(terminal)
 
-        // Build command with optional prompt
-        var command = "axel claude --pane-id=\(paneId)"
+        // Build command with pane-id and port
+        var command = "axel claude --pane-id=\(paneId) --port=\(port)"
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
@@ -116,6 +120,9 @@ struct WorkspaceContentView: View {
             }
             command += " --prompt \(prompt.shellEscaped)"
         }
+
+        // Connect to this terminal's SSE endpoint
+        InboxService.shared.connect(paneId: paneId, port: port)
 
         let session = sessionManager.startSession(
             for: task,
@@ -191,8 +198,8 @@ struct WorkspaceContentView: View {
 
     private var currentListColumnWidth: CGFloat {
         switch sidebarSelection {
-        case .skills: return skillsColumnWidth
-        case .context: return contextColumnWidth
+        case .optimizations(.skills): return skillsColumnWidth
+        case .optimizations(.context): return contextColumnWidth
         case .terminals: return terminalsColumnWidth
         case .team: return teamColumnWidth
         case .inbox, .none: return inboxColumnWidth
@@ -202,8 +209,8 @@ struct WorkspaceContentView: View {
 
     private var currentListColumnWidthBinding: Binding<CGFloat> {
         switch sidebarSelection {
-        case .skills: return $skillsColumnWidth
-        case .context: return $contextColumnWidth
+        case .optimizations(.skills): return $skillsColumnWidth
+        case .optimizations(.context): return $contextColumnWidth
         case .terminals: return $terminalsColumnWidth
         case .team: return $teamColumnWidth
         case .inbox, .none: return $inboxColumnWidth
@@ -222,6 +229,8 @@ struct WorkspaceContentView: View {
                 onNewTask: { appState.isNewTaskPresented = true },
                 onStartTerminal: startTerminal
             )
+        case .optimizations(.overview):
+            OptimizationsOverviewView(workspace: workspace)
         default:
             HStack(spacing: 0) {
                 listColumnView
@@ -238,9 +247,9 @@ struct WorkspaceContentView: View {
     @ViewBuilder
     private var listColumnView: some View {
         switch sidebarSelection {
-        case .skills:
+        case .optimizations(.skills):
             SkillsListView(workspace: workspace, selection: $selectedAgent)
-        case .context:
+        case .optimizations(.context):
             WorkspaceContextListView(workspace: workspace, selection: $selectedContext)
         case .terminals:
             RunningListView(selection: $selectedSession, workspaceId: workspace.id)
@@ -256,13 +265,13 @@ struct WorkspaceContentView: View {
     @ViewBuilder
     private var detailColumnView: some View {
         switch sidebarSelection {
-        case .skills:
+        case .optimizations(.skills):
             if let agent = selectedAgent {
                 AgentDetailView(agent: agent)
             } else {
                 EmptySkillSelectionView()
             }
-        case .context:
+        case .optimizations(.context):
             if let context = selectedContext {
                 ContextDetailView(context: context)
             } else {
@@ -366,6 +375,18 @@ struct WorkspaceContentView: View {
                 showCloseTerminalConfirmation = true
             }
         }
+        .keyboardShortcut(for: .showTasks) {
+            sidebarSelection = .queue(.queued)
+        }
+        .keyboardShortcut(for: .showAgents) {
+            sidebarSelection = .terminals
+        }
+        .keyboardShortcut(for: .showInbox) {
+            sidebarSelection = .inbox(.pending)
+        }
+        .keyboardShortcut(for: .showSkills) {
+            sidebarSelection = .optimizations(.skills)
+        }
         .alert("Close Terminal?", isPresented: $showCloseTerminalConfirmation) {
             Button("Cancel", role: .cancel) { }
             Button("Close", role: .destructive) {
@@ -418,6 +439,9 @@ struct WorkspaceContentView: View {
             showTerminal = false
         }
         .task {
+            // Connect to inbox service early so we receive events even if inbox view isn't shown
+            InboxService.shared.connect()
+
             // Register this workspace as active for scoped syncing
             let workspaceId = workspace.syncId ?? workspace.id
             syncService.registerActiveWorkspace(workspaceId)
@@ -452,6 +476,23 @@ struct WorkspaceContentView: View {
         .focusedSceneValue(\.newTaskAction) {
             appState.isNewTaskPresented = true
         }
+        .focusedSceneValue(\.runTaskAction, selectedTask != nil ? {
+            if let task = selectedTask, task.taskStatus == .queued {
+                startTerminal(for: task)
+            }
+        } : nil)
+        .onReceive(NotificationCenter.default.publisher(for: .showTasks)) { _ in
+            sidebarSelection = .queue(.queued)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showAgents)) { _ in
+            sidebarSelection = .terminals
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showInbox)) { _ in
+            sidebarSelection = .inbox(.pending)
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .showSkills)) { _ in
+            sidebarSelection = .optimizations(.skills)
+        }
     }
 }
 
@@ -461,6 +502,7 @@ struct WorkspaceToolbarHeader: View {
     let workspace: Workspace
     @Binding var showTerminal: Bool
     @Environment(\.terminalSessionManager) private var sessionManager
+    @State private var costTracker = CostTracker.shared
 
     private var terminalsCount: Int {
         sessionManager.runningCount(for: workspace.id)
@@ -470,22 +512,76 @@ struct WorkspaceToolbarHeader: View {
         workspace.tasks.filter { $0.taskStatus == .queued }.count
     }
 
-    var body: some View {
-        HStack(spacing: 16) {
-            Text("Agents: \(terminalsCount)")
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(terminalsCount > 0 ? .green : .secondary)
+    private var histogramValues: [Double] {
+        costTracker.globalHistogramValues
+    }
 
-            Text("Tasks: \(queueCount)")
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(queueCount > 0 ? .green : .secondary)
+    private var totalTokens: Int {
+        costTracker.globalTotalTokens
+    }
+
+    private var totalCost: Double {
+        costTracker.globalTotalCostUSD
+    }
+
+    private var formattedTokenCount: String {
+        if totalTokens >= 1_000_000 {
+            return String(format: "%.1fM", Double(totalTokens) / 1_000_000)
+        } else if totalTokens >= 1_000 {
+            return String(format: "%.1fK", Double(totalTokens) / 1_000)
+        }
+        return "\(totalTokens)"
+    }
+
+    var body: some View {
+        HStack(spacing: 12) {
+            // Orange histogram from CostTracker
+            HStack(alignment: .bottom, spacing: 1.5) {
+                ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
+                    UnevenRoundedRectangle(topLeadingRadius: 1, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 1)
+                        .fill(Color.orange)
+                        .frame(width: 7, height: 2 + CGFloat(value) * 5)
+                }
+            }
+
+            // Claude icon (glowing) + token count
+            HStack(spacing: 6) {
+                ClaudeIcon()
+                    .frame(width: 14, height: 10)
+                Text(formattedTokenCount)
+                    .font(.system(size: 11, weight: .medium).monospacedDigit())
+                    .foregroundStyle(Color(hex: "DCDCDC")!)
+            }
+
+            // Show cost if available
+            if totalCost > 0 {
+                Text(String(format: "$%.2f", totalCost))
+                    .font(.system(size: 10).monospacedDigit())
+                    .foregroundStyle(Color(hex: "DCDCDC")!.opacity(0.7))
+            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(
             Capsule()
-                .fill(Color(white: 27.0 / 255.0)) // #1B1B1B
+                .fill(Color(white: 0.08)) // Darker background
         )
+    }
+}
+
+// MARK: - Claude Icon
+
+struct ClaudeIcon: View {
+    @State private var animationAmount: CGFloat = 0.5
+
+    var body: some View {
+        ClaudeShape()
+            .fill(Color(hex: "DCDCDC")!.opacity(0.5 + animationAmount * 0.5))
+            .onAppear {
+                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                    animationAmount = 1.0
+                }
+            }
     }
 }
 
@@ -545,7 +641,7 @@ struct WorkspaceSidebarView: View {
                         }
                     }
                 } icon: {
-                    Image(systemName: "tray.fill")
+                    Image(systemName: "rectangle.stack")
                         .foregroundStyle(.blue)
                 }
                 .tag(SidebarSection.queue(.queued))
@@ -586,7 +682,7 @@ struct WorkspaceSidebarView: View {
                             .frame(width: 8, height: 8)
                     }
                 } icon: {
-                    Image(systemName: "rectangle.stack")
+                    Image(systemName: "tray.fill")
                         .foregroundStyle(Color(red: 249.0/255, green: 25.0/255, blue: 85.0/255)) // #F91955
                 }
                 .tag(SidebarSection.inbox(.pending))
@@ -607,13 +703,37 @@ struct WorkspaceSidebarView: View {
                 Divider()
                     .padding(.vertical, 8)
 
-                // Skills
-                Label("Skills", systemImage: "hammer.fill")
-                    .tag(SidebarSection.skills)
+                // Optimizations
+                Label {
+                    Text("Optimizations")
+                } icon: {
+                    Image(systemName: "gauge.with.dots.needle.50percent")
+                        .foregroundStyle(.purple)
+                }
+                .tag(SidebarSection.optimizations(.overview))
 
-                // Context
-                Label("Context", systemImage: "briefcase.fill")
-                    .tag(SidebarSection.context)
+                // Skills (indented under Optimizations)
+                Label {
+                    Text("Skills")
+                } icon: {
+                    Image(systemName: "hammer.fill")
+                        .foregroundStyle(.white)
+                }
+                .padding(.leading, 16)
+                .tag(SidebarSection.optimizations(.skills))
+
+                // Context (indented under Optimizations)
+                Label {
+                    Text("Context")
+                } icon: {
+                    Image(systemName: "briefcase.fill")
+                        .foregroundStyle(.white)
+                }
+                .padding(.leading, 16)
+                .tag(SidebarSection.optimizations(.context))
+
+                Divider()
+                    .padding(.vertical, 8)
 
                 // Team
                 Label("Team", systemImage: "person.2")
@@ -709,6 +829,8 @@ struct WorkspaceQueueListView: View {
     @State private var lastTapTaskId: UUID?
     @State private var viewModel = TodoViewModel()
     @State private var showTerminal = false
+    @State private var draggingTask: WorkTask?
+    @State private var dropTargetTaskId: UUID?
 
     // Running tasks (sorted by priority)
     private var runningTasks: [WorkTask] {
@@ -770,7 +892,7 @@ struct WorkspaceQueueListView: View {
         VStack(spacing: 0) {
             // Header
             HStack(alignment: .center) {
-                Image(systemName: "tray.fill")
+                Image(systemName: "rectangle.stack")
                     .font(.system(size: 16))
                     .foregroundStyle(.blue)
 
@@ -814,7 +936,8 @@ struct WorkspaceQueueListView: View {
                                         isExpanded: expandedTask?.id == task.id,
                                         onTap: { handleTap(on: task) },
                                         onToggleComplete: { toggleComplete(task) },
-                                        onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } }
+                                        onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
+                                        onStatusChange: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } }
                                     )
                                 }
                             }
@@ -828,11 +951,51 @@ struct WorkspaceQueueListView: View {
                                     position: index + 1,
                                     isHighlighted: highlightedTask?.id == task.id,
                                     isExpanded: expandedTask?.id == task.id,
+                                    isDragTarget: dropTargetTaskId == task.id,
                                     onTap: { handleTap(on: task) },
                                     onRun: { onStartTerminal?(task) },
                                     onToggleComplete: { toggleComplete(task) },
-                                    onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } }
+                                    onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
+                                    onStatusChange: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } }
                                 )
+                                .opacity(draggingTask?.id == task.id ? 0.5 : 1.0)
+                                .draggable(task.id.uuidString) {
+                                    // Drag preview
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "line.3.horizontal")
+                                            .font(.system(size: 12))
+                                            .foregroundStyle(.secondary)
+                                        Text(task.title)
+                                            .font(.system(size: 14))
+                                            .lineLimit(1)
+                                    }
+                                    .padding(.horizontal, 12)
+                                    .padding(.vertical, 8)
+                                    .background(
+                                        RoundedRectangle(cornerRadius: 8)
+                                            .fill(Color(white: 0.25))
+                                            .shadow(color: .black.opacity(0.3), radius: 8, y: 4)
+                                    )
+                                    .onAppear { draggingTask = task }
+                                }
+                                .dropDestination(for: String.self) { items, _ in
+                                    guard let droppedIdString = items.first,
+                                          let droppedId = UUID(uuidString: droppedIdString),
+                                          let droppedTask = queuedTasks.first(where: { $0.id == droppedId }),
+                                          droppedTask.id != task.id else {
+                                        return false
+                                    }
+                                    reorderTask(droppedTask, before: task)
+                                    return true
+                                } isTargeted: { isTargeted in
+                                    withAnimation(.easeInOut(duration: 0.15)) {
+                                        dropTargetTaskId = isTargeted ? task.id : nil
+                                    }
+                                }
+                            }
+                            .onDrop(of: [.text], isTargeted: nil) { _ in
+                                draggingTask = nil
+                                return false
                             }
                         } else {
                             ForEach(allFilteredTasks, id: \.id) { task in
@@ -842,7 +1005,8 @@ struct WorkspaceQueueListView: View {
                                     isExpanded: expandedTask?.id == task.id,
                                     onTap: { handleTap(on: task) },
                                     onToggleComplete: { toggleComplete(task) },
-                                    onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } }
+                                    onCollapse: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } },
+                                    onStatusChange: { withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) { expandedTask = nil } }
                                 )
                             }
                         }
@@ -909,6 +1073,46 @@ struct WorkspaceQueueListView: View {
                 task.updateStatus(.completed)
             }
         }
+        Task {
+            let workspaceId = workspace.syncId ?? workspace.id
+            await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: modelContext)
+        }
+    }
+
+    private func reorderTask(_ movedTask: WorkTask, before targetTask: WorkTask) {
+        // Clear drag state
+        draggingTask = nil
+        dropTargetTaskId = nil
+
+        // Get current queued tasks in order
+        var tasks = queuedTasks
+
+        // Find indices
+        guard let fromIndex = tasks.firstIndex(where: { $0.id == movedTask.id }),
+              let toIndex = tasks.firstIndex(where: { $0.id == targetTask.id }) else {
+            return
+        }
+
+        // Don't do anything if same position
+        if fromIndex == toIndex { return }
+
+        // Remove from current position and insert at new position
+        tasks.remove(at: fromIndex)
+        let insertIndex = fromIndex < toIndex ? toIndex - 1 : toIndex
+        tasks.insert(movedTask, at: insertIndex)
+
+        // Reassign priorities based on new order
+        // Use increments of 10 to leave room for future insertions
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
+            for (index, task) in tasks.enumerated() {
+                let newPriority = (index + 1) * 10
+                if task.priority != newPriority {
+                    task.updatePriority(newPriority)
+                }
+            }
+        }
+
+        // Sync changes
         Task {
             let workspaceId = workspace.syncId ?? workspace.id
             await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: modelContext)
@@ -1235,10 +1439,12 @@ struct TaskRow: View {
     var position: Int? = nil
     var isHighlighted: Bool = false
     var isExpanded: Bool = false
+    var isDragTarget: Bool = false
     var onTap: (() -> Void)?
     var onRun: (() -> Void)?
     var onToggleComplete: (() -> Void)?
     var onCollapse: (() -> Void)?
+    var onStatusChange: (() -> Void)?
     @State private var showNotes: Bool = false
     @State private var isHovering: Bool = false
     @State private var isTitleFocused: Bool = false
@@ -1260,19 +1466,22 @@ struct TaskRow: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            // Title row
+            // Title row - only this part handles taps for selection/expansion
             HStack(spacing: 12) {
                 // Leading indicator
                 ZStack {
                     if isRunning {
-                        HStack(alignment: .bottom, spacing: 1.5) {
-                            RoundedRectangle(cornerRadius: 0.5).frame(width: 2.5, height: 5)
-                            RoundedRectangle(cornerRadius: 0.5).frame(width: 2.5, height: 9)
-                            RoundedRectangle(cornerRadius: 0.5).frame(width: 2.5, height: 12)
-                            RoundedRectangle(cornerRadius: 0.5).frame(width: 2.5, height: 7)
+                        // Claude icon with hover to mark complete
+                        RunningTaskIndicator(
+                            size: checkboxSize,
+                            isHovering: isStatusHovering,
+                            onMarkComplete: onToggleComplete
+                        )
+                        .onHover { hovering in
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                isStatusHovering = hovering
+                            }
                         }
-                        .foregroundStyle(.orange)
-                        .frame(width: checkboxSize, height: checkboxSize)
                     } else if isCompleted {
                         Button(action: { onToggleComplete?() }) {
                             ZStack {
@@ -1286,23 +1495,16 @@ struct TaskRow: View {
                         }
                         .buttonStyle(.plain)
                     } else if isQueued {
-                        if isHovering {
-                            Button(action: { onRun?() }) {
-                                Image(systemName: "play.fill")
-                                    .font(.system(size: 12))
-                                    .foregroundStyle(.orange)
-                                    .frame(width: checkboxSize, height: checkboxSize)
+                        QueuedTaskIndicator(
+                            size: checkboxSize,
+                            isHovering: isStatusHovering,
+                            position: position,
+                            onRun: onRun
+                        )
+                        .onHover { hovering in
+                            withAnimation(.easeInOut(duration: 0.15)) {
+                                isStatusHovering = hovering
                             }
-                            .buttonStyle(.plain)
-                        } else if let pos = position {
-                            Text("\(pos)")
-                                .font(.system(size: 12, weight: .bold).monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .frame(width: checkboxSize, height: checkboxSize)
-                        } else {
-                            Circle()
-                                .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1.5)
-                                .frame(width: checkboxSize, height: checkboxSize)
                         }
                     } else {
                         Circle()
@@ -1326,7 +1528,7 @@ struct TaskRow: View {
                         CursorAtEndTextField(
                             text: Binding(
                                 get: { task.title },
-                                set: { task.title = $0 }
+                                set: { task.updateTitle($0) }
                             ),
                             shouldFocus: isTitleFocused,
                             font: .systemFont(ofSize: 14),
@@ -1334,6 +1536,7 @@ struct TaskRow: View {
                         )
                     }
                 }
+                .allowsHitTesting(showNotes) // Allow text field interaction when expanded
 
                 Spacer()
 
@@ -1344,13 +1547,17 @@ struct TaskRow: View {
                         .foregroundStyle(.quaternary)
                 }
             }
+            .contentShape(Rectangle())
+            .onTapGesture {
+                onTap?()
+            }
 
             // Notes (only in expanded)
             if isExpanded {
                 GrowingTextView(
                     text: Binding(
                         get: { task.taskDescription ?? "" },
-                        set: { task.taskDescription = $0.isEmpty ? nil : $0 }
+                        set: { task.updateDescription($0.isEmpty ? nil : $0) }
                     ),
                     placeholder: "Notes",
                     font: .systemFont(ofSize: 14),
@@ -1368,7 +1575,15 @@ struct TaskRow: View {
                     Spacer()
                     Menu {
                         ForEach(TaskStatus.allCases, id: \.self) { status in
-                            Button(action: { task.updateStatus(status) }) {
+                            Button(action: {
+                                // First collapse the task, then update status after animation completes
+                                if task.taskStatus != status {
+                                    onCollapse?()
+                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                                        task.updateStatus(status)
+                                    }
+                                }
+                            }) {
                                 HStack {
                                     Text(status.menuLabel)
                                     if task.taskStatus == status {
@@ -1416,12 +1631,19 @@ struct TaskRow: View {
                 .fill(isExpanded ? Color(white: 0.20) : (isHighlighted ? Color.orange.opacity(0.08) : .clear))
                 .shadow(color: isExpanded ? .black.opacity(0.3) : .clear, radius: isExpanded ? 8 : 0, y: isExpanded ? 4 : 0)
         )
-        .contentShape(Rectangle())
+        .overlay(alignment: .top) {
+            if isDragTarget {
+                RoundedRectangle(cornerRadius: 2)
+                    .fill(Color.orange)
+                    .frame(height: 3)
+                    .padding(.horizontal, 8)
+                    .offset(y: -2)
+                    .transition(.opacity.combined(with: .scale(scale: 0.8, anchor: .top)))
+            }
+        }
+        .animation(.spring(response: 0.2, dampingFraction: 0.8), value: isDragTarget)
         .onHover { hovering in
             isHovering = hovering
-        }
-        .onTapGesture(count: 1) {
-            onTap?()
         }
         .padding(.top, isExpanded ? 30 : 0)
         .padding(.bottom, isExpanded ? 45 : 0)
@@ -1437,6 +1659,117 @@ struct TaskRow: View {
             } else {
                 isTitleFocused = false
                 showNotes = false
+            }
+        }
+        .onChange(of: task.taskStatus) { oldStatus, newStatus in
+            // Collapse and notify when status changes (e.g., running -> queued)
+            if oldStatus != newStatus {
+                onStatusChange?()
+            }
+        }
+    }
+}
+
+// MARK: - Running Task Indicator
+
+/// Claude icon that pulses from white to orange, shows checkmark on hover
+struct RunningTaskIndicator: View {
+    let size: CGFloat
+    let isHovering: Bool
+    var onMarkComplete: (() -> Void)?
+
+    @State private var pulsePhase: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            if isHovering {
+                // Checkmark circle on hover
+                Button(action: { onMarkComplete?() }) {
+                    ZStack {
+                        Circle()
+                            .strokeBorder(Color.orange.opacity(0.5), lineWidth: 1.5)
+                            .frame(width: size, height: size)
+
+                        Image(systemName: "checkmark")
+                            .font(.system(size: size * 0.45, weight: .bold))
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                // Pulsing Claude icon - plain orange
+                ClaudeShape()
+                    .fill(Color.orange.opacity(0.7 + pulsePhase * 0.3))
+                    .frame(width: size * 0.85, height: size * 0.6)
+                    .shadow(color: .orange.opacity(pulsePhase * 0.4), radius: 3)
+                    .frame(width: size, height: size)
+                    .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: isHovering)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
+                pulsePhase = 1.0
+            }
+        }
+    }
+}
+
+/// Indicator for queued tasks - play icon in a circle with hover effect
+struct QueuedTaskIndicator: View {
+    let size: CGFloat
+    let isHovering: Bool
+    let position: Int?
+    var onRun: (() -> Void)?
+
+    @State private var pulsePhase: CGFloat = 0
+
+    var body: some View {
+        ZStack {
+            if isHovering {
+                // Play circle on hover - ready to start
+                Button(action: { onRun?() }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.orange.opacity(0.15))
+                            .frame(width: size, height: size)
+
+                        Circle()
+                            .strokeBorder(Color.orange.opacity(0.6), lineWidth: 1.5)
+                            .frame(width: size, height: size)
+
+                        Image(systemName: "play.fill")
+                            .font(.system(size: size * 0.4))
+                            .foregroundStyle(.orange)
+                    }
+                }
+                .buttonStyle(.plain)
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                // Subtle play indicator in a circle
+                ZStack {
+                    Circle()
+                        .strokeBorder(Color.primary.opacity(0.15 + pulsePhase * 0.1), lineWidth: 1.5)
+                        .frame(width: size, height: size)
+
+                    if let pos = position {
+                        Text("\(pos)")
+                            .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Image(systemName: "play.fill")
+                            .font(.system(size: size * 0.35))
+                            .foregroundStyle(.secondary.opacity(0.6))
+                    }
+                }
+                .transition(.scale.combined(with: .opacity))
+            }
+        }
+        .animation(.easeInOut(duration: 0.15), value: isHovering)
+        .onAppear {
+            withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
+                pulsePhase = 1.0
             }
         }
     }
@@ -1750,6 +2083,53 @@ struct ResizableDivider: View {
                         isDragging = false
                     }
             )
+    }
+}
+
+// MARK: - Optimizations Overview View
+
+struct OptimizationsOverviewView: View {
+    let workspace: Workspace
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            HStack(alignment: .center) {
+                Image(systemName: "gauge.with.dots.needle.50percent")
+                    .font(.system(size: 16))
+                    .foregroundStyle(.purple)
+
+                Text("Optimizations")
+                    .font(.system(size: 20, weight: .bold))
+
+                Spacer()
+            }
+            .frame(maxWidth: 1000)
+            .padding(.horizontal, 40)
+            .frame(maxWidth: .infinity, alignment: .center)
+            .padding(.top, 20)
+            .padding(.bottom, 24)
+
+            Spacer()
+
+            VStack(spacing: 16) {
+                Image(systemName: "gauge.with.dots.needle.50percent")
+                    .font(.system(size: 40, weight: .thin))
+                    .foregroundStyle(.tertiary)
+
+                Text("Optimize your agents")
+                    .font(.system(size: 15, weight: .medium))
+                    .foregroundStyle(.secondary)
+
+                Text("Add skills and context to improve agent performance")
+                    .font(.system(size: 13))
+                    .foregroundStyle(.tertiary)
+            }
+
+            Spacer()
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(white: 27.0 / 255.0))
     }
 }
 #endif

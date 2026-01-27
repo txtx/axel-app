@@ -36,6 +36,8 @@ final class WorkTask {
     var title: String
     var taskDescription: String?
     var status: String // TaskStatus raw value
+    /// Queue position: lower values = higher in queue (executed first).
+    /// When sorting, use ascending order (.forward / <) so priority 0 appears before priority 100.
     var priority: Int
     var createdAt: Date
     var updatedAt: Date

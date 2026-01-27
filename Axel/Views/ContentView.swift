@@ -33,8 +33,9 @@ struct ContentView: View {
         case .inbox: return "inbox"
         case .queue: return "queue"
         case .terminals: return "terminals"
-        case .skills: return "skills"
-        case .context: return "context"
+        case .optimizations(.overview): return "optimizations"
+        case .optimizations(.skills): return "skills"
+        case .optimizations(.context): return "context"
         case .team: return "team"
         case .none: return "none"
         }
@@ -86,16 +87,20 @@ struct ContentView: View {
         // Generate a pane ID for this terminal session
         let paneId = UUID().uuidString
 
+        // Allocate a unique port for this terminal's server
+        let port = InboxService.shared.allocatePort()
+
         // Create a Terminal model
         let terminal = Terminal()
         terminal.paneId = paneId
+        terminal.serverPort = port
         terminal.task = task
         terminal.workspace = task?.workspace
         terminal.status = TerminalStatus.running.rawValue
         modelContext.insert(terminal)
 
-        // Build command with optional prompt
-        var command = "axel claude --pane-id=\(paneId)"
+        // Build command with pane-id and port
+        var command = "axel claude --pane-id=\(paneId) --port=\(port)"
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
@@ -103,6 +108,9 @@ struct ContentView: View {
             }
             command += " --prompt \(prompt.shellEscaped)"
         }
+
+        // Connect to this terminal's SSE endpoint
+        InboxService.shared.connect(paneId: paneId, port: port)
 
         let session = sessionManager.startSession(
             for: task,
@@ -174,9 +182,15 @@ struct ContentView: View {
         } content: {
             Group {
                 switch sidebarSelection {
-                case .skills:
+                case .optimizations(.overview):
+                    ContentUnavailableView {
+                        Label("Optimizations", systemImage: "gauge.with.dots.needle.50percent")
+                    } description: {
+                        Text("Add skills and context to improve agent performance")
+                    }
+                case .optimizations(.skills):
                     SkillsListView(workspace: nil, selection: $selectedAgent)
-                case .context:
+                case .optimizations(.context):
                     ContextListView(selection: $selectedContext)
                 case .team:
                     TeamListView(selectedMember: $selectedTeamMember)
@@ -198,13 +212,13 @@ struct ContentView: View {
             .id(contentColumnId)  // Force content column to adopt each view's preferred width
         } detail: {
             switch sidebarSelection {
-            case .skills:
+            case .optimizations(.skills):
                 if let agent = selectedAgent {
                     AgentDetailView(agent: agent)
                 } else {
                     EmptySkillSelectionView()
                 }
-            case .context:
+            case .optimizations(.context):
                 if let context = selectedContext {
                     ContextDetailView(context: context)
                 } else {

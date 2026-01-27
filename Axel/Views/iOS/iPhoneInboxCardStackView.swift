@@ -408,7 +408,7 @@ struct HintSwipeCardContent: View {
 
     private func taskContextSection(_ task: WorkTask) -> some View {
         HStack(spacing: 10) {
-            Image(systemName: "tray.fill")
+            Image(systemName: "rectangle.stack")
                 .foregroundStyle(InboxColors.textTertiary)
 
             VStack(alignment: .leading, spacing: 2) {

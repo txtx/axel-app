@@ -3,10 +3,25 @@ import SwiftUI
 enum SidebarSection: Hashable {
     case inbox(HintFilter)
     case queue(TaskFilter)
-    case skills
-    case context
+    case optimizations(OptimizationsFilter)
     case team
     case terminals
+}
+
+enum OptimizationsFilter: String, CaseIterable, Identifiable {
+    case overview = "Overview"
+    case skills = "Skills"
+    case context = "Context"
+
+    var id: String { rawValue }
+
+    var systemImage: String {
+        switch self {
+        case .overview: "gauge.with.dots.needle.50percent"
+        case .skills: "hammer.fill"
+        case .context: "briefcase.fill"
+        }
+    }
 }
 
 enum HintFilter: String, CaseIterable, Identifiable {
