@@ -429,6 +429,7 @@ struct TerminalMiniatureView: View {
             }
             .frame(height: previewHeight)
             .clipShape(RoundedRectangle(cornerRadius: 8))
+            .padding(12)
 
             // Task info
             HStack(spacing: 6) {
@@ -457,6 +458,131 @@ struct TerminalMiniatureView: View {
 }
 
 
+// MARK: - Terminal App Detection
+
+/// Represents a terminal application that can be opened
+struct TerminalApp: Identifiable {
+    let id: String
+    let name: String
+    let bundleId: String
+    let iconName: String
+
+    /// Check if this terminal is installed
+    var isInstalled: Bool {
+        NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) != nil
+    }
+
+    /// Open this terminal with the given command
+    func open(withCommand command: String) {
+        // Escape backslashes first, then quotes for AppleScript
+        let escapedCommand = command
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "\"", with: "\\\"")
+
+        switch id {
+        case "iterm2":
+            // iTerm2 - use osascript for better reliability
+            let script = """
+            tell application "iTerm"
+                activate
+                create window with default profile
+                tell current session of current window
+                    write text "\(escapedCommand)"
+                end tell
+            end tell
+            """
+            runAppleScript(script)
+
+        case "terminal":
+            // Terminal.app AppleScript
+            let script = """
+            tell application "Terminal"
+                activate
+                do script "\(escapedCommand)"
+            end tell
+            """
+            runAppleScript(script)
+
+        case "warp":
+            // Warp - open and use clipboard + paste for reliability
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(command, forType: .string)
+            let script = """
+            tell application "Warp"
+                activate
+            end tell
+            delay 0.3
+            tell application "System Events"
+                keystroke "v" using command down
+                keystroke return
+            end tell
+            """
+            runAppleScript(script)
+
+        case "kitty":
+            // Kitty - launch via command line
+            if let kittyUrl = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                let kittyPath = kittyUrl.appendingPathComponent("Contents/MacOS/kitty").path
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: kittyPath)
+                process.arguments = ["--single-instance", "-e", "bash", "-c", command]
+                try? process.run()
+            }
+
+        case "alacritty":
+            // Alacritty - launch via command line
+            if let alacrittyUrl = NSWorkspace.shared.urlForApplication(withBundleIdentifier: bundleId) {
+                let alacrittyPath = alacrittyUrl.appendingPathComponent("Contents/MacOS/alacritty").path
+                let process = Process()
+                process.executableURL = URL(fileURLWithPath: alacrittyPath)
+                process.arguments = ["-e", "bash", "-c", command]
+                try? process.run()
+            }
+
+        default:
+            break
+        }
+    }
+
+    private func runAppleScript(_ script: String) {
+        // Run via osascript process for better reliability
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+        process.arguments = ["-e", script]
+
+        let pipe = Pipe()
+        process.standardError = pipe
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            if process.terminationStatus != 0 {
+                let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
+                if let errorString = String(data: errorData, encoding: .utf8) {
+                    print("[TerminalApp] osascript error: \(errorString)")
+                }
+            }
+        } catch {
+            print("[TerminalApp] Failed to run osascript: \(error)")
+        }
+    }
+
+    /// All known terminal apps
+    static let allApps: [TerminalApp] = [
+        TerminalApp(id: "iterm2", name: "iTerm", bundleId: "com.googlecode.iterm2", iconName: "rectangle.topthird.inset.filled"),
+        TerminalApp(id: "terminal", name: "Terminal", bundleId: "com.apple.Terminal", iconName: "terminal"),
+        TerminalApp(id: "warp", name: "Warp", bundleId: "dev.warp.Warp-Stable", iconName: "bolt.horizontal"),
+        TerminalApp(id: "kitty", name: "Kitty", bundleId: "net.kovidgoyal.kitty", iconName: "cat"),
+        TerminalApp(id: "alacritty", name: "Alacritty", bundleId: "org.alacritty", iconName: "a.square"),
+    ]
+
+    /// Get installed terminal apps
+    static var installedApps: [TerminalApp] {
+        allApps.filter { $0.isInstalled }
+    }
+}
+
 // MARK: - Running Detail View (Right Panel)
 
 struct RunningDetailView: View {
@@ -464,76 +590,52 @@ struct RunningDetailView: View {
     @Binding var selection: TerminalSession?
     @Environment(\.terminalSessionManager) private var sessionManager
     @State private var showStopConfirmation = false
+    @State private var installedTerminals: [TerminalApp] = []
+    @State private var isHoveringPill = false
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            HStack(spacing: 14) {
-                Image(systemName: "terminal.fill")
-                    .font(.title2)
-                    .foregroundStyle(.green)
-
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(session.taskTitle)
-                        .font(.headline)
-                        .lineLimit(1)
-
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(.green)
-                            .frame(width: 6, height: 6)
-                        Text("Running for \(session.startedAt, style: .relative)")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                Spacer()
-
-                Button {
-                    showStopConfirmation = true
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
-                        .font(.callout)
-                }
-                .buttonStyle(.bordered)
-                .tint(.red)
-                .confirmationDialog(
-                    "Stop Terminal",
-                    isPresented: $showStopConfirmation,
-                    titleVisibility: .visible
-                ) {
-                    Button("Stop Terminal", role: .destructive) {
-                        stopAndSelectPrevious()
-                    }
-                    Button("Cancel", role: .cancel) {}
-                } message: {
-                    Text("Are you sure you want to stop this terminal session?")
-                }
-            }
-            .padding(.horizontal, 20)
-            .padding(.vertical, 12)
-
-            Divider()
-
+        ZStack(alignment: .topTrailing) {
             // Full terminal view
             if let surfaceView = session.surfaceView {
                 TerminalFullView(surfaceView: surfaceView)
-                    .id(session.id)  // Force recreation when session changes
+                    .id(session.id)
             } else {
+                Color(red: 0x18/255.0, green: 0x26/255.0, blue: 0x2F/255.0)
                 Text("Terminal not available")
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+
+            // Floating glass pill toolbar
+            TerminalGlassPill(
+                session: session,
+                installedTerminals: installedTerminals,
+                isHovering: $isHoveringPill,
+                onStop: { showStopConfirmation = true }
+            )
+            .padding(.top, 12)
+            .padding(.trailing, 12)
         }
-        .background(.background)
+        .background(Color(red: 0x18/255.0, green: 0x26/255.0, blue: 0x2F/255.0))
+        .onAppear {
+            installedTerminals = TerminalApp.installedApps
+        }
+        .confirmationDialog(
+            "Stop Terminal",
+            isPresented: $showStopConfirmation,
+            titleVisibility: .visible
+        ) {
+            Button("Stop Terminal", role: .destructive) {
+                stopAndSelectPrevious()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Are you sure you want to stop this terminal session?")
+        }
     }
 
     private func stopAndSelectPrevious() {
-        // Find the index of the current session
         let sessions = sessionManager.sessions
         if let currentIndex = sessions.firstIndex(where: { $0.id == session.id }) {
-            // Select the previous session, or the next one if this is the first
             if currentIndex > 0 {
                 selection = sessions[currentIndex - 1]
             } else if sessions.count > 1 {
@@ -542,8 +644,140 @@ struct RunningDetailView: View {
                 selection = nil
             }
         }
-        // Stop the session
         sessionManager.stopSession(session)
+    }
+}
+
+// MARK: - Floating Glass Pill Toolbar
+
+struct TerminalGlassPill: View {
+    let session: TerminalSession
+    let installedTerminals: [TerminalApp]
+    @Binding var isHovering: Bool
+    let onStop: () -> Void
+
+    var body: some View {
+        HStack(spacing: 0) {
+            // Left section: Task info
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(.green)
+                    .frame(width: 8, height: 8)
+                    .shadow(color: .green.opacity(0.5), radius: 4)
+
+                Text(session.taskTitle)
+                    .font(.system(size: 12, weight: .medium))
+                    .lineLimit(1)
+                    .foregroundStyle(.white)
+            }
+            .padding(.leading, 14)
+            .padding(.trailing, 8)
+
+            // Divider
+            Rectangle()
+                .fill(.white.opacity(0.15))
+                .frame(width: 1, height: 20)
+
+            // Right section: Actions
+            HStack(spacing: 2) {
+                // Open in external terminal
+                if !installedTerminals.isEmpty, let paneId = session.paneId {
+                    Menu {
+                        ForEach(installedTerminals) { terminal in
+                            Button {
+                                terminal.open(withCommand: "axel session join \(paneId)")
+                            } label: {
+                                Label(terminal.name, systemImage: terminal.iconName)
+                            }
+                        }
+                    } label: {
+                        HStack(spacing: 4) {
+                            Image(systemName: "arrow.up.forward.app")
+                                .font(.system(size: 11, weight: .medium))
+                            Text("Join tmux")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(.white.opacity(0.8))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 6)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(.white.opacity(0.08))
+                    )
+                }
+
+                // Stop button
+                Button {
+                    onStop()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: "stop.fill")
+                            .font(.system(size: 9, weight: .bold))
+                        Text("Stop")
+                            .font(.system(size: 11, weight: .medium))
+                    }
+                    .foregroundStyle(.red.opacity(0.9))
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 6)
+                }
+                .buttonStyle(.plain)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(.red.opacity(0.15))
+                )
+            }
+            .padding(.horizontal, 8)
+        }
+        .padding(.vertical, 6)
+        .background(
+            GlassPillBackground()
+        )
+        .clipShape(Capsule())
+        .overlay(
+            Capsule()
+                .strokeBorder(
+                    LinearGradient(
+                        colors: [.white.opacity(0.3), .white.opacity(0.1), .white.opacity(0.05)],
+                        startPoint: .top,
+                        endPoint: .bottom
+                    ),
+                    lineWidth: 0.5
+                )
+        )
+        .shadow(color: .black.opacity(0.3), radius: 12, x: 0, y: 4)
+        .shadow(color: .black.opacity(0.1), radius: 1, x: 0, y: 1)
+        .onHover { hovering in
+            isHovering = hovering
+        }
+    }
+}
+
+// MARK: - Glass Pill Background
+
+struct GlassPillBackground: View {
+    var body: some View {
+        VisualEffectBlur(material: .hudWindow, blendingMode: .behindWindow)
+    }
+}
+
+struct VisualEffectBlur: NSViewRepresentable {
+    var material: NSVisualEffectView.Material
+    var blendingMode: NSVisualEffectView.BlendingMode
+
+    func makeNSView(context: NSViewRepresentableContext<Self>) -> NSVisualEffectView {
+        let view = NSVisualEffectView()
+        view.material = material
+        view.blendingMode = blendingMode
+        view.state = .active
+        return view
+    }
+
+    func updateNSView(_ nsView: NSVisualEffectView, context: NSViewRepresentableContext<Self>) {
+        nsView.material = material
+        nsView.blendingMode = blendingMode
     }
 }
 
