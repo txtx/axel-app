@@ -236,10 +236,13 @@ struct WorkspaceContentView: View {
                 listColumnView
                     .frame(width: currentListColumnWidth)
 
-                ResizableDivider(width: currentListColumnWidthBinding, minWidth: 220, maxWidth: 400)
+                ResizableDivider(width: currentListColumnWidthBinding, minWidth: 220, maxWidth: 800)
 
                 detailColumnView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .transaction { transaction in
+                transaction.animation = nil
             }
         }
     }
@@ -384,8 +387,10 @@ struct WorkspaceContentView: View {
             .modifier(WorkspaceKeyboardShortcuts(
                 selectedTask: selectedTask,
                 sidebarSelection: $sidebarSelection,
-                selectedSession: selectedSession,
+                selectedSession: $selectedSession,
                 showCloseTerminalConfirmation: $showCloseTerminalConfirmation,
+                sessionManager: sessionManager,
+                onCloseTerminal: { selectedSession = nil },
                 onStartTerminal: { startTerminal() },
                 onStartTerminalForTask: { if let task = selectedTask { startTerminal(for: task) } }
             ))
@@ -446,8 +451,10 @@ struct WorkspaceContentView: View {
 private struct WorkspaceKeyboardShortcuts: ViewModifier {
     let selectedTask: WorkTask?
     @Binding var sidebarSelection: SidebarSection?
-    let selectedSession: TerminalSession?
+    @Binding var selectedSession: TerminalSession?
     @Binding var showCloseTerminalConfirmation: Bool
+    let sessionManager: TerminalSessionManager
+    let onCloseTerminal: () -> Void
     let onStartTerminal: () -> Void
     let onStartTerminalForTask: () -> Void
 
@@ -455,9 +462,17 @@ private struct WorkspaceKeyboardShortcuts: ViewModifier {
         content
             .keyboardShortcut(for: .runTerminal) { onStartTerminalForTask() }
             .keyboardShortcut(for: .newTerminal) { onStartTerminal() }
-            .keyboardShortcut(for: .closeTerminal) {
-                if case .terminals = sidebarSelection, selectedSession != nil {
+            .keyboardShortcut(for: .closePane) {
+                // Cmd+W only works on terminals screen
+                guard case .terminals = sidebarSelection, let session = selectedSession else { return }
+
+                // If terminal has an associated task, ask for confirmation
+                if session.taskId != nil {
                     showCloseTerminalConfirmation = true
+                } else {
+                    // No task associated, stop the terminal directly
+                    sessionManager.stopSession(session)
+                    onCloseTerminal()
                 }
             }
             .keyboardShortcut(for: .showTasks) { sidebarSelection = .queue(.queued) }
@@ -472,20 +487,114 @@ private struct WorkspaceAlertModifier: ViewModifier {
     let selectedSession: TerminalSession?
     let sessionManager: TerminalSessionManager
     let onCloseSession: () -> Void
+    @Environment(\.modelContext) private var modelContext
+    @State private var keepTmuxSession: Bool = false
 
     func body(content: Content) -> some View {
         content
-            .alert("Close Terminal?", isPresented: $showCloseTerminalConfirmation) {
-                Button("Cancel", role: .cancel) { }
-                Button("Close", role: .destructive) {
-                    if let session = selectedSession {
-                        sessionManager.stopSession(session)
-                        onCloseSession()
+            .sheet(isPresented: $showCloseTerminalConfirmation) {
+                CloseTerminalConfirmationSheet(
+                    keepTmuxSession: $keepTmuxSession,
+                    onCancel: {
+                        showCloseTerminalConfirmation = false
+                    },
+                    onConfirm: {
+                        if let session = selectedSession {
+                            // Reset the associated task to queued status
+                            if let taskId = session.taskId,
+                               let task = modelContext.model(for: taskId) as? WorkTask {
+                                task.updateStatus(.queued)
+                            }
+
+                            if keepTmuxSession {
+                                // Just remove from UI without killing tmux
+                                sessionManager.stopSession(session)
+                            } else {
+                                // Kill the tmux session as well
+                                if let paneId = session.paneId {
+                                    Task {
+                                        // Kill the tmux pane
+                                        let process = Process()
+                                        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+                                        process.arguments = ["tmux", "kill-pane", "-t", paneId]
+                                        try? process.run()
+                                        process.waitUntilExit()
+                                    }
+                                }
+                                sessionManager.stopSession(session)
+                            }
+                            onCloseSession()
+                        }
+                        showCloseTerminalConfirmation = false
                     }
-                }
-            } message: {
-                Text("This will stop the running terminal session. Any unsaved work may be lost.")
+                )
             }
+    }
+}
+
+private struct CloseTerminalConfirmationSheet: View {
+    @Binding var keepTmuxSession: Bool
+    let onCancel: () -> Void
+    let onConfirm: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            // Header
+            VStack(spacing: 8) {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 32))
+                    .foregroundStyle(.orange)
+
+                Text("Stop Terminal?")
+                    .font(.headline)
+
+                Text("This will stop the terminal and put the associated task back in the queue.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+            }
+            .padding(.horizontal, 24)
+            .padding(.top, 24)
+            .padding(.bottom, 16)
+
+            Divider()
+
+            // Checkbox option
+            Toggle(isOn: $keepTmuxSession) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Keep tmux session running")
+                        .font(.body)
+                    Text("The terminal process will continue in the background")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .toggleStyle(.checkbox)
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+
+            Divider()
+
+            // Buttons
+            HStack(spacing: 12) {
+                Button("Cancel") {
+                    onCancel()
+                }
+                .keyboardShortcut(.escape, modifiers: [])
+                .buttonStyle(.bordered)
+
+                Button("Stop & Re-queue") {
+                    onConfirm()
+                }
+                .keyboardShortcut(.return, modifiers: [])
+                .buttonStyle(.borderedProminent)
+                .tint(.red)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 16)
+        }
+        .frame(width: 340)
+        .background(.background)
     }
 }
 
@@ -1408,7 +1517,7 @@ struct WorkspaceQueueListView: View {
         .frame(maxWidth: 1000)
         .padding(.horizontal, 40)
         .frame(maxWidth: .infinity, alignment: .center)
-        .padding(.top, 20)
+        .padding(.top, 32)
         .padding(.bottom, 24)
     }
 
@@ -2915,7 +3024,8 @@ struct ResizableDivider: View {
         Rectangle()
             .fill(Color.primary.opacity(isDragging ? 0.2 : 0.08))
             .frame(width: 1)
-            .contentShape(Rectangle().inset(by: -3))
+            .frame(maxHeight: .infinity)
+            .contentShape(Rectangle().inset(by: -4))
             .onHover { hovering in
                 if hovering {
                     NSCursor.resizeLeftRight.push()
@@ -2924,7 +3034,7 @@ struct ResizableDivider: View {
                 }
             }
             .gesture(
-                DragGesture(minimumDistance: 1)
+                DragGesture(minimumDistance: 1, coordinateSpace: .global)
                     .onChanged { value in
                         if !isDragging {
                             isDragging = true

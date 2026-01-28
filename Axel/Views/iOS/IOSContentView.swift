@@ -679,6 +679,9 @@ struct iPhoneQueueView: View {
                                         SlickTaskRow(task: task, position: nil)
                                     }
                                     .buttonStyle(.plain)
+                                    .contextMenu {
+                                        taskContextMenu(for: task)
+                                    }
                                 }
                             }
 
@@ -691,6 +694,9 @@ struct iPhoneQueueView: View {
                                         SlickTaskRow(task: task, position: index + 1)
                                     }
                                     .buttonStyle(.plain)
+                                    .contextMenu {
+                                        taskContextMenu(for: task)
+                                    }
                                 }
                             }
 
@@ -701,6 +707,9 @@ struct iPhoneQueueView: View {
                                         SlickTaskRow(task: task, position: nil)
                                     }
                                     .buttonStyle(.plain)
+                                    .contextMenu {
+                                        taskContextMenu(for: task)
+                                    }
                                 }
                             }
                         }
@@ -754,6 +763,69 @@ struct iPhoneQueueView: View {
         .padding(.top, 24)
         .padding(.bottom, 8)
     }
+
+    // Context menu actions matching macOS Task menu
+    @ViewBuilder
+    private func taskContextMenu(for task: WorkTask) -> some View {
+        // Run action (only for queued tasks)
+        if task.taskStatus == .queued {
+            Button {
+                withAnimation {
+                    task.updateStatus(.running)
+                }
+                syncService.performFullSyncInBackground(container: modelContext.container)
+            } label: {
+                Label("Run", systemImage: "play.fill")
+            }
+        }
+
+        // Complete action (for queued or running tasks)
+        if task.taskStatus == .queued || task.taskStatus == .running {
+            Button {
+                withAnimation {
+                    task.markCompleted()
+                }
+                syncService.performFullSyncInBackground(container: modelContext.container)
+            } label: {
+                Label("Complete", systemImage: "checkmark.circle.fill")
+            }
+        }
+
+        // Cancel action (for running tasks)
+        if task.taskStatus == .running {
+            Button {
+                withAnimation {
+                    task.updateStatus(.aborted)
+                }
+                syncService.performFullSyncInBackground(container: modelContext.container)
+            } label: {
+                Label("Cancel", systemImage: "xmark.circle.fill")
+            }
+        }
+
+        // Requeue action (for completed or aborted tasks)
+        if task.taskStatus == .completed || task.taskStatus == .aborted {
+            Button {
+                withAnimation {
+                    task.updateStatus(.queued)
+                }
+                syncService.performFullSyncInBackground(container: modelContext.container)
+            } label: {
+                Label("Requeue", systemImage: "arrow.uturn.backward.circle.fill")
+            }
+        }
+
+        Divider()
+
+        // Delete action
+        Button(role: .destructive) {
+            Task {
+                await viewModel.deleteTodo(task, context: modelContext)
+            }
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
 }
 
 
@@ -766,9 +838,100 @@ struct iPhoneTaskDetailView: View {
     @State private var editedDescription: String = ""
     @State private var isPreviewingMarkdown: Bool = false
     @State private var syncService = SyncService.shared
+    @State private var showDeleteConfirmation: Bool = false
+
+    private var statusColor: Color {
+        switch task.taskStatus {
+        case .queued: .blue
+        case .running: .orange
+        case .completed: .green
+        case .inReview: .yellow
+        case .aborted: .red
+        }
+    }
+
+    private var statusIcon: String {
+        switch task.taskStatus {
+        case .queued: "clock.circle.fill"
+        case .running: "play.circle.fill"
+        case .completed: "checkmark.circle.fill"
+        case .inReview: "eye.circle.fill"
+        case .aborted: "xmark.circle.fill"
+        }
+    }
 
     var body: some View {
         Form {
+            // Quick Actions Section (consistent with macOS Task menu)
+            Section {
+                // Run action (only for queued tasks)
+                if task.taskStatus == .queued {
+                    Button {
+                        withAnimation {
+                            task.updateStatus(.running)
+                        }
+                        Task {
+                            await syncService.performFullSync(context: modelContext)
+                        }
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                // Complete action (for queued or running tasks)
+                if task.taskStatus == .queued || task.taskStatus == .running {
+                    Button {
+                        withAnimation {
+                            task.markCompleted()
+                        }
+                        Task {
+                            await syncService.performFullSync(context: modelContext)
+                        }
+                    } label: {
+                        Label("Complete", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    }
+                }
+
+                // Cancel action (for running tasks)
+                if task.taskStatus == .running {
+                    Button {
+                        withAnimation {
+                            task.updateStatus(.aborted)
+                        }
+                        Task {
+                            await syncService.performFullSync(context: modelContext)
+                        }
+                    } label: {
+                        Label("Cancel", systemImage: "xmark.circle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+
+                // Requeue action (for completed or aborted tasks)
+                if task.taskStatus == .completed || task.taskStatus == .aborted {
+                    Button {
+                        withAnimation {
+                            task.updateStatus(.queued)
+                        }
+                        Task {
+                            await syncService.performFullSync(context: modelContext)
+                        }
+                    } label: {
+                        Label("Requeue", systemImage: "arrow.uturn.backward.circle.fill")
+                            .foregroundStyle(.blue)
+                    }
+                }
+            } header: {
+                HStack(spacing: 8) {
+                    Image(systemName: statusIcon)
+                        .foregroundStyle(statusColor)
+                    Text(task.taskStatus.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                        .foregroundStyle(statusColor)
+                }
+            }
+
             Section {
                 TextField("Task", text: $editedTitle, axis: .vertical)
                     .font(.body)
@@ -818,13 +981,6 @@ struct iPhoneTaskDetailView: View {
 
             Section {
                 HStack {
-                    Text("Status")
-                    Spacer()
-                    Text(task.taskStatus.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                        .foregroundStyle(.secondary)
-                }
-
-                HStack {
                     Text("Created")
                     Spacer()
                     Text(task.createdAt, style: .date)
@@ -841,40 +997,9 @@ struct iPhoneTaskDetailView: View {
                 }
             }
 
-            Section("Change Status") {
-                ForEach(TaskStatus.allCases, id: \.self) { status in
-                    Button {
-                        withAnimation {
-                            // Use automerge-aware method to track local changes
-                            if status == .completed {
-                                task.markCompleted()
-                            } else {
-                                task.updateStatus(status)
-                            }
-                        }
-                        Task {
-                            await syncService.performFullSync(context: modelContext)
-                        }
-                    } label: {
-                        HStack {
-                            Text(status.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                                .foregroundStyle(.primary)
-                            Spacer()
-                            if task.taskStatus == status {
-                                Image(systemName: "checkmark")
-                                    .foregroundStyle(.blue)
-                            }
-                        }
-                    }
-                }
-            }
-
             Section {
                 Button(role: .destructive) {
-                    Task {
-                        await viewModel.deleteTodo(task, context: modelContext)
-                    }
-                    dismiss()
+                    showDeleteConfirmation = true
                 } label: {
                     Label("Delete Task", systemImage: "trash")
                 }
@@ -882,6 +1007,17 @@ struct iPhoneTaskDetailView: View {
         }
         .navigationTitle("Task")
         .navigationBarTitleDisplayMode(.inline)
+        .confirmationDialog("Delete Task?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
+            Button("Delete", role: .destructive) {
+                Task {
+                    await viewModel.deleteTodo(task, context: modelContext)
+                }
+                dismiss()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This action cannot be undone.")
+        }
         .onAppear {
             editedTitle = task.title
             editedDescription = task.taskDescription ?? ""
@@ -1320,6 +1456,8 @@ struct iPadSplitView: View {
                 SkillsListView(workspace: nil, selection: $selectedAgent)
             case .optimizations(.context):
                 ContextListView(selection: $selectedContext)
+            case .optimizations(.overview):
+                SkillsListView(workspace: nil, selection: $selectedAgent)
             case .team:
                 TeamListView(selectedMember: $selectedTeamMember)
             case .queue:

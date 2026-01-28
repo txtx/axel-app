@@ -6,7 +6,7 @@ import SwiftUI
 enum AppKeyboardShortcut {
     case runTerminal
     case newTerminal
-    case closeTerminal
+    case closePane
     case showTasks
     case showAgents
     case showInbox
@@ -16,7 +16,7 @@ enum AppKeyboardShortcut {
         switch self {
         case .runTerminal: return "r"
         case .newTerminal: return "t"
-        case .closeTerminal: return "w"
+        case .closePane: return "w"
         case .showTasks: return "1"
         case .showAgents: return "2"
         case .showInbox: return "3"
@@ -28,7 +28,7 @@ enum AppKeyboardShortcut {
         switch self {
         case .runTerminal: return .command
         case .newTerminal: return .command
-        case .closeTerminal: return .command
+        case .closePane: return .command
         case .showTasks: return .command
         case .showAgents: return .command
         case .showInbox: return .command

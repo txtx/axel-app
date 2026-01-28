@@ -1315,6 +1315,70 @@ struct TaskDetailView: View {
         .navigationTitle(task.title)
         #if os(iOS)
         .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                // Run action (only for queued tasks)
+                if task.taskStatus == .queued {
+                    Button {
+                        withAnimation {
+                            task.updateStatus(.running)
+                        }
+                        Task {
+                            await syncService.performFullSync(context: modelContext)
+                        }
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                    }
+                    .tint(.green)
+                }
+
+                // Complete action (for queued or running tasks)
+                if task.taskStatus == .queued || task.taskStatus == .running {
+                    Button {
+                        withAnimation {
+                            task.markCompleted()
+                            selectedTask = nil
+                        }
+                        Task {
+                            await syncService.performFullSync(context: modelContext)
+                        }
+                    } label: {
+                        Label("Complete", systemImage: "checkmark.circle.fill")
+                    }
+                    .tint(.green)
+                }
+
+                // Cancel action (for running tasks)
+                if task.taskStatus == .running {
+                    Button {
+                        withAnimation {
+                            task.updateStatus(.aborted)
+                        }
+                        Task {
+                            await syncService.performFullSync(context: modelContext)
+                        }
+                    } label: {
+                        Label("Cancel", systemImage: "xmark.circle.fill")
+                    }
+                    .tint(.orange)
+                }
+
+                // Requeue action (for completed or aborted tasks)
+                if task.taskStatus == .completed || task.taskStatus == .aborted {
+                    Button {
+                        withAnimation {
+                            task.updateStatus(.queued)
+                        }
+                        Task {
+                            await syncService.performFullSync(context: modelContext)
+                        }
+                    } label: {
+                        Label("Requeue", systemImage: "arrow.uturn.backward.circle.fill")
+                    }
+                    .tint(.blue)
+                }
+            }
+        }
         #endif
         .background(.background)
         .alert("Delete Task", isPresented: $showDeleteConfirmation) {
