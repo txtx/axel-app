@@ -972,20 +972,98 @@ struct WorkspaceQueueListView: View {
     }
 
     private var emptyView: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 0) {
             Spacer()
 
-            Image(systemName: "tray")
-                .font(.system(size: 40, weight: .thin))
-                .foregroundStyle(.tertiary)
+            // Hero section
+            VStack(spacing: 16) {
+                // App icon with glow
+                ZStack {
+                    Circle()
+                        .fill(
+                            RadialGradient(
+                                colors: [Color.orange.opacity(0.15), Color.clear],
+                                center: .center,
+                                startRadius: 20,
+                                endRadius: 60
+                            )
+                        )
+                        .frame(width: 120, height: 120)
 
-            Text("No tasks yet")
-                .font(.system(size: 15, weight: .medium))
-                .foregroundStyle(.secondary)
+                    Image(systemName: "rectangle.stack.badge.play")
+                        .font(.system(size: 44, weight: .light))
+                        .foregroundStyle(
+                            LinearGradient(
+                                colors: [.orange, .orange.opacity(0.7)],
+                                startPoint: .topLeading,
+                                endPoint: .bottomTrailing
+                            )
+                        )
+                }
 
-            Text("Press + to create a task")
-                .font(.system(size: 13))
-                .foregroundStyle(.tertiary)
+                VStack(spacing: 8) {
+                    Text("Task Queue")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.primary)
+
+                    Text("Create tasks and dispatch them to coding agents.\nAxel runs your work queue autonomously.")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .lineSpacing(2)
+                }
+            }
+
+            Spacer()
+                .frame(height: 40)
+
+            // Keyboard shortcuts section
+            VStack(spacing: 12) {
+                Text("KEYBOARD SHORTCUTS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .tracking(1.5)
+
+                HStack(spacing: 24) {
+                    KeyboardShortcutHint(keys: ["⌘", "N"], label: "New Task")
+                    KeyboardShortcutHint(keys: ["⌘", "R"], label: "Run Task")
+                    KeyboardShortcutHint(keys: ["⌘", "T"], label: "New Terminal")
+                }
+
+                HStack(spacing: 24) {
+                    KeyboardShortcutHint(keys: ["⌘", "1"], label: "Tasks")
+                    KeyboardShortcutHint(keys: ["⌘", "2"], label: "Agents")
+                    KeyboardShortcutHint(keys: ["⌘", "3"], label: "Inbox")
+                }
+            }
+            .padding(.vertical, 20)
+            .padding(.horizontal, 32)
+            .background(
+                RoundedRectangle(cornerRadius: 12)
+                    .fill(Color.white.opacity(0.03))
+                    .stroke(Color.white.opacity(0.06), lineWidth: 1)
+            )
+
+            Spacer()
+
+            // Call to action
+            Button(action: onNewTask) {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                        .font(.system(size: 16))
+                    Text("Create First Task")
+                        .font(.system(size: 14, weight: .medium))
+                }
+                .foregroundStyle(.white)
+                .padding(.horizontal, 20)
+                .padding(.vertical, 10)
+                .background(
+                    Capsule()
+                        .fill(Color.orange.opacity(0.9))
+                )
+            }
+            .buttonStyle(.plain)
+            .padding(.bottom, 40)
 
             Spacer()
         }
@@ -1568,6 +1646,35 @@ struct QueuedTaskIndicator: View {
             withAnimation(.easeInOut(duration: 2.0).repeatForever(autoreverses: true)) {
                 pulsePhase = 1.0
             }
+        }
+    }
+}
+
+// MARK: - Keyboard Shortcut Hint
+
+/// A compact keyboard shortcut display with key symbols and label
+struct KeyboardShortcutHint: View {
+    let keys: [String]
+    let label: String
+
+    var body: some View {
+        VStack(spacing: 6) {
+            HStack(spacing: 2) {
+                ForEach(keys, id: \.self) { key in
+                    Text(key)
+                        .font(.system(size: 12, weight: .medium, design: .rounded))
+                        .foregroundStyle(.primary.opacity(0.8))
+                        .frame(minWidth: 22, minHeight: 22)
+                        .background(
+                            RoundedRectangle(cornerRadius: 5)
+                                .fill(Color.white.opacity(0.08))
+                                .stroke(Color.white.opacity(0.12), lineWidth: 1)
+                        )
+                }
+            }
+            Text(label)
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
         }
     }
 }

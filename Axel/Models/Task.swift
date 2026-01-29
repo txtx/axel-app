@@ -149,6 +149,7 @@ final class WorkTask {
 
     /// Update status and sync to Automerge document
     /// Also handles TaskQueueService cleanup when leaving queued status
+    /// and notifies session cleanup when leaving running status
     @MainActor
     func updateStatus(_ newStatus: TaskStatus) {
         let oldStatus = self.taskStatus
@@ -158,6 +159,16 @@ final class WorkTask {
         // Clean up TaskQueueService when leaving queued status
         if oldStatus == .queued && newStatus != .queued {
             TaskQueueService.shared.removeFromAnyTerminal(taskId: self.id)
+        }
+
+        // Notify session cleanup when leaving running status
+        // This triggers terminal session state update and queue consumption
+        if oldStatus == .running && newStatus != .running {
+            NotificationCenter.default.post(
+                name: .taskNoLongerRunning,
+                object: nil,
+                userInfo: ["taskId": self.id]
+            )
         }
 
         let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)

@@ -792,11 +792,12 @@ struct TerminalApp: Identifiable {
         switch id {
         case "iterm2":
             // iTerm2 - use osascript for better reliability
+            // Must capture the new window reference, otherwise current window points to old window
             let script = """
             tell application "iTerm"
                 activate
-                create window with default profile
-                tell current session of current window
+                set newWindow to (create window with default profile)
+                tell current session of newWindow
                     write text "\(escapedCommand)"
                 end tell
             end tell
@@ -855,26 +856,28 @@ struct TerminalApp: Identifiable {
     }
 
     private func runAppleScript(_ script: String) {
-        // Run via osascript process for better reliability
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
-        process.arguments = ["-e", script]
+        // Run via osascript process asynchronously to avoid blocking main thread
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/osascript")
+            process.arguments = ["-e", script]
 
-        let pipe = Pipe()
-        process.standardError = pipe
+            let pipe = Pipe()
+            process.standardError = pipe
 
-        do {
-            try process.run()
-            process.waitUntilExit()
+            do {
+                try process.run()
+                process.waitUntilExit()
 
-            if process.terminationStatus != 0 {
-                let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let errorString = String(data: errorData, encoding: .utf8) {
-                    print("[TerminalApp] osascript error: \(errorString)")
+                if process.terminationStatus != 0 {
+                    let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
+                    if let errorString = String(data: errorData, encoding: .utf8) {
+                        print("[TerminalApp] osascript error: \(errorString)")
+                    }
                 }
+            } catch {
+                print("[TerminalApp] Failed to run osascript: \(error)")
             }
-        } catch {
-            print("[TerminalApp] Failed to run osascript: \(error)")
         }
     }
 

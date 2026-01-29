@@ -146,6 +146,15 @@ struct WorkspaceContentView: View {
             return
         }
 
+        // Idempotency guard: if session already has a running task that's not completed,
+        // skip this call (prevents race condition between dual notifications)
+        if let currentTaskId = session.taskId,
+           let currentTask = modelContext.model(for: currentTaskId) as? WorkTask,
+           currentTask.taskStatus == .running {
+            // Session is already running a task - this is a duplicate notification
+            return
+        }
+
         // Pop the next task from the queue (via TaskQueueService)
         guard let nextTaskId = TaskQueueService.shared.dequeue(fromTerminal: paneId) else {
             // No more tasks in queue - clear the current task reference
@@ -191,8 +200,14 @@ struct WorkspaceContentView: View {
         terminal.status = TerminalStatus.running.rawValue
         modelContext.insert(terminal)
 
+        // Check if workspace needs initialization (no AXEL.md)
+        let initPrefix = AxelSetupService.shared.getInitCommandPrefix(
+            workspacePath: workspace.path,
+            workspaceName: workspace.name
+        )
+
         // Build command with pane-id and port
-        var command = "axel claude --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
+        var command = "\(initPrefix)axel claude --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
@@ -395,52 +410,52 @@ struct WorkspaceContentView: View {
             WorkspaceToolbarHeader(workspace: workspace, showTerminal: $showTerminal)
         }
 
-        ToolbarItemGroup(placement: .primaryAction) {
-            if !authService.isAuthenticated {
-                signInButton
-            }
-        }
+//        ToolbarItemGroup(placement: .primaryAction) {
+//            if !authService.isAuthenticated {
+//                signInButton
+//            }
+//        }
     }
 
-    @ViewBuilder
-    private var signInButton: some View {
-        Button {
-            Task {
-                await authService.signInWithGitHub()
-            }
-        } label: {
-            signInButtonLabel
-        }
-        .buttonStyle(.borderless)
-        .help("Sign in with GitHub")
-    }
-
-    @ViewBuilder
-    private var signInButtonLabel: some View {
-        if authService.isLoading {
-            ProgressView()
-                .controlSize(.small)
-        } else if let error = authService.authError {
-            HStack(spacing: 6) {
-                Image(systemName: "exclamationmark.triangle")
-                    .font(.system(size: 16))
-                Text("Error")
-                    .font(.system(size: 12))
-            }
-            .foregroundStyle(.red)
-            .padding(.horizontal, 16)
-            .help(error.localizedDescription)
-        } else {
-            HStack(spacing: 6) {
-                Image(systemName: "person.circle")
-                    .font(.system(size: 16))
-                Text("Sign in to Sync")
-                    .font(.system(size: 12))
-            }
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 16)
-        }
-    }
+//    @ViewBuilder
+//    private var signInButton: some View {
+//        Button {
+//            Task {
+//                await authService.signInWithGitHub()
+//            }
+//        } label: {
+//            signInButtonLabel
+//        }
+//        .buttonStyle(.borderless)
+//        .help("Sign in with GitHub")
+//    }
+//
+//    @ViewBuilder
+//    private var signInButtonLabel: some View {
+//        if authService.isLoading {
+//            ProgressView()
+//                .controlSize(.small)
+//        } else if let error = authService.authError {
+//            HStack(spacing: 6) {
+//                Image(systemName: "exclamationmark.triangle")
+//                    .font(.system(size: 16))
+//                Text("Error")
+//                    .font(.system(size: 12))
+//            }
+//            .foregroundStyle(.red)
+//            .padding(.horizontal, 16)
+//            .help(error.localizedDescription)
+//        } else {
+//            HStack(spacing: 6) {
+//                Image(systemName: "person.circle")
+//                    .font(.system(size: 16))
+//                Text("Sign in to Sync")
+//                    .font(.system(size: 12))
+//            }
+//            .foregroundStyle(.secondary)
+//            .padding(.horizontal, 16)
+//        }
+//    }
 
     // MARK: - Floating Terminal Overlay
 
@@ -507,6 +522,7 @@ struct WorkspaceContentView: View {
             ))
             .modifier(WorkspaceNotificationModifier(
                 sidebarSelection: $sidebarSelection,
+                workspace: workspace,
                 onConsumeNextTask: consumeNextQueuedTask
             ))
     }
@@ -837,6 +853,7 @@ private struct WorkspaceFocusedValuesModifier: ViewModifier {
 
 private struct WorkspaceNotificationModifier: ViewModifier {
     @Binding var sidebarSelection: SidebarSection?
+    let workspace: Workspace
     let onConsumeNextTask: (String) -> Void
 
     func body(content: Content) -> some View {
@@ -854,10 +871,17 @@ private struct WorkspaceNotificationModifier: ViewModifier {
                 sidebarSelection = .optimizations(.skills)
             }
             .onReceive(NotificationCenter.default.publisher(for: .taskCompletedOnTerminal)) { notification in
-                // When a task completes on a terminal, consume the next queued task
+                // When a task completes on a terminal (via inbox confirmation), consume the next queued task
                 if let paneId = notification.userInfo?["paneId"] as? String {
                     onConsumeNextTask(paneId)
                 }
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .taskNoLongerRunning)) { notification in
+                // When a task's status changes from running (via Tasks scene), find terminal and cleanup
+                guard let taskId = notification.userInfo?["taskId"] as? UUID,
+                      let terminal = workspace.terminals.first(where: { $0.task?.id == taskId }),
+                      let paneId = terminal.paneId else { return }
+                onConsumeNextTask(paneId)
             }
     }
 }
@@ -1187,18 +1211,18 @@ struct WorkspaceSidebarView: View {
 
                     Spacer()
 
-                    Button {
-                        Task {
-                            let workspaceId = workspace.syncId ?? workspace.id
-                            await syncService.performWorkspaceSync(workspaceId: workspaceId, context: modelContext)
-                        }
-                    } label: {
-                        Image(systemName: "arrow.triangle.2.circlepath")
-                            .font(.callout)
-                            .foregroundStyle(syncService.isSyncing ? .secondary : .primary)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(syncService.isSyncing)
+//                    Button {
+//                        Task {
+//                            let workspaceId = workspace.syncId ?? workspace.id
+//                            await syncService.performWorkspaceSync(workspaceId: workspaceId, context: modelContext)
+//                        }
+//                    } label: {
+//                        Image(systemName: "arrow.triangle.2.circlepath")
+//                            .font(.callout)
+//                            .foregroundStyle(syncService.isSyncing ? .secondary : .primary)
+//                    }
+//                    .buttonStyle(.plain)
+//                    .disabled(syncService.isSyncing)
 
                     Menu {
                         Button(role: .destructive) {
