@@ -27,6 +27,15 @@ final class Terminal {
     /// Each terminal gets its own embedded server on a unique port.
     var serverPort: Int?
 
+    /// Git worktree branch this terminal is operating in.
+    /// nil means the terminal is in the main workspace (no worktree).
+    var worktreeBranch: String?
+
+    /// Display name for the worktree (returns "main" if no worktree)
+    var worktreeDisplayName: String {
+        worktreeBranch ?? "main"
+    }
+
     // Relationships
     var workspace: Workspace?
     var task: WorkTask?

@@ -67,7 +67,14 @@ Axel/
 Packages/
 ├── AutomergeWrapper/          # CRDT document wrapper
 ├── SwiftTermWrapper/          # Terminal integration
-└── SwiftTerm/                 # Terminal emulation library
+└── SwiftDiffs/                # Diff visualization library
+
+scripts/
+├── create-dmg.sh              # DMG creation for distribution
+└── test-sparkle-locally.sh    # Local Sparkle updater testing
+
+docs/
+└── ci-setup.md                # CI/CD setup documentation
 ```
 
 ## Key Files
@@ -90,6 +97,7 @@ Packages/
 - **Automerge** for CRDT-based sync
 - **Supabase** for auth and cloud storage
 - **SwiftTerm** for terminal emulation
+- **Sparkle** for macOS auto-updates
 - **SSE** for real-time event streaming
 
 ## Key Patterns
@@ -166,14 +174,59 @@ AuthService.shared     // OAuth
 
 ## Development
 
+**Requirements**: macOS 14.0+, Xcode 15.0+, Swift 5.9+
+
 ```bash
 # Open in Xcode
 open Axel.xcodeproj
 
+# Build and run via script
+./run.sh
+
+# Manual build (Debug)
+xcodebuild -project Axel.xcodeproj -scheme Axel \
+  -destination 'platform=macOS' -configuration Debug build
+
 # Build targets: Axel (macOS), Axel-iOS, Axel-visionOS
 ```
 
-**Requirements**: macOS 14.0+, Xcode 15.0+, Swift 5.9+
+## Building for Release
+
+```bash
+# Build release version
+xcodebuild -scheme Axel -project Axel.xcodeproj -configuration Release \
+  -destination "platform=macOS" build
+
+# Create DMG installer (requires: brew install create-dmg)
+./scripts/create-dmg.sh "build/Build/Products/Release/Axel.app" "Axel.dmg"
+```
+
+## Auto-Updates
+
+The app uses **Sparkle** for automatic updates on macOS:
+- Update feed: `https://txtx-public.s3.amazonaws.com/releases/axel/appcast.xml`
+- Automatic checking enabled by default
+- Updates menu available in app
+
+## CI/CD
+
+GitHub Actions workflow triggers on:
+- Git tags matching `v*`
+- Manual dispatch
+
+Features:
+- Automated code signing and notarization
+- DMG creation and S3 publishing
+- See [docs/ci-setup.md](./docs/ci-setup.md) for required secrets
+
+## Keyboard Shortcuts
+
+| Shortcut | Action |
+|----------|--------|
+| `⌘N` | New task |
+| `⌘R` | Run selected task |
+| `⌘K` | Command palette |
+| `⌘,` | Preferences |
 
 ## Integration with Axel CLI
 

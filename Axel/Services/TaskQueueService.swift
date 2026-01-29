@@ -1,17 +1,70 @@
 import Foundation
 import SwiftData
 
+// MARK: - Task Queuing Protocol
+
+/// Protocol for task queue management, enabling dependency injection and testing
+@MainActor
+protocol TaskQueueing: AnyObject {
+    /// The current state of terminal queues (for observation/testing)
+    var terminalQueues: [String: [UUID]] { get }
+
+    /// Add a task to a terminal's queue
+    func enqueue(taskId: UUID, onTerminal paneId: String)
+
+    /// Remove and return the next task from a terminal's queue (FIFO)
+    func dequeue(fromTerminal paneId: String) -> UUID?
+
+    /// View the next task without removing it
+    func peek(terminal paneId: String) -> UUID?
+
+    /// Get all tasks queued on a terminal
+    func tasksQueued(onTerminal paneId: String) -> [UUID]
+
+    /// Find which terminal has a specific task in its queue
+    func terminalForTask(taskId: UUID) -> String?
+
+    /// Get the number of tasks queued on a terminal
+    func queueCount(forTerminal paneId: String) -> Int
+
+    /// Reorder a task within its terminal's queue
+    func reorder(taskId: UUID, toIndex newIndex: Int, inTerminal paneId: String)
+
+    /// Remove a specific task from a terminal's queue
+    @discardableResult
+    func remove(taskId: UUID, fromTerminal paneId: String) -> Bool
+
+    /// Remove a task from any terminal's queue
+    @discardableResult
+    func removeFromAnyTerminal(taskId: UUID) -> String?
+
+    /// Clear all tasks from a terminal's queue
+    @discardableResult
+    func clearQueue(forTerminal paneId: String) -> [UUID]
+
+    /// Clear all queues across all terminals
+    func clearAllQueues()
+}
+
+// MARK: - Task Queue Service
+
 /// Singleton service that manages per-terminal task queues.
 /// Tracks which tasks are queued on which terminals (FIFO order).
 @MainActor
 @Observable
-final class TaskQueueService {
+final class TaskQueueService: TaskQueueing {
     static let shared = TaskQueueService()
 
     /// Terminal queues: paneId -> ordered list of task IDs (FIFO)
     private(set) var terminalQueues: [String: [UUID]] = [:]
 
+    /// Internal initializer for singleton
     private init() {}
+
+    /// Initializer for testing with pre-populated queues
+    init(queues: [String: [UUID]]) {
+        self.terminalQueues = queues
+    }
 
     // MARK: - Queue Operations
 
