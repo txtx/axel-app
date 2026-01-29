@@ -91,9 +91,11 @@ jobs:
           tar -xf Sparkle.tar.xz -C sparkle-tools
           chmod +x sparkle-tools/bin/*
 
-      - name: Resolve package dependencies
+      - name: Clean SPM caches
         if: steps.check_release.outputs.should_release == 'true'
-        run: xcodebuild -resolvePackageDependencies -scheme "${{ env.SCHEME }}" -project Axel.xcodeproj
+        run: |
+          rm -rf ~/Library/Caches/org.swift.swiftpm
+          rm -rf ~/Library/Developer/Xcode/DerivedData
 
       - name: Build macOS app
         if: steps.check_release.outputs.should_release == 'true'
