@@ -20,11 +20,13 @@ final class TodoViewModel {
     }
 
     func toggleComplete(_ item: WorkTask, context: ModelContext) async {
-        item.toggleComplete()
+        item.toggleCompleteWithUndo()
         await SyncService.shared.performFullSync(context: context)
     }
 
     func deleteTodo(_ item: WorkTask, context: ModelContext) async {
+        // Clean up TaskQueueService and other state before deletion
+        item.prepareForDeletion()
         // If the task was synced, delete from Supabase first
         if let syncId = item.syncId {
             await SyncService.shared.deleteTask(syncId: syncId)

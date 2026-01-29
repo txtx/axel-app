@@ -86,33 +86,14 @@ struct ContextListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Spacer()
-
-            Image(systemName: "doc.text")
-                .font(.system(size: 40))
-                .foregroundStyle(.quaternary)
-
-            Text("No Context")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            Text("Context provides background information for your agent")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-
-            Button {
-                isCreatingContext = true
-            } label: {
-                Label("New Context", systemImage: "plus")
-            }
-            .buttonStyle(.bordered)
-            .padding(.top, 8)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        EmptyStateView(
+            image: "doc.text",
+            title: "No Context",
+            description: "Context provides background information for your agent",
+            action: { isCreatingContext = true },
+            actionLabel: "New Context",
+            actionIcon: "plus"
+        )
     }
 
     private func deleteContext(_ context: Context) {

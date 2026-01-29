@@ -1,5 +1,60 @@
 import Foundation
 
+// MARK: - Token Counting Architecture
+//
+// This file implements the cost tracking system for Claude Code sessions.
+//
+// ## Data Flow
+//
+// ```
+// OTEL SSE Event (cumulative per-model counters)
+//       ↓
+// InboxService.parseOTELMetrics()
+//       ↓
+// InboxService.parseMetric()
+//   - Aggregates datapoints by session (SUMS across models)
+//   - Updates TaskMetrics with aggregated cumulative values
+//       ↓
+// CostTracker.recordMetrics(forSession:...)
+//   - Resolves sessionId → paneId via registered mapping
+//   - Delegates to TerminalCostTracker
+//       ↓
+// TerminalCostTracker.recordMetrics()
+//   - Computes DELTA = incoming cumulative - lastSessionCumulative
+//   - Adds delta to all-time totals
+//   - Appends delta to timeSeries for histogram/activity detection
+// ```
+//
+// ## Key Design Decisions
+//
+// 1. **OTEL sends cumulative values**: Each OTEL batch contains cumulative
+//    token counts since session start, not deltas. Multiple models in a
+//    session report separately.
+//
+// 2. **Delta calculation happens here**: TerminalCostTracker tracks
+//    "lastSession" values to compute deltas. This handles:
+//    - Out-of-order OTEL batches (max(0, delta) prevents negatives)
+//    - Session resets (detected via 50% drop threshold)
+//    - Multiple calls with same values (delta = 0)
+//
+// 3. **Session ID mapping**: OTEL uses Claude's internal sessionId, but
+//    we track by paneId (terminal identifier). The mapping is registered
+//    when hook events arrive (they contain both IDs).
+//
+// 4. **Multi-model aggregation**: InboxService sums datapoints across
+//    models before calling recordMetrics. This assumes each model reports
+//    its own cumulative counter, not a shared session total.
+//
+// ## Debugging Token Over-Counting
+//
+// If tokens appear to count too fast, check:
+// 1. OTEL datapoint structure - are values per-model or session-total?
+// 2. Is parseMetric called multiple times with overlapping data?
+// 3. Is the sessionId→paneId mapping correct (no duplicates)?
+//
+// Add logging in TerminalCostTracker.recordMetrics() to trace:
+//   print("[CostTracker] paneId=\(id) incoming=\(inputTokens) last=\(lastSessionInputTokens) delta=\(deltaInput)")
+
 /// A data point in the token usage time series
 struct TokenDataPoint: Identifiable, Equatable {
     let id = UUID()
@@ -72,22 +127,55 @@ struct TaskSegment: Identifiable, Equatable {
     }
 }
 
-/// Tracks token usage for a single terminal
+/// Tracks token usage for a single terminal (identified by paneId).
+///
+/// ## Delta Calculation
+///
+/// OTEL sends **cumulative** values (total tokens since session start).
+/// This class computes deltas by tracking what was last reported:
+///
+/// ```
+/// Batch 1: incoming=1000 → delta = 1000 - 0 = 1000, lastSession = 1000
+/// Batch 2: incoming=1500 → delta = 1500 - 1000 = 500, lastSession = 1500
+/// Batch 3: incoming=1500 → delta = 1500 - 1500 = 0 (no change)
+/// ```
+///
+/// ## Session Reset Detection
+///
+/// When a new Claude session starts, OTEL counters reset to 0. We detect this
+/// via a "50% drop" heuristic: if incoming total < lastSession total / 2
+/// (and lastSession had >100 tokens), we reset lastSession tracking values
+/// but preserve all-time cumulative totals.
+///
+/// ## Thread Safety
+///
+/// This class is `@Observable` and should only be accessed from `@MainActor`.
 @Observable
 final class TerminalCostTracker: Identifiable {
-    let id: String  // paneId or claudeSessionId
+    let id: String  // paneId (terminal identifier)
 
-    /// Time series of token usage (deltas per update)
+    /// Time series of token deltas (not cumulative). Each entry represents
+    /// new tokens consumed since the previous entry. Used for histograms
+    /// and activity detection (recent entry = "thinking" state).
     private(set) var timeSeries: [TokenDataPoint] = []
 
-    /// Current cumulative totals
+    /// All-time cumulative totals. These persist across Claude session resets
+    /// and represent total consumption for this terminal's lifetime.
     private(set) var totalInputTokens: Int = 0
     private(set) var totalOutputTokens: Int = 0
     private(set) var totalCacheReadTokens: Int = 0
     private(set) var totalCacheCreationTokens: Int = 0
     private(set) var totalCostUSD: Double = 0
 
-    /// Maximum data points to keep (for histogram display)
+    /// Last reported cumulative values from OTEL (for delta calculation).
+    /// These are reset when a new Claude session is detected.
+    private var lastSessionInputTokens: Int = 0
+    private var lastSessionOutputTokens: Int = 0
+    private var lastSessionCacheReadTokens: Int = 0
+    private var lastSessionCacheCreationTokens: Int = 0
+    private var lastSessionCostUSD: Double = 0
+
+    /// Maximum data points to keep in timeSeries (for histogram display)
     private let maxDataPoints = 60
 
     var totalTokens: Int {
@@ -113,34 +201,145 @@ final class TerminalCostTracker: Identifiable {
         self.id = id
     }
 
-    /// Record a metrics update
-    func recordMetrics(inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int, costUSD: Double) {
-        // Calculate delta from previous cumulative values
-        let delta = TokenDataPoint(
-            timestamp: Date(),
-            inputTokens: max(0, inputTokens - totalInputTokens),
-            outputTokens: max(0, outputTokens - totalOutputTokens),
-            cacheReadTokens: max(0, cacheReadTokens - totalCacheReadTokens),
-            cacheCreationTokens: max(0, cacheCreationTokens - totalCacheCreationTokens),
-            costUSD: max(0, costUSD - totalCostUSD)
-        )
+    /// Record a metrics update from OTEL data.
+    ///
+    /// - Parameters:
+    ///   - inputTokens: Cumulative input tokens from OTEL (not a delta)
+    ///   - outputTokens: Cumulative output tokens from OTEL
+    ///   - cacheReadTokens: Cumulative cache read tokens from OTEL
+    ///   - cacheCreationTokens: Cumulative cache creation tokens from OTEL
+    ///   - costUSD: Cumulative cost from OTEL
+    ///
+    /// - Returns: Computed deltas for this update (used for global aggregation)
+    ///
+    /// ## Algorithm
+    ///
+    /// 1. **Session reset detection**: If incoming total < 50% of last session
+    ///    (and last session had >100 tokens), assume new Claude session started.
+    ///    Reset lastSession tracking but preserve all-time totals.
+    ///
+    /// 2. **Delta calculation**: `delta = incoming - lastSession`. Uses `max(0, ...)`
+    ///    to handle out-of-order OTEL batches that might report slightly lower values.
+    ///
+    /// 3. **Time series**: Append delta to `timeSeries` if non-zero (for histograms).
+    ///
+    /// 4. **Update tracking**: Store incoming values as new `lastSession` values.
+    ///
+    /// 5. **Accumulate**: Add deltas to all-time totals.
+    ///
+    /// ## Why This Works
+    ///
+    /// If the same cumulative value arrives twice (e.g., parseMetric called
+    /// multiple times per OTEL batch), the second call computes delta=0:
+    ///
+    /// ```
+    /// Call 1: incoming=1000, lastSession=500 → delta=500, lastSession=1000
+    /// Call 2: incoming=1000, lastSession=1000 → delta=0 (no double-count)
+    /// ```
+    @discardableResult
+    func recordMetrics(inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int, costUSD: Double) -> (deltaInput: Int, deltaOutput: Int, deltaCacheRead: Int, deltaCacheCreation: Int, deltaCost: Double) {
+        // Step 1: Detect session reset
+        // OTEL counters reset when a new Claude session starts. We detect this
+        // by checking if the incoming total is NEAR ZERO (not just lower than before).
+        //
+        // IMPORTANT: We can NOT use "incoming < lastSession/2" because OTEL batches
+        // don't always include all models. When a subagent (haiku) is used alongside
+        // the main model (sonnet), we sum their cumulative counters. But if one batch
+        // only contains one model's data, the sum drops significantly - this is NOT
+        // a session reset, just incomplete data.
+        //
+        // A REAL session reset would have incoming values near 0 (fresh session).
+        let incomingTotal = inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens
+        let lastSessionTotal = lastSessionInputTokens + lastSessionOutputTokens + lastSessionCacheReadTokens + lastSessionCacheCreationTokens
 
-        // Only add if there's actual change
-        if delta.totalTokens > 0 {
+        // Only reset if incoming is near zero AND we had significant previous data
+        // This catches real session resets while ignoring incomplete OTEL batches
+        let sessionReset = lastSessionTotal > 1000 && incomingTotal < 100
+
+        // DEBUG: Log incoming values and session state
+        print("[CostTracker:\(id.prefix(8))] recordMetrics: incoming(in:\(inputTokens) out:\(outputTokens) cacheR:\(cacheReadTokens) cacheC:\(cacheCreationTokens)) lastSession(in:\(lastSessionInputTokens) out:\(lastSessionOutputTokens)) total:\(totalInputTokens + totalOutputTokens)")
+
+        if sessionReset {
+            print("[CostTracker:\(id.prefix(8))] SESSION RESET detected: incoming=\(incomingTotal) near zero, lastSession=\(lastSessionTotal)")
+            // New Claude session started - reset tracking but keep all-time totals
+            lastSessionInputTokens = 0
+            lastSessionOutputTokens = 0
+            lastSessionCacheReadTokens = 0
+            lastSessionCacheCreationTokens = 0
+            lastSessionCostUSD = 0
+        }
+
+        // Step 2: Calculate delta from last session values
+        // max(0, ...) handles out-of-order OTEL batches where a value might
+        // temporarily appear lower than the previous report
+        let deltaInput = max(0, inputTokens - lastSessionInputTokens)
+        let deltaOutput = max(0, outputTokens - lastSessionOutputTokens)
+        let deltaCacheRead = max(0, cacheReadTokens - lastSessionCacheReadTokens)
+        let deltaCacheCreation = max(0, cacheCreationTokens - lastSessionCacheCreationTokens)
+        let deltaCost = max(0, costUSD - lastSessionCostUSD)
+        let deltaTotal = deltaInput + deltaOutput + deltaCacheRead + deltaCacheCreation
+
+        // DEBUG: Log computed deltas
+        if deltaTotal > 0 {
+            print("[CostTracker:\(id.prefix(8))] DELTA: in:\(deltaInput) out:\(deltaOutput) cacheR:\(deltaCacheRead) cacheC:\(deltaCacheCreation) → newTotal:\(totalInputTokens + totalOutputTokens + deltaInput + deltaOutput)")
+        }
+
+        // Step 3: Add to time series if there's actual change
+        // This feeds the histogram display and activity detection
+        if deltaTotal > 0 {
+            let delta = TokenDataPoint(
+                timestamp: Date(),
+                inputTokens: deltaInput,
+                outputTokens: deltaOutput,
+                cacheReadTokens: deltaCacheRead,
+                cacheCreationTokens: deltaCacheCreation,
+                costUSD: deltaCost
+            )
             timeSeries.append(delta)
 
-            // Trim old data points
+            // Trim old data points to bound memory usage
             if timeSeries.count > maxDataPoints {
                 timeSeries.removeFirst(timeSeries.count - maxDataPoints)
             }
         }
 
-        // Update cumulative totals
-        totalInputTokens = inputTokens
-        totalOutputTokens = outputTokens
-        totalCacheReadTokens = cacheReadTokens
-        totalCacheCreationTokens = cacheCreationTokens
-        totalCostUSD = costUSD
+        // Step 4: Update last session values for next delta calculation
+        // IMPORTANT: Only update if incoming >= last value. OTEL batches may be
+        // incomplete (not all models report in every batch). If we store a lower
+        // value, the next complete batch would compute an inflated delta.
+        //
+        // Example of the bug this prevents:
+        //   Batch 1 (2 models): sum=100k → lastSession=100k
+        //   Batch 2 (1 model):  sum=40k  → if we set lastSession=40k...
+        //   Batch 3 (2 models): sum=110k → delta=70k (wrong! should be 10k)
+        //
+        // By keeping lastSession at the max seen value, we correctly compute:
+        //   Batch 2: delta=0, lastSession stays 100k
+        //   Batch 3: delta=10k (correct!)
+        if inputTokens >= lastSessionInputTokens {
+            lastSessionInputTokens = inputTokens
+        }
+        if outputTokens >= lastSessionOutputTokens {
+            lastSessionOutputTokens = outputTokens
+        }
+        if cacheReadTokens >= lastSessionCacheReadTokens {
+            lastSessionCacheReadTokens = cacheReadTokens
+        }
+        if cacheCreationTokens >= lastSessionCacheCreationTokens {
+            lastSessionCacheCreationTokens = cacheCreationTokens
+        }
+        if costUSD >= lastSessionCostUSD {
+            lastSessionCostUSD = costUSD
+        }
+
+        // Step 5: Accumulate into all-time totals
+        totalInputTokens += deltaInput
+        totalOutputTokens += deltaOutput
+        totalCacheReadTokens += deltaCacheRead
+        totalCacheCreationTokens += deltaCacheCreation
+        totalCostUSD += deltaCost
+
+        return (deltaInput, deltaOutput, deltaCacheRead, deltaCacheCreation, deltaCost)
     }
 }
 
@@ -206,28 +405,59 @@ final class TaskCostTracker: Identifiable {
     }
 }
 
-/// Singleton service for tracking costs across the app
+/// Singleton service for tracking costs across the app.
+///
+/// ## Architecture Overview
+///
+/// ```
+/// CostTracker (singleton)
+///     ├── terminalTrackers: [paneId → TerminalCostTracker]
+///     │       └── Tracks per-terminal cumulative totals and time series
+///     ├── taskTrackers: [taskId → TaskCostTracker]
+///     │       └── Tracks per-task breakdown with segments
+///     ├── sessionIdToPaneId: [sessionId → paneId]
+///     │       └── Maps Claude's internal sessionId to our paneId
+///     └── globalTimeSeries: [TokenDataPoint]
+///             └── Aggregated deltas across all terminals
+/// ```
+///
+/// ## Session ID vs Pane ID
+///
+/// - **sessionId**: Claude Code's internal session identifier (from OTEL)
+/// - **paneId**: Our terminal identifier (from tmux/zellij)
+///
+/// OTEL metrics arrive with sessionId, but we track by paneId. The mapping
+/// is registered when hook events arrive (they contain both IDs).
+///
+/// ## Thread Safety
+///
+/// All access must be on `@MainActor`. The class is `@Observable` for SwiftUI.
 @MainActor
 @Observable
 final class CostTracker {
     static let shared = CostTracker()
 
-    /// Global time series (aggregated from all terminals)
+    /// Global time series of token deltas (aggregated across all terminals).
+    /// Used for app-wide activity indicators.
     private(set) var globalTimeSeries: [TokenDataPoint] = []
 
-    /// Per-terminal trackers (keyed by paneId - our terminal identifier)
+    /// Per-terminal cost trackers, keyed by paneId (our terminal identifier).
+    /// Each terminal has independent tracking that survives Claude session resets.
     private(set) var terminalTrackers: [String: TerminalCostTracker] = [:]
 
-    /// Per-task trackers (keyed by task UUID)
+    /// Per-task cost trackers, keyed by task UUID.
+    /// Provides breakdown by segments (between permission requests).
     private(set) var taskTrackers: [UUID: TaskCostTracker] = [:]
 
-    /// Mapping from claudeSessionId to paneId (OTEL uses sessionId, we need to find paneId)
+    /// Maps Claude's sessionId (from OTEL) to our paneId (terminal identifier).
+    /// Registered when hook events arrive with both IDs. Required because OTEL
+    /// only knows sessionId, but we need to find the right TerminalCostTracker.
     private var sessionIdToPaneId: [String: String] = [:]
 
-    /// Mapping from paneId to taskId for linking
+    /// Maps paneId to taskId for linking terminal metrics to task trackers.
     private var paneToTask: [String: UUID] = [:]
 
-    /// Maximum global data points
+    /// Maximum data points to keep in globalTimeSeries
     private let maxGlobalDataPoints = 120
 
     // MARK: - Global Totals
@@ -301,6 +531,8 @@ final class CostTracker {
     // MARK: - Metrics Recording
 
     /// Record metrics update from OTEL data (OTEL uses Claude's sessionId)
+    /// This is the primary entry point for token consumption data from Claude Code.
+    /// When tokens are consumed, it indicates the LLM is actively working ("thinking").
     func recordMetrics(
         forSession sessionId: String,
         inputTokens: Int,
@@ -310,6 +542,7 @@ final class CostTracker {
         costUSD: Double
     ) {
         // Resolve sessionId to paneId (OTEL uses Claude's internal session ID)
+        // The mapping is registered when hook events arrive with both IDs
         guard let paneId = sessionIdToPaneId[sessionId] else {
             return
         }
@@ -317,16 +550,8 @@ final class CostTracker {
         // Get terminal tracker (keyed by paneId)
         let terminalTracker = tracker(forPaneId: paneId)
 
-        // Compute deltas BEFORE updating tracker
-        let deltaInput = max(0, inputTokens - terminalTracker.totalInputTokens)
-        let deltaOutput = max(0, outputTokens - terminalTracker.totalOutputTokens)
-        let deltaCacheRead = max(0, cacheReadTokens - terminalTracker.totalCacheReadTokens)
-        let deltaCacheCreation = max(0, cacheCreationTokens - terminalTracker.totalCacheCreationTokens)
-        let deltaCost = max(0, costUSD - terminalTracker.totalCostUSD)
-        let deltaTotal = deltaInput + deltaOutput + deltaCacheRead + deltaCacheCreation
-
-        // Update terminal tracker
-        terminalTracker.recordMetrics(
+        // Update terminal tracker and get the correctly computed deltas
+        let deltas = terminalTracker.recordMetrics(
             inputTokens: inputTokens,
             outputTokens: outputTokens,
             cacheReadTokens: cacheReadTokens,
@@ -343,15 +568,22 @@ final class CostTracker {
             )
         }
 
-        // Update global time series with delta
+        // Calculate total delta to check if there was actual activity
+        let deltaTotal = deltas.deltaInput + deltas.deltaOutput + deltas.deltaCacheRead + deltas.deltaCacheCreation
+
+        // NOTE: SessionStatusService detects "thinking" state by checking the
+        // timestamp of the last data point in our time series. No need to
+        // explicitly notify it - it reads our data directly to avoid circular deps.
+
+        // Update global time series with delta from terminal tracker
         if deltaTotal > 0 {
             let point = TokenDataPoint(
                 timestamp: Date(),
-                inputTokens: deltaInput,
-                outputTokens: deltaOutput,
-                cacheReadTokens: deltaCacheRead,
-                cacheCreationTokens: deltaCacheCreation,
-                costUSD: deltaCost
+                inputTokens: deltas.deltaInput,
+                outputTokens: deltas.deltaOutput,
+                cacheReadTokens: deltas.deltaCacheRead,
+                cacheCreationTokens: deltas.deltaCacheCreation,
+                costUSD: deltas.deltaCost
             )
 
             globalTimeSeries.append(point)

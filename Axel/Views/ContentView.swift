@@ -62,9 +62,37 @@ struct ContentView: View {
     }
 
     /// Assign a task to an existing worker session
+    /// If the worker is busy, the task is queued on that terminal
     private func assignTaskToWorker(_ task: WorkTask, worker: TerminalSession) {
+        if worker.hasTask {
+            // Terminal is busy - queue the task
+            queueTaskOnWorker(task, worker: worker)
+        } else {
+            // Terminal is idle - run immediately
+            runTaskOnWorker(task, worker: worker)
+        }
+    }
+
+    /// Queue a task to run after the current task on this worker completes
+    private func queueTaskOnWorker(_ task: WorkTask, worker: TerminalSession) {
+        guard let paneId = worker.paneId else { return }
+
+        // Update task status to .queued (assigned to a terminal's queue)
+        task.updateStatus(.queued)
+
+        // Add to TaskQueueService
+        TaskQueueService.shared.enqueue(taskId: task.id, onTerminal: paneId)
+
+        performSync()
+    }
+
+    /// Actually run a task on a worker (send prompt, update status)
+    private func runTaskOnWorker(_ task: WorkTask, worker: TerminalSession) {
         // Update task status
         task.updateStatus(.running)
+
+        // Update worker session with new task (tracks history)
+        worker.assignTask(task)
 
         // Send the task prompt to the worker
         var prompt = task.title
@@ -72,11 +100,57 @@ struct ContentView: View {
             prompt += "\n\n" + description
         }
 
-        // Send the prompt command to the existing terminal
-        worker.surfaceView?.sendCommand("axel claude --prompt \(prompt.shellEscaped)")
+        // Send the prompt via outbox (tmux send-keys) for reliable delivery
+        if let paneId = worker.paneId {
+            Task {
+                do {
+                    try await InboxService.shared.sendTextResponse(
+                        sessionId: paneId,
+                        text: prompt,
+                        paneId: paneId
+                    )
+                } catch {
+                    print("[ContentView] Failed to send prompt via outbox: \(error)")
+                    // Fallback to direct terminal send
+                    worker.surfaceView?.sendCommand(prompt)
+                }
+            }
+        } else {
+            // No paneId - fallback to direct terminal send
+            worker.surfaceView?.sendCommand(prompt)
+        }
 
         // Sync the task status change
         performSync()
+    }
+
+    /// Consume the next queued task on a terminal after current task completes
+    /// Called when we receive a taskCompletedOnTerminal notification
+    private func consumeNextQueuedTask(forPaneId paneId: String) {
+        // Find the session for this pane
+        guard let session = sessionManager.sessions.first(where: { $0.paneId == paneId }) else {
+            return
+        }
+
+        // Pop the next task from the queue (via TaskQueueService)
+        guard let nextTaskId = TaskQueueService.shared.dequeue(fromTerminal: paneId) else {
+            // No more tasks in queue - clear the current task reference
+            session.taskId = nil
+            session.taskTitle = "Terminal"
+            return
+        }
+
+        // Fetch the task from SwiftData
+        let predicate = #Predicate<WorkTask> { $0.id == nextTaskId }
+        let descriptor = FetchDescriptor<WorkTask>(predicate: predicate)
+        guard let task = try? modelContext.fetch(descriptor).first else {
+            // Task was deleted - try the next one
+            consumeNextQueuedTask(forPaneId: paneId)
+            return
+        }
+
+        // Run this task
+        runTaskOnWorker(task, worker: session)
     }
 
     /// Create a new terminal session, optionally showing floating miniature
@@ -169,8 +243,87 @@ struct ContentView: View {
         if case .queue(let filter) = sidebarSelection {
             return filter
         }
-        return .queued
+        return .backlog
     }
+
+    // MARK: - Content Column
+
+    @ViewBuilder
+    private var contentColumnView: some View {
+        switch sidebarSelection {
+        case .optimizations(.overview):
+            ContentUnavailableView {
+                Label("Optimizations", systemImage: "gauge.with.dots.needle.50percent")
+            } description: {
+                Text("Add skills and context to improve agent performance")
+            }
+        case .optimizations(.skills):
+            SkillsListView(workspace: nil, selection: $selectedAgent)
+        case .optimizations(.context):
+            ContextListView(selection: $selectedContext)
+        case .team:
+            TeamListView(selectedMember: $selectedTeamMember)
+        case .queue:
+            QueueListView(
+                filter: currentTaskFilter,
+                selection: $selectedTask,
+                onNewTask: { appState.isNewTaskPresented = true }
+            )
+        case .inbox, .none:
+            HintInboxView(
+                filter: currentHintFilter,
+                selection: $selectedHint
+            )
+        case .terminals:
+            RunningListView(selection: $selectedSession)
+        }
+    }
+
+    // MARK: - Detail Column
+
+    @ViewBuilder
+    private var detailColumnView: some View {
+        switch sidebarSelection {
+        case .optimizations(.skills):
+            if let agent = selectedAgent {
+                AgentDetailView(agent: agent)
+            } else {
+                EmptySkillSelectionView()
+            }
+        case .optimizations(.context):
+            if let context = selectedContext {
+                ContextDetailView(context: context)
+            } else {
+                EmptyContextSelectionView()
+            }
+        case .terminals:
+            if let session = selectedSession {
+                RunningDetailView(session: session, selection: $selectedSession)
+            } else {
+                EmptyRunningSelectionView()
+            }
+        case .queue:
+            if let task = selectedTask {
+                TaskDetailView(task: task, viewModel: viewModel, showTerminal: $showTerminal, selectedTask: $selectedTask, onStartTerminal: startTerminal)
+            } else {
+                EmptyTaskSelectionView()
+            }
+        case .team:
+            if let member = selectedTeamMember {
+                TeamMemberDetailView(member: member)
+            } else {
+                EmptyTeamSelectionView()
+            }
+        default:
+            if let hint = selectedHint {
+                HintDetailView(hint: hint)
+            } else {
+                EmptyHintSelectionView()
+            }
+        }
+    }
+
+    // MARK: - Body
 
     var body: some View {
         #if os(macOS)
@@ -180,75 +333,10 @@ struct ContentView: View {
                 onNewTask: { appState.isNewTaskPresented = true }
             )
         } content: {
-            Group {
-                switch sidebarSelection {
-                case .optimizations(.overview):
-                    ContentUnavailableView {
-                        Label("Optimizations", systemImage: "gauge.with.dots.needle.50percent")
-                    } description: {
-                        Text("Add skills and context to improve agent performance")
-                    }
-                case .optimizations(.skills):
-                    SkillsListView(workspace: nil, selection: $selectedAgent)
-                case .optimizations(.context):
-                    ContextListView(selection: $selectedContext)
-                case .team:
-                    TeamListView(selectedMember: $selectedTeamMember)
-                case .queue:
-                    QueueListView(
-                        filter: currentTaskFilter,
-                        selection: $selectedTask,
-                        onNewTask: { appState.isNewTaskPresented = true }
-                    )
-                case .inbox, .none:
-                    HintInboxView(
-                        filter: currentHintFilter,
-                        selection: $selectedHint
-                    )
-                case .terminals:
-                    RunningListView(selection: $selectedSession)
-                }
-            }
-            .id(contentColumnId)  // Force content column to adopt each view's preferred width
+            contentColumnView
+                .id(contentColumnId)
         } detail: {
-            switch sidebarSelection {
-            case .optimizations(.skills):
-                if let agent = selectedAgent {
-                    AgentDetailView(agent: agent)
-                } else {
-                    EmptySkillSelectionView()
-                }
-            case .optimizations(.context):
-                if let context = selectedContext {
-                    ContextDetailView(context: context)
-                } else {
-                    EmptyContextSelectionView()
-                }
-            case .terminals:
-                if let session = selectedSession {
-                    RunningDetailView(session: session, selection: $selectedSession)
-                } else {
-                    EmptyRunningSelectionView()
-                }
-            case .queue:
-                if let task = selectedTask {
-                    TaskDetailView(task: task, viewModel: viewModel, showTerminal: $showTerminal, selectedTask: $selectedTask, onStartTerminal: startTerminal)
-                } else {
-                    EmptyTaskSelectionView()
-                }
-            case .team:
-                if let member = selectedTeamMember {
-                    TeamMemberDetailView(member: member)
-                } else {
-                    EmptyTeamSelectionView()
-                }
-            default:
-                if let hint = selectedHint {
-                    HintDetailView(hint: hint)
-                } else {
-                    EmptyHintSelectionView()
-                }
-            }
+            detailColumnView
         }
         .frame(minWidth: 1000, idealWidth: 1200, minHeight: 650, idealHeight: 800)
         .toolbar {
@@ -306,8 +394,10 @@ struct ContentView: View {
         .keyboardShortcut(for: .newTerminal) {
             startTerminal()
         }
+        .keyboardShortcut(for: .undo) { TaskUndoManager.shared.undo() }
+        .keyboardShortcut(for: .redo) { TaskUndoManager.shared.redo() }
         .sheet(isPresented: $showWorkerPicker) {
-            WorkerPickerPanel(workers: availableWorkers) { selectedWorker in
+            WorkerPickerPanel(workspaceId: nil) { selectedWorker in
                 if let task = pendingTask {
                     if let worker = selectedWorker {
                         // User selected an existing worker
@@ -367,6 +457,12 @@ struct ContentView: View {
                 Task {
                     await syncService.startRealtimeSync(context: modelContext)
                 }
+            }
+        }
+        .onReceive(NotificationCenter.default.publisher(for: .taskCompletedOnTerminal)) { notification in
+            // When a task completes on a terminal, consume the next queued task
+            if let paneId = notification.userInfo?["paneId"] as? String {
+                consumeNextQueuedTask(forPaneId: paneId)
             }
         }
         #else

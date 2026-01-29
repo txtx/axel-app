@@ -72,7 +72,8 @@ final class TaskMetrics {
         startNewStep()
     }
 
-    /// Update metrics from OTEL data
+    /// Update metrics from OTEL data.
+    /// NOTE: This ASSIGNS values (not adds). Values should be cumulative from OTEL.
     func updateFromOTEL(
         inputTokens: Int? = nil,
         outputTokens: Int? = nil,
@@ -83,6 +84,10 @@ final class TaskMetrics {
         linesRemoved: Int? = nil,
         activeTimeSeconds: Double? = nil
     ) {
+        // DEBUG: Log before/after for token updates
+        let prevIn = self.inputTokens
+        let prevOut = self.outputTokens
+
         if let v = inputTokens { self.inputTokens = v }
         if let v = outputTokens { self.outputTokens = v }
         if let v = cacheReadTokens { self.cacheReadTokens = v }
@@ -91,6 +96,11 @@ final class TaskMetrics {
         if let v = linesAdded { self.linesAdded = v }
         if let v = linesRemoved { self.linesRemoved = v }
         if let v = activeTimeSeconds { self.activeTimeSeconds = v }
+
+        // DEBUG: Log if token values changed
+        if inputTokens != nil || outputTokens != nil {
+            print("[TaskMetrics:\(claudeSessionId.prefix(8))] updateFromOTEL: in:\(prevIn)→\(self.inputTokens) out:\(prevOut)→\(self.outputTokens)")
+        }
 
         // Update current step's end values
         currentStep?.endTokens = totalTokens

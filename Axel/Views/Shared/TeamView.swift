@@ -124,33 +124,14 @@ struct TeamListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Spacer()
-
-            Image(systemName: "person.2")
-                .font(.system(size: 40))
-                .foregroundStyle(.quaternary)
-
-            Text("No Team Members")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            Text("Invite collaborators to work together on this organization")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-
-            Button {
-                isInviting = true
-            } label: {
-                Label("Invite Member", systemImage: "person.badge.plus")
-            }
-            .buttonStyle(.bordered)
-            .padding(.top, 8)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        EmptyStateView(
+            image: "person.2",
+            title: "No Team Members",
+            description: "Invite collaborators to work together on this organization",
+            action: { isInviting = true },
+            actionLabel: "Invite Member",
+            actionIcon: "person.badge.plus"
+        )
     }
 
     private func removeMember(_ member: OrganizationMember) {

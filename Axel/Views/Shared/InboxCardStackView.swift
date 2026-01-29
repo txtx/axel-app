@@ -169,8 +169,9 @@ struct InboxCardStackView: View {
                     SwipeableCardView {
                         PermissionCardContent(
                             event: event,
-                            onDeny: { handleDeny(event) },
-                            onAllow: { handleAllow(event) }
+                            onSelectOption: { option in
+                                handleOptionSelected(event: event, option: option)
+                            }
                         )
                     } onSwiped: { direction in
                         handleSwipe(event: event, direction: direction)
@@ -246,41 +247,40 @@ struct InboxCardStackView: View {
     // MARK: - Actions
 
     private func handleSwipe(event: InboxEvent, direction: SwipeDirection) {
+        let options = event.permissionOptions
         switch direction {
         case .left:
-            handleDeny(event)
+            // Swipe left = No (last option)
+            if let noOption = options.last {
+                handleOptionSelected(event: event, option: noOption)
+            }
         case .right:
-            handleAllow(event)
+            // Swipe right = Yes (first option)
+            if let yesOption = options.first {
+                handleOptionSelected(event: event, option: yesOption)
+            }
         }
-    }
-
-    private func handleDeny(_ event: InboxEvent) {
-        sendPermissionResponse(event: event, allow: false)
-    }
-
-    private func handleAllow(_ event: InboxEvent) {
-        sendPermissionResponse(event: event, allow: true)
     }
 
     private func handleKeyboardDeny() {
-        guard let event = topCard else { return }
-        // Mark as animating to trigger removal
+        guard let event = topCard,
+              let noOption = event.permissionOptions.last else { return }
         withAnimation(.easeOut(duration: 0.3)) {
             removedIds.insert(event.id)
         }
-        handleDeny(event)
+        handleOptionSelected(event: event, option: noOption)
     }
 
     private func handleKeyboardAllow() {
-        guard let event = topCard else { return }
-        // Mark as animating to trigger removal
+        guard let event = topCard,
+              let yesOption = event.permissionOptions.first else { return }
         withAnimation(.easeOut(duration: 0.3)) {
             removedIds.insert(event.id)
         }
-        handleAllow(event)
+        handleOptionSelected(event: event, option: yesOption)
     }
 
-    private func sendPermissionResponse(event: InboxEvent, allow: Bool) {
+    private func handleOptionSelected(event: InboxEvent, option: PermissionOption) {
         guard let sessionId = event.event.claudeSessionId else {
             print("[InboxCardStack] No session ID for permission response")
             return
@@ -291,7 +291,11 @@ struct InboxCardStackView: View {
 
         Task {
             do {
-                try await inboxService.sendPermissionResponse(sessionId: sessionId, allow: allow)
+                try await inboxService.sendPermissionResponse(
+                    sessionId: sessionId,
+                    option: option,
+                    paneId: event.paneId
+                )
                 await MainActor.run {
                     inboxService.resolveEvent(event.id)
                     selection = nil

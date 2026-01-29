@@ -102,19 +102,32 @@ final class TerminalSessionManager {
 }
 
 // MARK: - Terminal Session
+// ============================================================================
+// TerminalSession represents a running terminal/agent in memory.
+// It conforms to SessionIdentifiable for centralized status tracking.
+//
+// Status is NOT stored here - it's computed by SessionStatusService using:
+// - paneId: Links to InboxService for permission blocking
+// - taskId: Indicates if session has assigned work
+// - CostTracker: Activity tracked separately via paneId
+// ============================================================================
 
 @MainActor
 @Observable
-final class TerminalSession: Identifiable {
+final class TerminalSession: Identifiable, SessionIdentifiable {
     let id = UUID()
     let paneId: String?
-    let taskId: PersistentIdentifier?
+    var taskId: PersistentIdentifier?
     let workspaceId: UUID  // Workspace this session belongs to
-    let taskTitle: String
+    var taskTitle: String
     let startedAt: Date
     var surfaceView: TerminalEmulator.SurfaceView?
     var isReady: Bool = false  // Terminal is ready to be displayed
     let initialCommand: String?
+
+    /// History of recent task titles (most recent first, max 3)
+    /// Note: This is local-only, not synced to remote
+    var taskHistory: [String] = []
 
     // Current and previous thumbnails for smooth crossfade
     var currentThumbnail: NSImage?
@@ -127,6 +140,17 @@ final class TerminalSession: Identifiable {
     // This allows bitmapImageRepForCachingDisplay to work even when
     // the terminal isn't displayed in the main UI
     private var offscreenWindow: NSWindow?
+
+    // MARK: - SessionIdentifiable Conformance
+    // Used by SessionStatusService to compute status
+
+    /// Whether this session has a task assigned (for status computation)
+    var hasTask: Bool { taskId != nil }
+
+    /// Computed status from SessionStatusService (convenience accessor)
+    var status: SessionStatus {
+        SessionStatusService.shared.status(forPaneId: paneId, hasTask: hasTask)
+    }
 
     init(task: WorkTask?, paneId: String? = nil, command: String? = nil, workingDirectory: String? = nil, workspaceId: UUID) {
         self.paneId = paneId
@@ -215,6 +239,11 @@ final class TerminalSession: Identifiable {
         screenshotTimer?.invalidate()
         screenshotTimer = nil
         cleanupOffscreenWindow()
+
+        // Notify SessionStatusService to clear tracking for this session
+        if let paneId = paneId {
+            SessionStatusService.shared.clearSession(paneId: paneId)
+        }
     }
 
     private func cleanupOffscreenWindow() {
@@ -255,6 +284,27 @@ final class TerminalSession: Identifiable {
         thumbnailGeneration += 1
     }
 
+    /// Assign a new task to this session, updating history
+    func assignTask(_ task: WorkTask) {
+        // Add current task to history if it exists
+        if taskId != nil {
+            taskHistory.insert(taskTitle, at: 0)
+            // Keep only the last 3 tasks in history
+            if taskHistory.count > 3 {
+                taskHistory = Array(taskHistory.prefix(3))
+            }
+        }
+        // Set new task
+        taskId = task.persistentModelID
+        taskTitle = task.title
+    }
+
+    /// Number of tasks waiting in queue (via TaskQueueService)
+    var queueCount: Int {
+        guard let paneId = paneId else { return 0 }
+        return TaskQueueService.shared.queueCount(forTerminal: paneId)
+    }
+
     nonisolated func cleanup() {
         // Called from deinit - use MainActor.assumeIsolated since deinit
         // happens on the main thread for MainActor-isolated classes
@@ -272,13 +322,33 @@ final class TerminalSession: Identifiable {
 
 // MARK: - Running List View (Middle Column)
 
+// MARK: - Running List View (Middle Column)
+// ============================================================================
+// Displays terminal sessions grouped by status.
+// Uses SessionStatusService for centralized status computation.
+//
+// Status groups (in display order):
+// - Blocked: Waiting for permission (needs user attention)
+// - Thinking: LLM actively generating (recent token activity)
+// - Active: Has task, running but not currently generating
+// - Idle: Has task but no recent activity
+// - Dormant: No task assigned (available)
+// ============================================================================
+
 struct RunningListView: View {
     @Binding var selection: TerminalSession?
     var workspaceId: UUID? = nil
     @Environment(\.terminalSessionManager) private var sessionManager
+    @FocusState private var isFocused: Bool
+
+    // Centralized status service - replaces scattered status logic
+    private let statusService = SessionStatusService.shared
 
     // Minimum item width for column calculation (doubled from 150)
     private let minItemWidth: CGFloat = 280
+
+    // Track column count for keyboard navigation
+    @State private var currentColumnCount: Int = 1
 
     /// Sessions filtered to this workspace (or all sessions if no workspace specified)
     private var workspaceSessions: [TerminalSession] {
@@ -288,11 +358,67 @@ struct RunningListView: View {
         return sessionManager.sessions
     }
 
+    /// Sessions grouped by status using SessionStatusService
+    /// Returns array of (status, sessions) tuples in display order
+    private var sessionsByStatus: [(status: SessionStatus, sessions: [TerminalSession])] {
+        statusService.groupedByStatus(workspaceSessions)
+    }
+
+    /// All sessions in display order (for keyboard navigation)
+    /// Ordered by status priority: blocked -> thinking -> active -> idle -> dormant
+    private var allSessionsOrdered: [TerminalSession] {
+        statusService.orderedByPriority(workspaceSessions)
+    }
+
+    /// Navigate selection using arrow keys
+    private func navigateSelection(direction: NavigationDirection) {
+        let sessions = allSessionsOrdered
+        guard !sessions.isEmpty else { return }
+
+        // If nothing selected, select first or last based on direction
+        guard let current = selection,
+              let currentIndex = sessions.firstIndex(where: { $0.id == current.id }) else {
+            switch direction {
+            case .down, .right:
+                selection = sessions.first
+            case .up, .left:
+                selection = sessions.last
+            }
+            return
+        }
+
+        let cols = currentColumnCount
+        var newIndex = currentIndex
+
+        switch direction {
+        case .up:
+            newIndex = currentIndex - cols
+        case .down:
+            newIndex = currentIndex + cols
+        case .left:
+            if currentIndex > 0 {
+                newIndex = currentIndex - 1
+            }
+        case .right:
+            if currentIndex < sessions.count - 1 {
+                newIndex = currentIndex + 1
+            }
+        }
+
+        // Clamp to valid range
+        newIndex = max(0, min(sessions.count - 1, newIndex))
+        selection = sessions[newIndex]
+    }
+
+    enum NavigationDirection {
+        case up, down, left, right
+    }
+
     var body: some View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Running")
+                Text("Terminals")
                     .font(.title2.bold())
                 Spacer()
                 Text("\(workspaceSessions.count)")
@@ -316,61 +442,194 @@ struct RunningListView: View {
                     let itemWidth = (geometry.size.width - totalSpacing) / CGFloat(columnCount)
 
                     ScrollView {
-                        LazyVGrid(
-                            columns: Array(repeating: GridItem(.fixed(itemWidth), spacing: spacing), count: columnCount),
-                            spacing: spacing
-                        ) {
-                            ForEach(workspaceSessions) { session in
-                                TerminalMiniatureView(
-                                    session: session,
-                                    isSelected: selection?.id == session.id,
-                                    width: itemWidth
+                        VStack(alignment: .leading, spacing: 20) {
+                            // Render sections dynamically based on status groups
+                            // SessionStatusService provides groups in priority order
+                            ForEach(sessionsByStatus, id: \.status) { group in
+                                TerminalSectionView(
+                                    status: group.status,
+                                    sessions: group.sessions,
+                                    selection: $selection,
+                                    columnCount: columnCount,
+                                    itemWidth: itemWidth,
+                                    spacing: spacing,
+                                    sessionManager: sessionManager
                                 )
-                                .contentShape(Rectangle())
-                                .onTapGesture {
-                                    selection = session
-                                }
-                                .contextMenu {
-                                    Button(role: .destructive) {
-                                        if selection?.id == session.id {
-                                            selection = nil
-                                        }
-                                        sessionManager.stopSession(session)
-                                    } label: {
-                                        Label("Stop", systemImage: "stop.fill")
-                                    }
-                                }
                             }
                         }
                         .padding(.horizontal, 12)
                         .padding(.vertical, 8)
                     }
+                    .onChange(of: columnCount) { _, newCount in
+                        currentColumnCount = newCount
+                    }
+                    .onAppear {
+                        currentColumnCount = columnCount
+                    }
                 }
             }
         }
         .background(.background)
+        .modifier(GridKeyboardNavigation(
+            navigate: navigateSelection,
+            isFocused: $isFocused
+        ))
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Spacer()
+        EmptyStateView(
+            image: "terminal",
+            title: "No Terminals",
+            description: "Start a task from Inbox or press ⌘T"
+        )
+    }
+}
 
-            Image(systemName: "terminal")
-                .font(.system(size: 40))
-                .foregroundStyle(.quaternary)
+// MARK: - Keyboard Event Monitor
 
-            Text("No Running Tasks")
-                .font(.headline)
-                .foregroundStyle(.secondary)
+/// Manages NSEvent local monitoring for keyboard navigation
+/// Uses a class to properly handle the event monitor lifecycle
+private final class KeyboardNavigationMonitor {
+    private var eventMonitor: Any?
+    private let onNavigate: (RunningListView.NavigationDirection) -> Void
 
-            Text("Start a task from Inbox to see it here")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
+    init(navigate: @escaping (RunningListView.NavigationDirection) -> Void) {
+        self.onNavigate = navigate
+        setupMonitor()
+    }
 
-            Spacer()
+    deinit {
+        removeMonitor()
+    }
+
+    private func setupMonitor() {
+        // Use NSEvent local monitor to capture Cmd+arrow keys even when
+        // the terminal view has first responder
+        eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard let self = self else { return event }
+
+            // Only handle Cmd+arrow keys (without other modifiers like Shift)
+            guard event.modifierFlags.contains(.command),
+                  !event.modifierFlags.contains(.shift),
+                  !event.modifierFlags.contains(.option),
+                  !event.modifierFlags.contains(.control) else {
+                return event
+            }
+
+            switch event.keyCode {
+            case 126: // Up arrow
+                self.onNavigate(.up)
+                return nil  // Consume the event
+            case 125: // Down arrow
+                self.onNavigate(.down)
+                return nil
+            case 123: // Left arrow
+                self.onNavigate(.left)
+                return nil
+            case 124: // Right arrow
+                self.onNavigate(.right)
+                return nil
+            default:
+                return event
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func removeMonitor() {
+        if let monitor = eventMonitor {
+            NSEvent.removeMonitor(monitor)
+            eventMonitor = nil
+        }
+    }
+}
+
+// MARK: - Grid Keyboard Navigation Modifier
+
+private struct GridKeyboardNavigation: ViewModifier {
+    let navigate: (RunningListView.NavigationDirection) -> Void
+    var isFocused: FocusState<Bool>.Binding
+    @State private var keyboardMonitor: KeyboardNavigationMonitor?
+
+    func body(content: Content) -> some View {
+        content
+            .focusable()
+            .focused(isFocused)
+            .focusEffectDisabled()
+            .onAppear {
+                keyboardMonitor = KeyboardNavigationMonitor(navigate: navigate)
+            }
+            .onDisappear {
+                keyboardMonitor = nil
+            }
+    }
+}
+
+// MARK: - Terminal Section View
+// ============================================================================
+// Displays a group of terminal sessions with a status header.
+// Takes SessionStatus for consistent styling from centralized service.
+// ============================================================================
+
+struct TerminalSectionView: View {
+    /// The status this section represents (determines icon, color, title)
+    let status: SessionStatus
+    let sessions: [TerminalSession]
+    @Binding var selection: TerminalSession?
+    let columnCount: Int
+    let itemWidth: CGFloat
+    let spacing: CGFloat
+    let sessionManager: TerminalSessionManager
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            // Section header - uses status properties for consistent styling
+            HStack(spacing: 6) {
+                Image(systemName: status.icon)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(status.color)
+
+                Text(status.label)
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+
+                Text("\(sessions.count)")
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.tertiary)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.quaternary.opacity(0.5))
+                    .clipShape(Capsule())
+            }
+            .padding(.leading, 4)
+
+            // Sessions grid
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.fixed(itemWidth), spacing: spacing), count: columnCount),
+                spacing: spacing
+            ) {
+                ForEach(sessions) { session in
+                    TerminalMiniatureView(
+                        session: session,
+                        isSelected: selection?.id == session.id,
+                        width: itemWidth
+                    )
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selection = session
+                    }
+                    .contextMenu {
+                        Button(role: .destructive) {
+                            if selection?.id == session.id {
+                                selection = nil
+                            }
+                            sessionManager.stopSession(session)
+                        } label: {
+                            Label("Stop", systemImage: "stop.fill")
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -431,11 +690,10 @@ struct TerminalMiniatureView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8))
             .padding(12)
 
-            // Task info
+            // Task info with status indicator
             HStack(spacing: 6) {
-                Image(systemName: "terminal.fill")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
+                // Status indicator - shows current session state
+                StatusIndicator(status: session.status)
 
                 Text(session.taskTitle)
                     .font(.caption.weight(.medium))
@@ -457,6 +715,58 @@ struct TerminalMiniatureView: View {
     }
 }
 
+
+// MARK: - Status Indicator
+// ============================================================================
+// Visual indicator showing session status with appropriate icon and animation.
+// Used in terminal miniatures and other places where status needs display.
+// ============================================================================
+
+struct StatusIndicator: View {
+    let status: SessionStatus
+    @State private var isAnimating = false
+
+    var body: some View {
+        Group {
+            switch status {
+            case .thinking:
+                // Pulsing brain icon when LLM is generating
+                Image(systemName: status.icon)
+                    .font(.caption)
+                    .foregroundStyle(status.color)
+                    .opacity(isAnimating ? 1.0 : 0.5)
+                    .animation(.easeInOut(duration: 0.8).repeatForever(autoreverses: true), value: isAnimating)
+                    .onAppear { isAnimating = true }
+                    .onDisappear { isAnimating = false }
+
+            case .blocked:
+                // Attention-grabbing indicator for blocked state
+                Image(systemName: status.icon)
+                    .font(.caption)
+                    .foregroundStyle(status.color)
+                    .symbolEffect(.pulse, options: .repeating)
+
+            case .active:
+                // Solid indicator for active (working but not generating)
+                Image(systemName: status.icon)
+                    .font(.caption)
+                    .foregroundStyle(status.color)
+
+            case .idle:
+                // Faded indicator for idle sessions
+                Image(systemName: status.icon)
+                    .font(.caption)
+                    .foregroundStyle(status.color.opacity(0.7))
+
+            case .dormant:
+                // Minimal indicator for dormant sessions
+                Image(systemName: "terminal.fill")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
 
 // MARK: - Terminal App Detection
 
@@ -594,26 +904,29 @@ struct RunningDetailView: View {
     @State private var isHoveringPill = false
 
     var body: some View {
-        ZStack(alignment: .topTrailing) {
-            // Full terminal view
-            if let surfaceView = session.surfaceView {
-                TerminalFullView(surfaceView: surfaceView)
-                    .id(session.id)
-            } else {
-                Color(red: 0x18/255.0, green: 0x26/255.0, blue: 0x2F/255.0)
-                Text("Terminal not available")
-                    .foregroundStyle(.secondary)
-            }
+        GeometryReader { geometry in
+            ZStack(alignment: .topTrailing) {
+                // Full terminal view
+                if let surfaceView = session.surfaceView {
+                    TerminalFullView(surfaceView: surfaceView)
+                        .id(session.id)
+                } else {
+                    Color(red: 0x18/255.0, green: 0x26/255.0, blue: 0x2F/255.0)
+                    Text("Terminal not available")
+                        .foregroundStyle(.secondary)
+                }
 
-            // Floating glass pill toolbar
-            TerminalGlassPill(
-                session: session,
-                installedTerminals: installedTerminals,
-                isHovering: $isHoveringPill,
-                onStop: { showStopConfirmation = true }
-            )
-            .padding(.top, 12)
-            .padding(.trailing, 12)
+                // Floating glass pill toolbar
+                TerminalGlassPill(
+                    session: session,
+                    installedTerminals: installedTerminals,
+                    isHovering: $isHoveringPill,
+                    onStop: { showStopConfirmation = true }
+                )
+                .frame(maxWidth: geometry.size.width / 3)
+                .padding(.top, 12)
+                .padding(.trailing, 12)
+            }
         }
         .background(Color(red: 0x18/255.0, green: 0x26/255.0, blue: 0x2F/255.0))
         .onAppear {
@@ -947,18 +1260,40 @@ struct TokenHistogramOverlay: View {
 
 #if os(macOS)
 // MARK: - Worker Picker Panel
+// ============================================================================
+// Panel for selecting an available agent when running a task.
+// Uses SessionStatusService for consistent status display.
+// ============================================================================
 
-/// Panel for selecting an available agent when multiple inactive workers exist
+/// Panel for selecting an available agent when running a task
 struct WorkerPickerPanel: View {
-    let workers: [TerminalSession]
+    let workspaceId: UUID?
     let onSelect: (TerminalSession?) -> Void  // nil = create new agent
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.terminalSessionManager) private var sessionManager
+    @State private var selectedIndex: Int = 0  // 0 to workers.count (last index = "New Agent")
+    @FocusState private var isFocused: Bool
+
+    // Use centralized status service
+    private let statusService = SessionStatusService.shared
+
+    /// Sessions for this workspace (or all sessions if workspaceId is nil) - observed reactively
+    private var workers: [TerminalSession] {
+        if let workspaceId {
+            return sessionManager.sessions(for: workspaceId)
+        } else {
+            return sessionManager.sessions
+        }
+    }
+
+    /// Total number of selectable items (workers + "New Agent" option)
+    private var itemCount: Int { workers.count + 1 }
 
     var body: some View {
         VStack(spacing: 0) {
             // Header
             HStack {
-                Text("Select an Agent")
+                Text("Assign to Agent")
                     .font(.headline)
                 Spacer()
                 Button {
@@ -978,19 +1313,24 @@ struct WorkerPickerPanel: View {
             // Available workers
             ScrollView {
                 VStack(spacing: 8) {
-                    ForEach(workers) { worker in
+                    ForEach(Array(workers.enumerated()), id: \.element.id) { index, worker in
                         Button {
                             onSelect(worker)
                             dismiss()
                         } label: {
-                            WorkerPickerRow(session: worker)
+                            // Use session.status from SessionStatusService
+                            WorkerPickerRow(
+                                session: worker,
+                                status: worker.status,
+                                isSelected: selectedIndex == index
+                            )
                         }
                         .buttonStyle(.plain)
                     }
                 }
                 .padding(12)
             }
-            .frame(maxHeight: 300)
+            .frame(maxHeight: 320)
 
             Divider()
 
@@ -999,30 +1339,99 @@ struct WorkerPickerPanel: View {
                 onSelect(nil)
                 dismiss()
             } label: {
-                HStack {
-                    Image(systemName: "plus.circle.fill")
-                        .foregroundStyle(.green)
-                    Text("New Agent")
-                        .font(.body.weight(.medium))
+                HStack(spacing: 12) {
+                    ZStack {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.green.opacity(0.15))
+                            .frame(width: 60, height: 40)
+                        Image(systemName: "plus")
+                            .font(.title3.weight(.semibold))
+                            .foregroundStyle(.green)
+                    }
+
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("New Agent")
+                            .font(.body.weight(.medium))
+                        Text("Start a fresh terminal")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
                     Spacer()
                 }
-                .padding(.horizontal, 16)
-                .padding(.vertical, 12)
-                .contentShape(Rectangle())
+                .padding(10)
+                .background(
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(selectedIndex == workers.count ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .strokeBorder(selectedIndex == workers.count ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: selectedIndex == workers.count ? 2 : 1)
+                )
             }
             .buttonStyle(.plain)
-            .background(Color.primary.opacity(0.03))
+            .padding(12)
         }
-        .frame(width: 320)
+        .frame(width: 360)
         .background(.background)
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .shadow(color: .black.opacity(0.15), radius: 12, x: 0, y: 4)
+        .focusable()
+        .focused($isFocused)
+        .focusEffectDisabled()
+        .onAppear {
+            isFocused = true
+        }
+        .onKeyPress(.upArrow) {
+            if selectedIndex > 0 {
+                selectedIndex -= 1
+            }
+            return .handled
+        }
+        .onKeyPress(.downArrow) {
+            if selectedIndex < itemCount - 1 {
+                selectedIndex += 1
+            }
+            return .handled
+        }
+        .onKeyPress(.return) {
+            confirmSelection()
+            return .handled
+        }
+        .onKeyPress(.escape) {
+            dismiss()
+            return .handled
+        }
+    }
+
+    private func confirmSelection() {
+        if selectedIndex < workers.count {
+            onSelect(workers[selectedIndex])
+        } else {
+            onSelect(nil)
+        }
+        dismiss()
     }
 }
+
+// NOTE: WorkerStatus enum removed - now using SessionStatus from SessionStatusService
+// This provides consistent status across all UI components
 
 /// Row displaying a worker in the picker panel
 struct WorkerPickerRow: View {
     let session: TerminalSession
+    var status: SessionStatus = .active
+    var isSelected: Bool = false
+
+    /// Label for the action button based on terminal state
+    var actionLabel: String {
+        session.hasTask ? "Add to Queue" : "Run"
+    }
+
+    /// Subtitle showing queue count if any tasks are queued
+    var queueSubtitle: String? {
+        let count = session.queueCount
+        guard count > 0 else { return nil }
+        return count == 1 ? "1 task queued" : "\(count) tasks queued"
+    }
 
     var body: some View {
         HStack(spacing: 12) {
@@ -1045,15 +1454,45 @@ struct WorkerPickerRow: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 2) {
-                Text(session.taskTitle)
-                    .font(.body.weight(.medium))
-                    .lineLimit(1)
+            VStack(alignment: .leading, spacing: 4) {
+                // Current task / status
+                HStack(spacing: 6) {
+                    Image(systemName: status.icon)
+                        .font(.caption2)
+                        .foregroundStyle(status.color)
+                    Text(session.taskTitle)
+                        .font(.body.weight(.medium))
+                        .lineLimit(1)
+                }
 
-                HStack(spacing: 4) {
-                    Circle()
-                        .fill(.green)
-                        .frame(width: 6, height: 6)
+                // Queue count (if any tasks queued)
+                if let queueInfo = queueSubtitle {
+                    HStack(spacing: 4) {
+                        Image(systemName: "list.bullet")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(.orange)
+                        Text(queueInfo)
+                            .font(.caption2)
+                            .foregroundStyle(.orange)
+                    }
+                }
+                // Task history (last 3 tasks)
+                else if !session.taskHistory.isEmpty {
+                    VStack(alignment: .leading, spacing: 1) {
+                        ForEach(session.taskHistory.prefix(3), id: \.self) { taskTitle in
+                            HStack(spacing: 4) {
+                                Image(systemName: "checkmark")
+                                    .font(.system(size: 8, weight: .bold))
+                                    .foregroundStyle(.tertiary)
+                                Text(taskTitle)
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                                    .lineLimit(1)
+                            }
+                        }
+                    }
+                } else {
+                    // Show running time if no history
                     Text("Running for \(session.startedAt, style: .relative)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -1062,18 +1501,42 @@ struct WorkerPickerRow: View {
 
             Spacer()
 
-            Image(systemName: "chevron.right")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
+            // Status badge (shows "Add to Queue" or status)
+            VStack(alignment: .trailing, spacing: 4) {
+                if session.hasTask {
+                    // Show "Add to Queue" for busy terminals
+                    Text("Add to Queue")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.orange.opacity(0.15))
+                        .clipShape(Capsule())
+                } else {
+                    // Show "Run" for idle terminals
+                    Text("Run")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.green)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.green.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+
+                // Status badge below action
+                Text(status.label)
+                    .font(.caption2)
+                    .foregroundStyle(status.color.opacity(0.8))
+            }
         }
         .padding(10)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.primary.opacity(0.05))
+                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
         )
         .overlay(
             RoundedRectangle(cornerRadius: 8)
-                .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+                .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: isSelected ? 2 : 1)
         )
     }
 }

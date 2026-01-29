@@ -264,10 +264,10 @@ extension TerminalEmulator {
 
         // MARK: - Send Command
 
-        /// Send a command to the terminal (appends newline to execute)
+        /// Send a command to the terminal (appends carriage return to execute)
         func sendCommand(_ command: String) {
-            let commandWithNewline = command + "\n"
-            terminalView.send(txt: commandWithNewline)
+            let commandWithReturn = command + "\r"
+            terminalView.send(txt: commandWithReturn)
         }
 
         /// Send raw text to the terminal (no newline appended)

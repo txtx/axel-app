@@ -45,7 +45,7 @@ struct TasksPanelView: View {
     enum TaskFilter: String, CaseIterable {
         case all = "All"
         case running = "Running"
-        case queued = "Queued"
+        case backlog = "Backlog"
         case completed = "Done"
     }
 
@@ -53,7 +53,7 @@ struct TasksPanelView: View {
         switch selectedFilter {
         case .all: return tasks
         case .running: return tasks.filter { $0.status == "running" }
-        case .queued: return tasks.filter { $0.status == "queued" || $0.status == "pending" }
+        case .backlog: return tasks.filter { $0.status == "backlog" || $0.status == "queued" }
         case .completed: return tasks.filter { $0.status == "completed" }
         }
     }

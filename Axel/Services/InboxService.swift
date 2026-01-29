@@ -78,6 +78,7 @@ final class InboxService {
         decoder = JSONDecoder()
         decoder.dateDecodingStrategy = .iso8601
         requestNotificationPermissions()
+        registerNotificationCategories()
     }
 
     // MARK: - Notifications
@@ -94,23 +95,74 @@ final class InboxService {
         }
     }
 
+    /// Register notification categories with action buttons
+    private func registerNotificationCategories() {
+        // Approve action
+        let approveAction = UNNotificationAction(
+            identifier: "APPROVE_ACTION",
+            title: "Approve",
+            options: [.foreground]
+        )
+
+        // Reject action
+        let rejectAction = UNNotificationAction(
+            identifier: "REJECT_ACTION",
+            title: "Reject",
+            options: [.destructive]
+        )
+
+        // Permission request category with both actions
+        let permissionCategory = UNNotificationCategory(
+            identifier: "PERMISSION_REQUEST",
+            actions: [approveAction, rejectAction],
+            intentIdentifiers: [],
+            options: [.customDismissAction]
+        )
+
+        // Generic inbox event category (no actions)
+        let inboxCategory = UNNotificationCategory(
+            identifier: "INBOX_EVENT",
+            actions: [],
+            intentIdentifiers: [],
+            options: []
+        )
+
+        notificationCenter.setNotificationCategories([permissionCategory, inboxCategory])
+    }
+
     /// Send a notification for a new inbox event
     private func sendNotification(for event: InboxEvent) {
         guard notificationsEnabled else { return }
 
         let content = UNMutableNotificationContent()
-        content.title = event.title
+
+        // For permission requests, try to get the task title
+        if event.event.hookEventName == "PermissionRequest" {
+            let taskTitle = getTaskTitle(forPaneId: event.paneId)
+            content.title = taskTitle ?? "Permission Required"
+            content.categoryIdentifier = "PERMISSION_REQUEST"
+        } else {
+            content.title = event.title
+            content.categoryIdentifier = "INBOX_EVENT"
+        }
+
         if let subtitle = event.subtitle {
             content.body = subtitle
         }
         content.sound = .default
-        content.categoryIdentifier = "INBOX_EVENT"
 
-        // Add event info to userInfo for handling taps
-        content.userInfo = [
+        // Add event info to userInfo for handling taps and actions
+        var userInfo: [String: String] = [
             "eventId": event.id.uuidString,
-            "eventType": event.eventType
+            "eventType": event.eventType,
+            "paneId": event.paneId
         ]
+
+        if let sessionId = event.event.claudeSessionId {
+            userInfo["sessionId"] = sessionId
+        }
+
+        content.userInfo = userInfo
 
         let request = UNNotificationRequest(
             identifier: event.id.uuidString,
@@ -121,9 +173,53 @@ final class InboxService {
         Task {
             do {
                 try await notificationCenter.add(request)
-                print("[InboxService] Sent notification for: \(event.title)")
+                print("[InboxService] Sent notification for: \(content.title)")
             } catch {
                 print("[InboxService] Failed to send notification: \(error)")
+            }
+        }
+    }
+
+    /// Get the task title for a given paneId by querying the Terminal
+    private func getTaskTitle(forPaneId paneId: String) -> String? {
+        guard let context = modelContext else { return nil }
+
+        do {
+            let descriptor = FetchDescriptor<Terminal>(
+                predicate: #Predicate { $0.paneId == paneId }
+            )
+            if let terminal = try context.fetch(descriptor).first,
+               let task = terminal.task {
+                return task.title
+            }
+        } catch {
+            print("[InboxService] Failed to fetch task title: \(error)")
+        }
+
+        return nil
+    }
+
+    /// Handle notification action response (called from AppDelegate)
+    func handleNotificationAction(actionIdentifier: String, userInfo: [AnyHashable: Any]) {
+        guard let sessionId = userInfo["sessionId"] as? String,
+              let paneId = userInfo["paneId"] as? String,
+              let eventIdString = userInfo["eventId"] as? String,
+              let eventId = UUID(uuidString: eventIdString) else {
+            print("[InboxService] Missing required info for notification action")
+            return
+        }
+
+        let allow = actionIdentifier == "APPROVE_ACTION"
+
+        Task {
+            do {
+                try await sendPermissionResponse(sessionId: sessionId, allow: allow, paneId: paneId)
+                await MainActor.run {
+                    resolveEvent(eventId)
+                }
+                print("[InboxService] Handled notification action: \(allow ? "approve" : "reject")")
+            } catch {
+                print("[InboxService] Failed to handle notification action: \(error)")
             }
         }
     }
@@ -210,6 +306,19 @@ final class InboxService {
     /// Check if an event is resolved
     func isResolved(_ eventId: UUID) -> Bool {
         resolvedEventIds.contains(eventId)
+    }
+
+    /// Confirm task completion and trigger queue consumption for the next task.
+    /// This should be called when the user validates a Stop event in the inbox.
+    /// - Parameter paneId: The terminal pane ID where the task completed
+    func confirmTaskCompletion(forPaneId paneId: String) {
+        // Post notification to trigger queue consumption
+        NotificationCenter.default.post(
+            name: .taskCompletedOnTerminal,
+            object: nil,
+            userInfo: ["paneId": paneId]
+        )
+        print("[InboxService] Task completion confirmed for pane \(paneId.prefix(8))... - triggering queue consumption")
     }
 
     /// Set of pane IDs that have pending (unresolved) permission requests
@@ -417,6 +526,10 @@ final class InboxService {
                 // Finalize task in CostTracker (use paneId)
                 CostTracker.shared.finalizeTask(forPaneId: event.paneId)
 
+                // NOTE: We do NOT post .taskCompletedOnTerminal here.
+                // Queue consumption is triggered when the user validates the Stop event
+                // in the inbox via confirmTaskCompletion(forPaneId:).
+
                 pendingStopEvents.append((eventId: event.id, sessionId: sessionId, timestamp: Date()))
             }
 
@@ -493,6 +606,18 @@ final class InboxService {
             return
         }
 
+        // DEBUG: Log OTEL metric structure
+        print("[OTEL] parseMetric: name=\(name) dataPoints.count=\(dataPoints.count) paneId=\(eventPaneId ?? "nil")")
+
+        // OTEL batches metrics from multiple models in a single metric.
+        // Each model has its own cumulative counter, so we need to SUM
+        // values across all models for the session total.
+        // Group by session and aggregate values by type.
+        var sessionData: [String: (
+            inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int,
+            costUSD: Double, linesAdded: Int, linesRemoved: Int, activeTimeSeconds: Double
+        )] = [:]
+
         for dataPoint in dataPoints {
             guard let value = dataPoint["asDouble"] as? Double,
                   let attributes = dataPoint["attributes"] as? [[String: Any]] else {
@@ -519,50 +644,88 @@ final class InboxService {
 
             guard let sid = sessionId else { continue }
 
+            // DEBUG: Log each datapoint
+            print("[OTEL]   dataPoint: session=\(sid.prefix(8)) type=\(type ?? "nil") value=\(value)")
+
             // If we have paneId from the event, register the mapping
             if let paneId = eventPaneId {
-                // Register the mapping (this is idempotent - won't overwrite if already exists)
                 CostTracker.shared.registerSession(paneId: paneId, sessionId: sid)
             }
 
-            let metrics = self.metrics(for: sid)
+            // Initialize session data if needed
+            if sessionData[sid] == nil {
+                sessionData[sid] = (0, 0, 0, 0, 0, 0, 0, 0)
+            }
 
+            // Aggregate values by type (summing across models)
+            // NOTE: This assumes each datapoint is from a different model with its own
+            // cumulative counter. If datapoints are NOT per-model, this SUM is incorrect!
             switch name {
             case "claude_code.token.usage":
                 switch type {
                 case "input":
-                    metrics.updateFromOTEL(inputTokens: Int(value))
+                    sessionData[sid]!.inputTokens += Int(value)
+                    print("[OTEL]     → aggregated inputTokens = \(sessionData[sid]!.inputTokens)")
                 case "output":
-                    metrics.updateFromOTEL(outputTokens: Int(value))
+                    sessionData[sid]!.outputTokens += Int(value)
+                    print("[OTEL]     → aggregated outputTokens = \(sessionData[sid]!.outputTokens)")
                 case "cacheRead":
-                    metrics.updateFromOTEL(cacheReadTokens: Int(value))
+                    sessionData[sid]!.cacheReadTokens += Int(value)
                 case "cacheCreation":
-                    metrics.updateFromOTEL(cacheCreationTokens: Int(value))
+                    sessionData[sid]!.cacheCreationTokens += Int(value)
                 default:
                     break
                 }
 
             case "claude_code.cost.usage":
-                metrics.updateFromOTEL(costUSD: value)
+                sessionData[sid]!.costUSD += value
 
             case "claude_code.lines_of_code.count":
                 switch type {
                 case "added":
-                    metrics.updateFromOTEL(linesAdded: Int(value))
+                    sessionData[sid]!.linesAdded += Int(value)
                 case "removed":
-                    metrics.updateFromOTEL(linesRemoved: Int(value))
+                    sessionData[sid]!.linesRemoved += Int(value)
                 default:
                     break
                 }
 
             case "claude_code.active_time.total":
-                metrics.updateFromOTEL(activeTimeSeconds: value)
+                sessionData[sid]!.activeTimeSeconds += value
 
             default:
                 break
             }
+        }
 
-            // Update CostTracker with the metrics
+        // Update metrics once per session with aggregated values
+        for (sid, data) in sessionData {
+            let metrics = self.metrics(for: sid)
+
+            // Only update non-zero values (metrics may come in separate OTEL batches)
+            if data.inputTokens > 0 || data.outputTokens > 0 ||
+               data.cacheReadTokens > 0 || data.cacheCreationTokens > 0 {
+                metrics.updateFromOTEL(
+                    inputTokens: data.inputTokens,
+                    outputTokens: data.outputTokens,
+                    cacheReadTokens: data.cacheReadTokens,
+                    cacheCreationTokens: data.cacheCreationTokens
+                )
+            }
+            if data.costUSD > 0 {
+                metrics.updateFromOTEL(costUSD: data.costUSD)
+            }
+            if data.linesAdded > 0 || data.linesRemoved > 0 {
+                metrics.updateFromOTEL(linesAdded: data.linesAdded, linesRemoved: data.linesRemoved)
+            }
+            if data.activeTimeSeconds > 0 {
+                metrics.updateFromOTEL(activeTimeSeconds: data.activeTimeSeconds)
+            }
+
+            // Update CostTracker once with aggregated values
+            // DEBUG: Log what we're sending to CostTracker
+            print("[OTEL] → CostTracker.recordMetrics(session=\(sid.prefix(8)), in:\(metrics.inputTokens) out:\(metrics.outputTokens) cacheR:\(metrics.cacheReadTokens) cacheC:\(metrics.cacheCreationTokens) cost:\(String(format: "%.4f", metrics.costUSD)))")
+
             CostTracker.shared.recordMetrics(
                 forSession: sid,
                 inputTokens: metrics.inputTokens,
@@ -583,13 +746,66 @@ final class InboxService {
     }
 
     /// Send a permission response to the axel server
-    func sendPermissionResponse(sessionId: String, allow: Bool, paneId: String? = nil) async throws {
+    /// - Parameters:
+    ///   - sessionId: The Claude session ID
+    ///   - option: The selected permission option
+    ///   - paneId: The terminal pane ID for routing
+    func sendPermissionResponse(sessionId: String, option: PermissionOption, paneId: String? = nil) async throws {
         let serverPort = port(for: paneId)
         let outboxURL = URL(string: "http://localhost:\(serverPort)/outbox")!
 
         var body: [String: Any] = [
             "session_id": sessionId,
             "response_type": OutboxResponseType.permissionResponse.rawValue,
+            "response_text": option.responseText
+        ]
+
+        if let paneId = paneId {
+            body["pane_id"] = paneId
+        }
+
+        var request = URLRequest(url: outboxURL)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (_, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw InboxServiceError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            throw InboxServiceError.httpError(statusCode: httpResponse.statusCode)
+        }
+
+        print("[InboxService] Sent permission response: '\(option.label)' (\(option.responseText)) for session \(sessionId)")
+
+        // Mark corresponding hints as answered
+        markHintsAnsweredForSession(sessionId: sessionId, response: option.label)
+    }
+
+    /// Convenience method for simple allow/deny (used by notifications)
+    /// For notifications, we can only offer simple Yes/No, so this creates synthetic options
+    func sendPermissionResponse(sessionId: String, allow: Bool, paneId: String? = nil) async throws {
+        // Create a simple option for allow/deny
+        // Option 1 = Yes, Option 2 (or 3 if there are suggestions) = No
+        // For simplicity from notifications, we use "1" for yes and "n" shortcut for no
+        let option = PermissionOption(
+            id: allow ? 1 : 99,  // 99 is a placeholder, we use responseText override
+            label: allow ? "Yes" : "No",
+            shortLabel: allow ? "Yes" : "No",
+            isDestructive: !allow,
+            suggestion: nil
+        )
+
+        let serverPort = port(for: paneId)
+        let outboxURL = URL(string: "http://localhost:\(serverPort)/outbox")!
+
+        var body: [String: Any] = [
+            "session_id": sessionId,
+            "response_type": OutboxResponseType.permissionResponse.rawValue,
+            // Use "y" or "n" shortcuts which Claude Code accepts
             "response_text": allow ? "y" : "n"
         ]
 
@@ -612,10 +828,8 @@ final class InboxService {
             throw InboxServiceError.httpError(statusCode: httpResponse.statusCode)
         }
 
-        print("[InboxService] Sent permission response: \(allow ? "allow" : "deny") for session \(sessionId)")
-
-        // Mark corresponding hints as answered
-        markHintsAnsweredForSession(sessionId: sessionId, response: allow ? "allow" : "deny")
+        print("[InboxService] Sent permission response: '\(option.label)' for session \(sessionId)")
+        markHintsAnsweredForSession(sessionId: sessionId, response: option.label)
     }
 
     /// Send a text response (for questions/hints)

@@ -167,7 +167,11 @@ struct SidebarView: View {
         hints.filter { $0.hintStatus == .answered }.count
     }
 
-    private var queuedTasksCount: Int {
+    private var backlogTasksCount: Int {
+        tasks.filter { $0.taskStatus == .backlog }.count
+    }
+
+    private var upNextTasksCount: Int {
         tasks.filter { $0.taskStatus == .queued }.count
     }
 
@@ -235,13 +239,13 @@ struct SidebarView: View {
                 .padding(.leading, 16)
                 .tag(SidebarSection.inbox(.answered))
 
-                // Tasks (BLUE)
+                // Tasks (BLUE) - shows all pending tasks
                 Label {
                     HStack {
                         Text("Tasks")
                         Spacer()
-                        if queuedTasksCount > 0 {
-                            Text("\(queuedTasksCount)")
+                        if backlogTasksCount + upNextTasksCount > 0 {
+                            Text("\(backlogTasksCount + upNextTasksCount)")
                                 .font(.callout.monospacedDigit())
                                 .foregroundStyle(.blue)
                                 .padding(.horizontal, 6)
@@ -254,7 +258,7 @@ struct SidebarView: View {
                     Image(systemName: "rectangle.stack")
                         .foregroundStyle(.blue)
                 }
-                .tag(SidebarSection.queue(.queued))
+                .tag(SidebarSection.queue(.backlog))
 
                 // Coding Agents
                 Label {
@@ -1042,7 +1046,7 @@ struct TaskDetailView: View {
 
     private var statusColor: Color {
         switch task.taskStatus {
-        case .queued: .blue
+        case .backlog, .queued: .blue
         case .running: .green
         case .completed: .secondary
         case .inReview: .yellow
@@ -1052,7 +1056,7 @@ struct TaskDetailView: View {
 
     private var statusIcon: String {
         switch task.taskStatus {
-        case .queued: "clock.circle.fill"
+        case .backlog, .queued: "clock.circle.fill"
         case .running: "play.circle.fill"
         case .completed: "checkmark.circle.fill"
         case .inReview: "eye.circle.fill"
@@ -1086,7 +1090,7 @@ struct TaskDetailView: View {
                     .clipShape(Capsule())
 
                 // Run in Terminal button
-                if task.taskStatus == .queued {
+                if task.taskStatus.isPending {
                     Button {
                         onStartTerminal?(task)
                     } label: {
@@ -1222,10 +1226,10 @@ struct TaskDetailView: View {
                                 Button {
                                     withAnimation(.snappy(duration: 0.2)) {
                                         if status == .completed {
-                                            task.markCompleted()
+                                            task.markCompletedWithUndo()
                                             selectedTask = nil
                                         } else {
-                                            task.updateStatus(status)
+                                            task.updateStatusWithUndo(status)
                                         }
                                     }
                                     Task {
@@ -1317,11 +1321,11 @@ struct TaskDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
-                // Run action (only for queued tasks)
-                if task.taskStatus == .queued {
+                // Run action (only for pending tasks)
+                if task.taskStatus.isPending {
                     Button {
                         withAnimation {
-                            task.updateStatus(.running)
+                            task.updateStatusWithUndo(.running)
                         }
                         Task {
                             await syncService.performFullSync(context: modelContext)
@@ -1332,11 +1336,11 @@ struct TaskDetailView: View {
                     .tint(.green)
                 }
 
-                // Complete action (for queued or running tasks)
-                if task.taskStatus == .queued || task.taskStatus == .running {
+                // Complete action (for pending or running tasks)
+                if task.taskStatus.isPending || task.taskStatus == .running {
                     Button {
                         withAnimation {
-                            task.markCompleted()
+                            task.markCompletedWithUndo()
                             selectedTask = nil
                         }
                         Task {
@@ -1352,7 +1356,7 @@ struct TaskDetailView: View {
                 if task.taskStatus == .running {
                     Button {
                         withAnimation {
-                            task.updateStatus(.aborted)
+                            task.updateStatusWithUndo(.aborted)
                         }
                         Task {
                             await syncService.performFullSync(context: modelContext)
@@ -1367,7 +1371,7 @@ struct TaskDetailView: View {
                 if task.taskStatus == .completed || task.taskStatus == .aborted {
                     Button {
                         withAnimation {
-                            task.updateStatus(.queued)
+                            task.updateStatusWithUndo(.backlog)
                         }
                         Task {
                             await syncService.performFullSync(context: modelContext)
@@ -1426,7 +1430,7 @@ struct TaskDetailView: View {
 
     private func statusColorFor(_ status: TaskStatus) -> Color {
         switch status {
-        case .queued: .blue
+        case .backlog, .queued: .blue
         case .running: .green
         case .completed: .secondary
         case .inReview: .yellow
@@ -1732,17 +1736,17 @@ struct CreateTaskView: View {
         let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmedTitle.isEmpty else { return }
 
-        // Get highest priority among existing queued tasks (lower priority = top of queue)
+        // Get highest priority among existing pending tasks (lower priority = top of queue)
         let maxPriority: Int
         if let workspace {
             maxPriority = workspace.tasks
-                .filter { $0.taskStatus == .queued }
+                .filter { $0.taskStatus.isPending }
                 .map { $0.priority }
                 .max() ?? 0
         } else {
-            // No workspace filter - check all tasks
+            // No workspace filter - check all tasks (backlog or queued)
             let descriptor = FetchDescriptor<WorkTask>(
-                predicate: #Predicate { $0.status == "queued" }
+                predicate: #Predicate { $0.status == "backlog" || $0.status == "queued" }
             )
             let existingTasks = (try? modelContext.fetch(descriptor)) ?? []
             maxPriority = existingTasks.map { $0.priority }.max() ?? 0
@@ -1771,18 +1775,38 @@ struct QueueListView: View {
     @Binding var selection: WorkTask?
     var onNewTask: () -> Void
 
+    // Sectioned tasks for the main Tasks view
+    private var runningTasks: [WorkTask] {
+        tasks.filter { $0.taskStatus == .running }
+    }
+
+    private var upNextTasks: [WorkTask] {
+        tasks.filter { $0.taskStatus == .queued }
+    }
+
+    private var backlogTasks: [WorkTask] {
+        tasks.filter { $0.taskStatus == .backlog }
+    }
+
     private var filteredTasks: [WorkTask] {
         switch filter {
-        case .queued: tasks.filter { $0.taskStatus == .queued }
+        case .backlog: tasks.filter { $0.taskStatus == .backlog }
+        case .upNext: tasks.filter { $0.taskStatus == .queued }
         case .running: tasks.filter { $0.taskStatus == .running }
         case .completed: tasks.filter { $0.taskStatus == .completed }
         case .all: tasks
         }
     }
 
+    /// Total count for the main Tasks view (running + upNext + backlog)
+    private var allPendingCount: Int {
+        runningTasks.count + upNextTasks.count + backlogTasks.count
+    }
+
     private var headerTitle: String {
         switch filter {
-        case .queued: "Tasks"
+        case .backlog: "Tasks"
+        case .upNext: "Up Next"
         case .running: "Agents"
         case .completed: "Completed"
         case .all: "All Tasks"
@@ -1797,7 +1821,7 @@ struct QueueListView: View {
                 Text(headerTitle)
                     .font(.title2.bold())
                 Spacer()
-                Text("\(filteredTasks.count)")
+                Text("\(filter == .backlog ? allPendingCount : filteredTasks.count)")
                     .font(.callout.monospacedDigit())
                     .foregroundStyle(.secondary)
                     .padding(.horizontal, 8)
@@ -1809,22 +1833,59 @@ struct QueueListView: View {
             .padding(.vertical, 12)
             #endif
 
-            if filteredTasks.isEmpty {
+            if filter == .backlog {
+                // Main Tasks view: show sections for Running, Up Next, Backlog
+                if allPendingCount == 0 {
+                    emptyState
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 0, pinnedViews: .sectionHeaders) {
+                            // Running section
+                            if !runningTasks.isEmpty {
+                                Section {
+                                    ForEach(runningTasks) { task in
+                                        taskRow(for: task)
+                                    }
+                                } header: {
+                                    sectionHeader(title: "Running", count: runningTasks.count, color: .green)
+                                }
+                            }
+
+                            // Up Next section
+                            if !upNextTasks.isEmpty {
+                                Section {
+                                    ForEach(upNextTasks) { task in
+                                        taskRow(for: task)
+                                    }
+                                } header: {
+                                    sectionHeader(title: "Up Next", count: upNextTasks.count, color: .orange)
+                                }
+                            }
+
+                            // Backlog section
+                            if !backlogTasks.isEmpty {
+                                Section {
+                                    ForEach(backlogTasks) { task in
+                                        taskRow(for: task)
+                                    }
+                                } header: {
+                                    sectionHeader(title: "Backlog", count: backlogTasks.count, color: .secondary)
+                                }
+                            }
+                        }
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture {
+                        selection = nil
+                    }
+                }
+            } else if filteredTasks.isEmpty {
                 emptyState
             } else {
                 ScrollView {
                     LazyVStack(spacing: 0) {
                         ForEach(filteredTasks) { task in
-                            TaskRowView(task: task, isSelected: selection?.id == task.id)
-                                .padding(.horizontal, 8)
-                                .padding(.vertical, 2)
-                                .contentShape(Rectangle())
-                                .highPriorityGesture(
-                                    TapGesture().onEnded {
-                                        selection = task
-                                    }
-                                )
-                                .transition(.opacity.combined(with: .move(edge: .top)))
+                            taskRow(for: task)
                         }
                     }
                     .animation(.easeInOut(duration: 0.25), value: filteredTasks.map(\.id))
@@ -1848,6 +1909,40 @@ struct QueueListView: View {
             }
             #endif
         }
+    }
+
+    @ViewBuilder
+    private func taskRow(for task: WorkTask) -> some View {
+        TaskRowView(task: task, isSelected: selection?.id == task.id)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 2)
+            .contentShape(Rectangle())
+            .highPriorityGesture(
+                TapGesture().onEnded {
+                    selection = task
+                }
+            )
+            .transition(.opacity.combined(with: .move(edge: .top)))
+    }
+
+    @ViewBuilder
+    private func sectionHeader(title: String, count: Int, color: Color) -> some View {
+        HStack {
+            Text(title)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(color)
+            Spacer()
+            Text("\(count)")
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(color)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(color.opacity(0.15))
+                .clipShape(Capsule())
+        }
+        .padding(.horizontal, 16)
+        .padding(.vertical, 8)
+        .background(.background)
     }
 
     private var emptyState: some View {
@@ -1880,7 +1975,8 @@ struct QueueListView: View {
 
     private var emptyTitle: String {
         switch filter {
-        case .queued: "No Tasks"
+        case .backlog: "No Tasks"
+        case .upNext: "No Queued Tasks"
         case .running: "Nothing Coding Agents"
         case .completed: "No Completed Tasks"
         case .all: "No Tasks"
@@ -1889,7 +1985,8 @@ struct QueueListView: View {
 
     private var emptyIcon: String {
         switch filter {
-        case .queued: "tray"
+        case .backlog: "tray"
+        case .upNext: "clock"
         case .running: "terminal"
         case .completed: "checkmark.circle"
         case .all: "tray"
@@ -1898,7 +1995,8 @@ struct QueueListView: View {
 
     private var emptyDescription: String {
         switch filter {
-        case .queued: "Create a task to get started"
+        case .backlog: "Create a task to get started"
+        case .upNext: "Queue a task on a terminal to see it here"
         case .running: "Start a task to see it here"
         case .completed: "Complete a task to see it here"
         case .all: "Create your first task"
@@ -1909,10 +2007,12 @@ struct QueueListView: View {
 struct TaskRowView: View {
     let task: WorkTask
     var isSelected: Bool = false
+    /// Optional terminal name if this task is queued on a terminal
+    var queuedOnTerminalName: String? = nil
 
     private var statusColor: Color {
         switch task.taskStatus {
-        case .queued: .blue
+        case .backlog, .queued: .blue
         case .running: .green
         case .completed: .secondary
         case .inReview: .yellow
@@ -1922,7 +2022,7 @@ struct TaskRowView: View {
 
     private var statusIcon: String {
         switch task.taskStatus {
-        case .queued: "clock.circle.fill"
+        case .backlog, .queued: "clock.circle.fill"
         case .running: "play.circle.fill"
         case .completed: "checkmark.circle.fill"
         case .inReview: "eye.circle.fill"
@@ -1945,9 +2045,24 @@ struct TaskRowView: View {
                     .lineLimit(2)
 
                 HStack(spacing: 8) {
-                    Text(task.taskStatus.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                        .font(.caption)
-                        .foregroundStyle(statusColor)
+                    // Queue badge - show if task is queued on a terminal
+                    if let terminalName = queuedOnTerminalName {
+                        HStack(spacing: 4) {
+                            Image(systemName: "list.bullet")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text("Queued on \(terminalName)")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.orange.opacity(0.15))
+                        .clipShape(Capsule())
+                    } else {
+                        Text(task.taskStatus.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
+                            .font(.caption)
+                            .foregroundStyle(statusColor)
+                    }
 
                     Text(task.createdAt, style: .relative)
                         .font(.caption)

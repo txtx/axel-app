@@ -134,33 +134,14 @@ struct SkillsListView: View {
     }
 
     private var emptyState: some View {
-        VStack(spacing: 12) {
-            Spacer()
-
-            Image(systemName: "sparkles")
-                .font(.system(size: 40))
-                .foregroundStyle(.quaternary)
-
-            Text("No Agents")
-                .font(.headline)
-                .foregroundStyle(.secondary)
-
-            Text("Add skills to ./skills, ~/.config/axel/skills, or create custom ones")
-                .font(.callout)
-                .foregroundStyle(.tertiary)
-                .multilineTextAlignment(.center)
-
-            Button {
-                isCreatingSkill = true
-            } label: {
-                Label("New Agent", systemImage: "plus")
-            }
-            .buttonStyle(.bordered)
-            .padding(.top, 8)
-
-            Spacer()
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        EmptyStateView(
+            image: "sparkles",
+            title: "No Agents",
+            description: "Add skills to ./skills, ~/.config/axel/skills, or create custom ones",
+            action: { isCreatingSkill = true },
+            actionLabel: "New Agent",
+            actionIcon: "plus"
+        )
     }
 
     private func deleteSkills(at offsets: IndexSet) {

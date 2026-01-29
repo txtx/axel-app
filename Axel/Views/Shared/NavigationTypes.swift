@@ -41,7 +41,10 @@ enum HintFilter: String, CaseIterable, Identifiable {
 }
 
 enum TaskFilter: String, CaseIterable, Identifiable {
-    case queued = "Queued"
+    /// Shows tasks with .backlog status (unassigned, general pool)
+    case backlog = "Backlog"
+    /// Shows tasks with .queued status (assigned to a terminal's queue)
+    case upNext = "Up Next"
     case running = "Running"
     case completed = "Completed"
     case all = "All"
@@ -50,7 +53,8 @@ enum TaskFilter: String, CaseIterable, Identifiable {
 
     var systemImage: String {
         switch self {
-        case .queued: "clock"
+        case .backlog: "tray"
+        case .upNext: "clock"
         case .running: "play.circle"
         case .completed: "checkmark.circle"
         case .all: "square.stack"
