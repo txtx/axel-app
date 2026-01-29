@@ -1,5 +1,23 @@
-Axel/.DS_Store
-Packages/.DS_Store
-Packages/**
-Axel/App/.DS_Store
-Axel/Views/.DS_Store
+# macOS
+.DS_Store
+**/.DS_Store
+
+# Xcode
+Axel.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcuserstate
+
+# Build artifacts
+build/
+build-test/
+dist-test/
+DerivedData/
+*.dmg
+*.dmg.zip
+
+# Sparkle
+sparkle-tools/
+
+# Swift Package Manager
+.build/
+.swiftpm/
+Package.resolved

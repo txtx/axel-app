@@ -13,5 +13,15 @@
 			</array>
 		</dict>
 	</array>
+	<key>SUFeedURL</key>
+	<string>https://txtx-public.s3.amazonaws.com/releases/axel/appcast.xml</string>
+	<key>SUPublicEDKey</key>
+	<string>FbqyG1B/cERsQ+P/tlTgxK2imCjeukReURwnEinf6GQ=</string>
+	<key>SUEnableAutomaticChecks</key>
+	<true/>
+	<key>SUAutomaticallyUpdate</key>
+	<false/>
+	<key>SUAllowsAutomaticUpdates</key>
+	<true/>
 </dict>
 </plist>

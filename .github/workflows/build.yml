@@ -1,0 +1,281 @@
+name: Build and Release
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'Axel/**'
+      - 'Packages/**'
+      - 'Axel.xcodeproj/**'
+      - '.github/workflows/build.yml'
+  workflow_dispatch:
+    inputs:
+      force_release:
+        description: 'Force release even if version exists'
+        required: false
+        default: 'false'
+        type: boolean
+
+env:
+  SCHEME: Axel
+  PRODUCT_NAME: Axel
+  XCODE_VERSION: '16.2'
+  AWS_REGION: us-east-1
+  S3_BUCKET: txtx-public
+
+jobs:
+  build-macos:
+    name: Build macOS App
+    runs-on: macos-15
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      dmg_name: ${{ steps.dmg.outputs.name }}
+      should_release: ${{ steps.check_release.outputs.should_release }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Get version from Xcode project
+        id: version
+        run: |
+          # Extract MARKETING_VERSION from project.pbxproj
+          VERSION=$(grep -m1 'MARKETING_VERSION' Axel.xcodeproj/project.pbxproj | sed 's/.*= *\([^;]*\);/\1/' | tr -d ' "')
+          if [ -z "$VERSION" ]; then
+            VERSION="1.0.0"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "Detected version: $VERSION"
+
+      - name: Check if release exists
+        id: check_release
+        env:
+          FORCE_RELEASE: ${{ github.event.inputs.force_release }}
+        run: |
+          VERSION="${{ steps.version.outputs.version }}"
+
+          # Check if DMG already exists on S3
+          if curl -sf -o /dev/null "https://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/axel/Axel-${VERSION}-macos.dmg"; then
+            echo "Release ${VERSION} already exists on S3"
+            if [ "$FORCE_RELEASE" = "true" ]; then
+              echo "Force release enabled, will overwrite"
+              echo "should_release=true" >> $GITHUB_OUTPUT
+            else
+              echo "should_release=false" >> $GITHUB_OUTPUT
+            fi
+          else
+            echo "Release ${VERSION} does not exist, will create"
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Install create-dmg
+        if: steps.check_release.outputs.should_release == 'true'
+        run: brew install create-dmg
+
+      - name: Download Sparkle tools
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          SPARKLE_VERSION="2.6.4"
+          curl -L -o Sparkle.tar.xz "https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          mkdir -p sparkle-tools
+          tar -xf Sparkle.tar.xz -C sparkle-tools
+          chmod +x sparkle-tools/bin/*
+
+      - name: Resolve package dependencies
+        if: steps.check_release.outputs.should_release == 'true'
+        run: xcodebuild -resolvePackageDependencies -scheme "${{ env.SCHEME }}" -project Axel.xcodeproj
+
+      - name: Build macOS app
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          xcodebuild \
+            -scheme "${{ env.SCHEME }}" \
+            -project Axel.xcodeproj \
+            -configuration Release \
+            -destination "platform=macOS" \
+            -derivedDataPath build \
+            MARKETING_VERSION="${{ steps.version.outputs.version }}" \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO \
+            build
+
+      - name: Prepare app for distribution
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          mkdir -p dist
+          cp -R "build/Build/Products/Release/${{ env.PRODUCT_NAME }}.app" dist/
+
+      - name: Import signing certificate
+        if: steps.check_release.outputs.should_release == 'true' && env.MACOS_CERTIFICATE != ''
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+          MACOS_CERTIFICATE_PWD: ${{ secrets.MACOS_CERTIFICATE_PWD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+          echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
+          security import certificate.p12 -P "$MACOS_CERTIFICATE_PWD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
+          security list-keychain -d user -s $KEYCHAIN_PATH
+          codesign --force --deep --sign "Developer ID Application" "dist/${{ env.PRODUCT_NAME }}.app"
+
+      - name: Create DMG
+        if: steps.check_release.outputs.should_release == 'true'
+        id: dmg
+        run: |
+          chmod +x scripts/create-dmg.sh
+          DMG_NAME="${{ env.PRODUCT_NAME }}-${{ steps.version.outputs.version }}-macos.dmg"
+          scripts/create-dmg.sh "dist/${{ env.PRODUCT_NAME }}.app" "dist/${DMG_NAME}"
+          echo "name=${DMG_NAME}" >> $GITHUB_OUTPUT
+          echo "path=dist/${DMG_NAME}" >> $GITHUB_OUTPUT
+
+      - name: Download existing appcast
+        if: steps.check_release.outputs.should_release == 'true'
+        continue-on-error: true
+        run: |
+          curl -f -o dist/appcast.xml \
+            "https://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/axel/appcast.xml" || true
+
+      - name: Generate appcast
+        if: steps.check_release.outputs.should_release == 'true'
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [ -n "$SPARKLE_PRIVATE_KEY" ]; then
+            echo "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle_private_key
+            ./sparkle-tools/bin/generate_appcast \
+              --ed-key-file /tmp/sparkle_private_key \
+              --download-url-prefix "https://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/axel/" \
+              dist/
+            rm -f /tmp/sparkle_private_key
+            echo "Generated appcast.xml:"
+            cat dist/appcast.xml
+          else
+            echo "Warning: SPARKLE_PRIVATE_KEY not set, skipping appcast generation"
+          fi
+
+      - name: Notarize DMG
+        if: steps.check_release.outputs.should_release == 'true' && env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "${{ steps.dmg.outputs.path }}"
+
+      - name: Upload artifacts
+        if: steps.check_release.outputs.should_release == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: Axel-macOS-${{ steps.version.outputs.version }}
+          path: |
+            dist/*.dmg
+            dist/appcast.xml
+          if-no-files-found: warn
+
+  publish-s3:
+    name: Publish to S3
+    needs: build-macos
+    runs-on: ubuntu-latest
+    if: needs.build-macos.outputs.should_release == 'true'
+
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Axel-macOS-${{ needs.build-macos.outputs.version }}
+          path: ./artifacts
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload to S3
+        run: |
+          VERSION="${{ needs.build-macos.outputs.version }}"
+
+          for file in ./artifacts/*.dmg; do
+            BASENAME=$(basename "$file")
+            echo "Uploading $BASENAME to S3..."
+            aws s3 cp "$file" "s3://${{ env.S3_BUCKET }}/releases/axel/${BASENAME}" \
+              --acl public-read \
+              --cache-control "public, max-age=31536000"
+            aws s3 cp "$file" "s3://${{ env.S3_BUCKET }}/releases/axel/Axel-latest-macos.dmg" \
+              --acl public-read \
+              --cache-control "public, max-age=300"
+          done
+
+          if [ -f "./artifacts/appcast.xml" ]; then
+            echo "Uploading appcast.xml..."
+            aws s3 cp "./artifacts/appcast.xml" "s3://${{ env.S3_BUCKET }}/releases/axel/appcast.xml" \
+              --acl public-read \
+              --cache-control "public, max-age=300" \
+              --content-type "application/xml"
+          fi
+
+          echo ""
+          echo "Published to S3:"
+          echo "  - https://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/axel/${{ needs.build-macos.outputs.dmg_name }}"
+          echo "  - https://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/axel/Axel-latest-macos.dmg"
+          echo "  - https://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/axel/appcast.xml"
+
+  create-release:
+    name: Create GitHub Release
+    needs: [build-macos, publish-s3]
+    runs-on: ubuntu-latest
+    if: needs.build-macos.outputs.should_release == 'true'
+    permissions:
+      contents: write
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: Axel-macOS-${{ needs.build-macos.outputs.version }}
+          path: ./artifacts
+
+      - name: Create tag and release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          VERSION="${{ needs.build-macos.outputs.version }}"
+          TAG="v${VERSION}"
+
+          # Create tag if it doesn't exist
+          if ! git rev-parse "$TAG" >/dev/null 2>&1; then
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+          # Create release
+          gh release create "$TAG" \
+            --title "Axel $VERSION" \
+            --generate-notes \
+            --draft \
+            ./artifacts/*.dmg
+
+          echo "Created release: $TAG"

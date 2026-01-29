@@ -4,6 +4,28 @@ import UserNotifications
 
 #if os(macOS)
 import AppKit
+import Sparkle
+
+// MARK: - Sparkle Updater (Shared)
+
+/// Shared Sparkle updater controller - initialized once at app launch
+final class SparkleUpdater {
+    static let shared = SparkleUpdater()
+
+    let controller: SPUStandardUpdaterController
+
+    private init() {
+        controller = SPUStandardUpdaterController(
+            startingUpdater: true,
+            updaterDelegate: nil,
+            userDriverDelegate: nil
+        )
+    }
+
+    var updater: SPUUpdater {
+        controller.updater
+    }
+}
 
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -29,6 +51,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Set ourselves as the notification delegate
         UNUserNotificationCenter.current().delegate = self
+
+        // Initialize Sparkle updater (access shared instance to trigger initialization)
+        _ = SparkleUpdater.shared
     }
 
     // MARK: - UNUserNotificationCenterDelegate
@@ -79,6 +104,9 @@ extension Notification.Name {
     static let cancelTaskTriggered = Notification.Name("cancelTaskTriggered")
     /// Posted when a task completes on a terminal - used to trigger queue consumption
     static let taskCompletedOnTerminal = Notification.Name("taskCompletedOnTerminal")
+    /// Posted when a task's status changes from running - used to trigger session cleanup
+    /// userInfo: ["taskId": UUID]
+    static let taskNoLongerRunning = Notification.Name("taskNoLongerRunning")
 }
 
 // MARK: - Focused Scene Values for Window-Specific Actions
@@ -131,6 +159,39 @@ extension FocusedValues {
 }
 
 // MARK: - macOS Scene Builder
+
+// MARK: - Sparkle Update View
+
+/// SwiftUI wrapper for Sparkle's "Check for Updates" functionality
+struct CheckForUpdatesView: View {
+    @ObservedObject private var checkForUpdatesViewModel: CheckForUpdatesViewModel
+
+    init(updater: SPUUpdater) {
+        self.checkForUpdatesViewModel = CheckForUpdatesViewModel(updater: updater)
+    }
+
+    var body: some View {
+        Button("Check for Updates...", action: checkForUpdatesViewModel.checkForUpdates)
+            .disabled(!checkForUpdatesViewModel.canCheckForUpdates)
+    }
+}
+
+/// View model that observes Sparkle's updater state
+final class CheckForUpdatesViewModel: ObservableObject {
+    @Published var canCheckForUpdates = false
+
+    private let updater: SPUUpdater
+
+    init(updater: SPUUpdater) {
+        self.updater = updater
+        updater.publisher(for: \.canCheckForUpdates)
+            .assign(to: &$canCheckForUpdates)
+    }
+
+    func checkForUpdates() {
+        updater.checkForUpdates()
+    }
+}
 
 struct MacScenes: Scene {
     @Binding var appState: AppState
@@ -240,6 +301,11 @@ struct MacScenes: Scene {
                     Label("Show Optimizations", systemImage: "gauge.with.dots.needle.50percent")
                 }
                 .keyboardShortcut("4", modifiers: .command)
+            }
+
+            // Check for Updates in app menu
+            CommandGroup(after: .appInfo) {
+                CheckForUpdatesView(updater: SparkleUpdater.shared.updater)
             }
         }
     }
