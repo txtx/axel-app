@@ -37,6 +37,7 @@ struct WorkspaceContentView: View {
     @State private var selectedInboxEvent: InboxEvent?
     @State private var selectedMember: OrganizationMember?
     @State private var showCloseTerminalConfirmation = false
+    @State private var showTerminalInspector = false
     @State private var pendingTaskForPicker: WorkTask?
     @State private var floatingSession: TerminalSession?
     @State private var skillsColumnWidth: CGFloat = 280
@@ -513,12 +514,14 @@ struct WorkspaceContentView: View {
                 sidebarSelection: $sidebarSelection,
                 selectedSession: $selectedSession,
                 showCloseTerminalConfirmation: $showCloseTerminalConfirmation,
+                showTerminalInspector: $showTerminalInspector,
                 sessionManager: sessionManager,
                 onStartTerminal: { startTerminal() },
                 onStartTerminalForTask: { if let task = selectedTask { startTerminal(for: task) } }
             ))
             .modifier(WorkspaceAlertModifier(
                 showCloseTerminalConfirmation: $showCloseTerminalConfirmation,
+                showTerminalInspector: $showTerminalInspector,
                 selectedSession: $selectedSession,
                 workspaceId: workspace.id,
                 sessionManager: sessionManager
@@ -582,6 +585,7 @@ private struct WorkspaceKeyboardShortcuts: ViewModifier {
     @Binding var sidebarSelection: SidebarSection?
     @Binding var selectedSession: TerminalSession?
     @Binding var showCloseTerminalConfirmation: Bool
+    @Binding var showTerminalInspector: Bool
     let sessionManager: TerminalSessionManager
     let onStartTerminal: () -> Void
     let onStartTerminalForTask: () -> Void
@@ -605,6 +609,11 @@ private struct WorkspaceKeyboardShortcuts: ViewModifier {
                     sessionManager.stopSession(session)
                     selectedSession = nextSession
                 }
+            }
+            .keyboardShortcut(for: .inspectTerminal) {
+                // Cmd+I only works on terminals screen with a selected session
+                guard case .terminals = sidebarSelection, selectedSession != nil else { return }
+                showTerminalInspector = true
             }
             .keyboardShortcut(for: .showTasks) { sidebarSelection = .queue(.backlog) }
             .keyboardShortcut(for: .showAgents) { sidebarSelection = .terminals }
@@ -631,6 +640,7 @@ private struct WorkspaceKeyboardShortcuts: ViewModifier {
 
 private struct WorkspaceAlertModifier: ViewModifier {
     @Binding var showCloseTerminalConfirmation: Bool
+    @Binding var showTerminalInspector: Bool
     @Binding var selectedSession: TerminalSession?
     let workspaceId: UUID
     let sessionManager: TerminalSessionManager
@@ -639,6 +649,11 @@ private struct WorkspaceAlertModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .sheet(isPresented: $showTerminalInspector) {
+                if let session = selectedSession {
+                    TerminalInspectorView(session: session)
+                }
+            }
             .sheet(isPresented: $showCloseTerminalConfirmation) {
                 CloseTerminalConfirmationSheet(
                     keepTmuxSession: $keepTmuxSession,
