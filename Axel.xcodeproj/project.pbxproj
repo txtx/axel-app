@@ -85,8 +85,8 @@
 		A100000120A10030 /* TaskAssignee.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000110A10030 /* TaskAssignee.swift */; };
 		AE133ED0512C6A98BDE08952 /* AutomergeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04E9C8657F1187F40A1EC1DB /* AutomergeModelTests.swift */; };
 		B81242E637B124591F5B7B93 /* SessionStatusService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C177CAE09A36E267719D856 /* SessionStatusService.swift */; };
-		C4TERMINSPEC201A0001 /* TerminalInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4TERMINSPEC101A0001 /* TerminalInspectorView.swift */; };
 		BAF581097CA2F8F7B7EBBCB1 /* SyncIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */; };
+		C4TERMINSPEC201A0001 /* TerminalInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4TERMINSPEC101A0001 /* TerminalInspectorView.swift */; };
 		E435BED8E7D96547E09E1C1C /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 23797E4E4415996BCCFE8E45 /* Cocoa.framework */; };
 /* End PBXBuildFile section */
 
@@ -198,24 +198,14 @@
 		A100000110A10030 /* TaskAssignee.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskAssignee.swift; sourceTree = "<group>"; };
 		ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncIntegrationTests.swift; sourceTree = "<group>"; };
 		BE366A3151FDDA78680EDF0C /* SyncEngineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncEngineTests.swift; sourceTree = "<group>"; };
+		C4TERMINSPEC101A0001 /* TerminalInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalInspectorView.swift; sourceTree = "<group>"; };
 		CE485CA04822282FDD056DFB /* TaskAssignmentCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TaskAssignmentCoordinatorTests.swift; sourceTree = "<group>"; };
 		D28E5D714F17DA7A43A0182D /* CostTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CostTracker.swift; sourceTree = "<group>"; };
-		C4TERMINSPEC101A0001 /* TerminalInspectorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalInspectorView.swift; sourceTree = "<group>"; };
 		D8B5FC316E3F66406BDA27A3 /* AxelTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AxelTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		43E774732F298D900093DEC6 /* AxelUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
-			path = AxelUITests;
-			sourceTree = "<group>";
-		};
+		43E774732F298D900093DEC6 /* AxelUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = AxelUITests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -494,7 +484,6 @@
 				ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */,
 				CE485CA04822282FDD056DFB /* TaskAssignmentCoordinatorTests.swift */,
 			);
-			name = AxelTests;
 			path = AxelTests;
 			sourceTree = SOURCE_ROOT;
 		};
@@ -587,9 +576,9 @@
 			);
 			mainGroup = A1000001401A0001;
 			packageReferences = (
-				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */,
+				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */,
 				43BD82702F1D5F650092A96C /* XCRemoteSwiftPackageReference "supabase-swift" */,
-				43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */,
+				43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */,
 				43BD827E2F1D70000092A96C /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = A1000001401A0003 /* Products */;
@@ -749,7 +738,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -771,7 +760,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -801,6 +790,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -826,6 +816,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -995,7 +986,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
@@ -1048,7 +1039,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.0;
+				MARKETING_VERSION = 0.1.1;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
@@ -1104,11 +1095,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */ = {
+		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AutomergeWrapper;
 		};
-		43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */ = {
+		43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/SwiftTermWrapper;
 		};
@@ -1141,12 +1132,12 @@
 		};
 		43BD82742F1D63F40092A96C /* AutomergeWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */;
+			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */;
 			productName = AutomergeWrapper;
 		};
 		43BD82772F1D63F50092A96C /* SwiftTermWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */;
+			package = 43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */;
 			productName = SwiftTermWrapper;
 		};
 		43BD827F2F1D70000092A96C /* Sparkle */ = {
