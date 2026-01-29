@@ -13,7 +13,7 @@
 		224F4D7EECEE1287AF701CE6 /* TaskAssignmentCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE485CA04822282FDD056DFB /* TaskAssignmentCoordinatorTests.swift */; };
 		3724AAF9F7B57FC2766507ED /* SyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE366A3151FDDA78680EDF0C /* SyncEngineTests.swift */; };
 		39E9C6A3C0CAA85B4B8993D8 /* Axel.app in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000001001A0001 /* Axel.app */; };
-		43AB9E872F2AB9D2002A7A32 /* Axel.icon in Resources */ = {isa = PBXBuildFile; fileRef = 43AB9E862F2AB9D2002A7A32 /* Axel.icon */; };
+		43AFE93D2F2C12CE00513889 /* Axel.icon in Resources */ = {isa = PBXBuildFile; fileRef = 43AFE93C2F2C12CE00513889 /* Axel.icon */; };
 		43BD82722F1D63F40092A96C /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82712F1D63F40092A96C /* Supabase */; };
 		43BD82732F1D63F40092A96C /* AutomergeWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82742F1D63F40092A96C /* AutomergeWrapper */; };
 		43BD82752F1D63F50092A96C /* SwiftTermWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82772F1D63F50092A96C /* SwiftTermWrapper */; };
@@ -124,7 +124,7 @@
 		0178D0EB98540F719EB6D5CE /* TaskAssignmentCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TaskAssignmentCoordinator.swift; sourceTree = "<group>"; };
 		04E9C8657F1187F40A1EC1DB /* AutomergeModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutomergeModelTests.swift; sourceTree = "<group>"; };
 		23797E4E4415996BCCFE8E45 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
-		43AB9E862F2AB9D2002A7A32 /* Axel.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Axel.icon; sourceTree = SOURCE_ROOT; };
+		43AFE93C2F2C12CE00513889 /* Axel.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Axel.icon; sourceTree = "<group>"; };
 		43E774722F298D900093DEC6 /* AxelUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AxelUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6238124A78A2C3A74FCFEDBB /* WorktreeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeService.swift; sourceTree = "<group>"; };
 		9C177CAE09A36E267719D856 /* SessionStatusService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStatusService.swift; sourceTree = "<group>"; };
@@ -272,7 +272,7 @@
 				A1000001401A0007 /* Preview Content */,
 				A1000001101A0009 /* Assets.xcassets */,
 				A1000001101A000A /* Axel.entitlements */,
-				43AB9E862F2AB9D2002A7A32 /* Axel.icon */,
+				43AFE93C2F2C12CE00513889 /* Axel.icon */,
 				A1000001101A0051 /* Axel-Bridging-Header.h */,
 			);
 			path = Axel;
@@ -611,7 +611,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				43AB9E872F2AB9D2002A7A32 /* Axel.icon in Resources */,
+				43AFE93D2F2C12CE00513889 /* Axel.icon in Resources */,
 				A1000001201A0009 /* Assets.xcassets in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -738,7 +738,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -760,7 +760,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -790,7 +790,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -816,7 +816,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -986,7 +986,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
@@ -1039,7 +1039,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.1;
+				MARKETING_VERSION = 0.1.2;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
