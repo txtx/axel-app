@@ -37,8 +37,7 @@ struct WorkspaceContentView: View {
     @State private var selectedInboxEvent: InboxEvent?
     @State private var selectedMember: OrganizationMember?
     @State private var showCloseTerminalConfirmation = false
-    @State private var showWorkerPicker = false
-    @State private var pendingTask: WorkTask?
+    @State private var pendingTaskForPicker: WorkTask?
     @State private var floatingSession: TerminalSession?
     @State private var skillsColumnWidth: CGFloat = 280
     @State private var inboxColumnWidth: CGFloat = 280
@@ -58,13 +57,16 @@ struct WorkspaceContentView: View {
     /// - If no terminals exist, creates a new one and shows floating miniature
     private func startTerminal(for task: WorkTask? = nil) {
         let hasExistingSessions = !sessionManager.sessions(for: workspace.id).isEmpty
+        print("[WorkspaceContentView] startTerminal: task='\(task?.title ?? "nil")', hasExistingSessions=\(hasExistingSessions)")
 
         if task != nil && hasExistingSessions {
             // Terminals exist - show picker to let user choose or create new
-            pendingTask = task
-            showWorkerPicker = true
+            // Using sheet(item:) so setting the task triggers the sheet
+            pendingTaskForPicker = task
+            print("[WorkspaceContentView] → Set pendingTaskForPicker to trigger sheet")
         } else {
             // No terminals or no task - create new terminal
+            print("[WorkspaceContentView] → Creating new terminal")
             createNewTerminal(for: task)
         }
     }
@@ -72,6 +74,7 @@ struct WorkspaceContentView: View {
     /// Assign a task to an existing worker session
     /// If the worker is busy, the task is queued on that terminal
     private func assignTaskToWorker(_ task: WorkTask, worker: TerminalSession) {
+        print("[WorkspaceContentView] assignTaskToWorker: task='\(task.title)', worker.hasTask=\(worker.hasTask), worker.paneId=\(worker.paneId ?? "nil")")
         if worker.hasTask {
             // Terminal is busy - queue the task
             queueTaskOnWorker(task, worker: worker)
@@ -83,7 +86,12 @@ struct WorkspaceContentView: View {
 
     /// Queue a task to run after the current task on this worker completes
     private func queueTaskOnWorker(_ task: WorkTask, worker: TerminalSession) {
-        guard let paneId = worker.paneId else { return }
+        guard let paneId = worker.paneId else {
+            print("[WorkspaceContentView] ⚠️ queueTaskOnWorker FAILED: worker.paneId is nil for task '\(task.title)'")
+            return
+        }
+
+        print("[WorkspaceContentView] ✓ Queueing task '\(task.title)' on terminal \(paneId.prefix(8))...")
 
         // Update task status to .queued (assigned to a terminal's queue)
         task.updateStatus(.queued)
@@ -498,8 +506,7 @@ struct WorkspaceContentView: View {
             .modifier(WorkspaceSheetModifier(
                 workspace: workspace,
                 appState: appState,
-                showWorkerPicker: $showWorkerPicker,
-                pendingTask: $pendingTask,
+                pendingTaskForPicker: $pendingTaskForPicker,
                 onStartTerminal: startTerminal,
                 onAssignTask: assignTaskToWorker,
                 onCreateNewTerminal: createNewTerminal
@@ -756,8 +763,7 @@ private struct CloseTerminalConfirmationSheet: View {
 private struct WorkspaceSheetModifier: ViewModifier {
     let workspace: Workspace
     @Bindable var appState: AppState
-    @Binding var showWorkerPicker: Bool
-    @Binding var pendingTask: WorkTask?
+    @Binding var pendingTaskForPicker: WorkTask?
     let onStartTerminal: (WorkTask) -> Void
     let onAssignTask: (WorkTask, TerminalSession) -> Void
     let onCreateNewTerminal: (WorkTask) -> Void
@@ -769,16 +775,18 @@ private struct WorkspaceSheetModifier: ViewModifier {
                     onStartTerminal(task)
                 }
             }
-            .sheet(isPresented: $showWorkerPicker) {
+            .sheet(item: $pendingTaskForPicker) { task in
+                // Using sheet(item:) guarantees task is non-nil when sheet is presented
+                // This eliminates the race condition where pendingTask was nil
                 WorkerPickerPanel(workspaceId: workspace.id) { selectedWorker in
-                    if let task = pendingTask {
-                        if let worker = selectedWorker {
-                            onAssignTask(task, worker)
-                        } else {
-                            onCreateNewTerminal(task)
-                        }
+                    print("[WorkerPicker] Callback fired - task: \(task.title), selectedWorker: \(selectedWorker?.taskTitle ?? "nil (new agent)")")
+                    if let worker = selectedWorker {
+                        print("[WorkerPicker] → Assigning task '\(task.title)' to worker, hasTask: \(worker.hasTask), paneId: \(worker.paneId ?? "nil")")
+                        onAssignTask(task, worker)
+                    } else {
+                        print("[WorkerPicker] → Creating new terminal for task '\(task.title)'")
+                        onCreateNewTerminal(task)
                     }
-                    pendingTask = nil
                 }
             }
     }
@@ -956,6 +964,7 @@ struct WorkspaceToolbarHeader: View {
             Capsule()
                 .fill(Color(white: 0.08)) // Darker background
         )
+        .fixedSize()
     }
 }
 

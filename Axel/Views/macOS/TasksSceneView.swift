@@ -1213,12 +1213,7 @@ struct TaskRow: View {
                             size: checkboxSize,
                             isHovering: isStatusHovering,
                             onMarkComplete: {
-                                // If not selected, select first instead of completing
-                                if !isHighlighted {
-                                    onTap?([])
-                                } else {
-                                    onToggleComplete?()
-                                }
+                                onToggleComplete?()
                             }
                         )
                         .onHover { hovering in
@@ -1302,13 +1297,6 @@ struct TaskRow: View {
                     .padding(.vertical, 2)
                     .background(.orange.opacity(0.15))
                     .clipShape(Capsule())
-                }
-
-                // Subtle time indicator (only in compact)
-                if !isExpanded && !isRunning && !isCompleted {
-                    Text(task.createdAt, style: .relative)
-                        .font(.system(size: 11))
-                        .foregroundStyle(.quaternary)
                 }
             }
             .contextMenu {

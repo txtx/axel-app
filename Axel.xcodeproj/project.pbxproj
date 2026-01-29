@@ -44,7 +44,6 @@
 		A1000001201A0033 /* WorkspaceContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0033 /* WorkspaceContentView.swift */; };
 		A1000001201A0040 /* InboxEvent.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0040 /* InboxEvent.swift */; };
 		A1000001201A0041 /* InboxService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0041 /* InboxService.swift */; };
-		A1000001201A0200 /* TaskQueueService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0200 /* TaskQueueService.swift */; };
 		A1000001201A0042 /* InboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0042 /* InboxView.swift */; };
 		A1000001201A0043 /* TaskMetrics.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0043 /* TaskMetrics.swift */; };
 		A1000001201A0044 /* DiffView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0044 /* DiffView.swift */; };
@@ -77,6 +76,7 @@
 		A1000001201A0110 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0110 /* EmptyStateView.swift */; };
 		A1000001201A0111 /* TaskUndoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0111 /* TaskUndoManager.swift */; };
 		A1000001201A0112 /* TasksSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0112 /* TasksSceneView.swift */; };
+		A1000001201A0200 /* TaskQueueService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0200 /* TaskQueueService.swift */; };
 		A100000120A10030 /* TaskAssignee.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000110A10030 /* TaskAssignee.swift */; };
 		B81242E637B124591F5B7B93 /* SessionStatusService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C177CAE09A36E267719D856 /* SessionStatusService.swift */; };
 /* End PBXBuildFile section */
@@ -141,7 +141,6 @@
 		A1000001101A0033 /* WorkspaceContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceContentView.swift; sourceTree = "<group>"; };
 		A1000001101A0040 /* InboxEvent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxEvent.swift; sourceTree = "<group>"; };
 		A1000001101A0041 /* InboxService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxService.swift; sourceTree = "<group>"; };
-		A1000001101A0200 /* TaskQueueService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskQueueService.swift; sourceTree = "<group>"; };
 		A1000001101A0042 /* InboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxView.swift; sourceTree = "<group>"; };
 		A1000001101A0043 /* TaskMetrics.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskMetrics.swift; sourceTree = "<group>"; };
 		A1000001101A0044 /* DiffView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffView.swift; sourceTree = "<group>"; };
@@ -175,6 +174,7 @@
 		A1000001101A0110 /* EmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
 		A1000001101A0111 /* TaskUndoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskUndoManager.swift; sourceTree = "<group>"; };
 		A1000001101A0112 /* TasksSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksSceneView.swift; sourceTree = "<group>"; };
+		A1000001101A0200 /* TaskQueueService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskQueueService.swift; sourceTree = "<group>"; };
 		A100000110A10030 /* TaskAssignee.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskAssignee.swift; sourceTree = "<group>"; };
 		D28E5D714F17DA7A43A0182D /* CostTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CostTracker.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -725,6 +725,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.1;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
@@ -782,6 +783,7 @@
 				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 1.0.1;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
@@ -795,7 +797,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Axel/Axel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"Axel/Preview Content\"";
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				ENABLE_PREVIEWS = YES;
@@ -826,7 +828,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
@@ -847,7 +850,7 @@
 				ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME = AccentColor;
 				CODE_SIGN_ENTITLEMENTS = Axel/Axel.entitlements;
 				CODE_SIGN_STYLE = Automatic;
-				CURRENT_PROJECT_VERSION = 1;
+				CURRENT_PROJECT_VERSION = 2;
 				DEVELOPMENT_ASSET_PATHS = "\"Axel/Preview Content\"";
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				ENABLE_PREVIEWS = YES;
@@ -878,7 +881,8 @@
 					"$(inherited)",
 					"@executable_path/Frameworks",
 				);
-				MARKETING_VERSION = 1.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				MARKETING_VERSION = 1.0.1;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;

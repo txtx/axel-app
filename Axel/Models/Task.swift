@@ -189,25 +189,21 @@ final class WorkTask {
     /// Mark task as completed and sync to Automerge document
     @MainActor
     func markCompleted() {
-        self.status = TaskStatus.completed.rawValue
+        updateStatus(.completed)
         self.completedAt = Date()
-        self.updatedAt = Date()
         let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)
-        try? doc.updateTaskStatus(TaskStatus.completed.rawValue)
         try? doc.updateTaskCompletedAt(self.completedAt)
-        SyncScheduler.shared.scheduleSync()
+        // Note: updateStatus already schedules sync
     }
 
     /// Reopen task and sync to Automerge document
     @MainActor
     func reopen() {
-        self.status = TaskStatus.backlog.rawValue
+        updateStatus(.backlog)
         self.completedAt = nil
-        self.updatedAt = Date()
         let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)
-        try? doc.updateTaskStatus(TaskStatus.backlog.rawValue)
         try? doc.updateTaskCompletedAt(nil)
-        SyncScheduler.shared.scheduleSync()
+        // Note: updateStatus already schedules sync
     }
 
     // MARK: - Undo-Aware Updates

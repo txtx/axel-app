@@ -465,6 +465,10 @@ struct RunningListView: View {
                     }
                     .onAppear {
                         currentColumnCount = columnCount
+                        // Auto-select first session if none selected but sessions exist
+                        if selection == nil, let firstSession = allSessionsOrdered.first {
+                            selection = firstSession
+                        }
                     }
                 }
             }
@@ -1048,6 +1052,7 @@ struct TerminalGlassPill: View {
             .padding(.horizontal, 8)
         }
         .padding(.vertical, 6)
+        .frame(height: 32)
         .background(
             GlassPillBackground()
         )
