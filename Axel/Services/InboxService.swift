@@ -36,6 +36,10 @@ final class InboxService {
     /// Last PermissionRequest event ID per session (for auto-resolving)
     private var lastPermissionRequestPerSession: [String: UUID] = [:]
 
+    /// Token snapshot at time of permission request (paneId -> total tokens at request time)
+    /// Used to avoid auto-resolving based on stale OTEL data from before the request
+    private var permissionRequestTokenSnapshot: [String: Int] = [:]
+
     /// Connection state (true if at least one terminal is connected)
     var isConnected: Bool {
         !activeConnections.isEmpty
@@ -296,6 +300,7 @@ final class InboxService {
         resolvedEventIds.removeAll()
         lastStopEventPerSession.removeAll()
         lastPermissionRequestPerSession.removeAll()
+        permissionRequestTokenSnapshot.removeAll()
     }
 
     /// Mark an event as resolved (confirmed by user)
@@ -487,6 +492,10 @@ final class InboxService {
                 // Use claudeSessionId for metrics if available, otherwise paneId
                 let metricsId = event.event.claudeSessionId ?? paneId
                 let metrics = self.metrics(for: metricsId)
+
+                // Snapshot current token count to avoid auto-resolving based on stale OTEL data
+                permissionRequestTokenSnapshot[paneId] = metrics.inputTokens + metrics.outputTokens
+
                 metrics.recordPermissionRequest(
                     toolName: event.event.toolName ?? "Unknown",
                     filePath: event.event.toolInput?["file_path"]?.value as? String
@@ -521,7 +530,8 @@ final class InboxService {
                         resolvedEventIds.insert(existingEvent.id)
                     }
                 }
-                lastPermissionRequestPerSession.removeValue(forKey: sessionId)
+                lastPermissionRequestPerSession.removeValue(forKey: event.paneId)
+                permissionRequestTokenSnapshot.removeValue(forKey: event.paneId)
 
                 // Finalize task in CostTracker (use paneId)
                 CostTracker.shared.finalizeTask(forPaneId: event.paneId)
@@ -734,6 +744,25 @@ final class InboxService {
                 cacheCreationTokens: metrics.cacheCreationTokens,
                 costUSD: metrics.costUSD
             )
+
+            // Auto-resolve pending permission requests when we see NEW token activity
+            // (tokens beyond what was recorded when the permission request arrived).
+            // This handles the case where permission was granted directly in the terminal
+            // (e.g., on Sequoia where SSE permission events may not be received)
+            if let paneId = CostTracker.shared.paneId(forSessionId: sid),
+               let pendingEventId = lastPermissionRequestPerSession[paneId],
+               !resolvedEventIds.contains(pendingEventId) {
+                let currentTokens = metrics.inputTokens + metrics.outputTokens
+                let snapshotTokens = permissionRequestTokenSnapshot[paneId] ?? 0
+
+                // Only auto-resolve if we see token activity AFTER the permission request
+                if currentTokens > snapshotTokens {
+                    resolvedEventIds.insert(pendingEventId)
+                    lastPermissionRequestPerSession.removeValue(forKey: paneId)
+                    permissionRequestTokenSnapshot.removeValue(forKey: paneId)
+                    print("[InboxService] Auto-resolved permission request for pane \(paneId) due to new token activity (current: \(currentTokens), snapshot: \(snapshotTokens))")
+                }
+            }
         }
     }
 

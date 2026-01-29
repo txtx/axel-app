@@ -8,15 +8,61 @@ import AppKit
 // MARK: - Workspace Header (Xcode style)
 
 #if os(macOS)
+import Sparkle
+
 struct WorkspaceHeaderView: View {
     @Binding var showTerminal: Bool
     @Environment(\.terminalSessionManager) private var sessionManager
+    @State private var updateState = SparkleUpdateState.shared
 
     private let headerHeight: CGFloat = 35
 
     var body: some View {
-        OrbView()
-            .frame(height: headerHeight, alignment: .center)
+        HStack(spacing: 12) {
+            // Update pill (only shown when update available)
+            if updateState.updateAvailable {
+                UpdatePill(version: updateState.availableVersion) {
+                    SparkleUpdater.shared.checkForUpdates()
+                }
+            }
+
+            OrbView()
+        }
+        .frame(height: headerHeight, alignment: .center)
+    }
+}
+
+/// Pill showing available update with install action
+struct UpdatePill: View {
+    let version: String?
+    let onInstall: () -> Void
+
+    var body: some View {
+        Button(action: onInstall) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.system(size: 12))
+                    .foregroundStyle(.white)
+
+                if let version = version {
+                    Text("Update \(version)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white)
+                } else {
+                    Text("Update Available")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.white)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background(
+                Capsule()
+                    .fill(Color.blue)
+            )
+        }
+        .buttonStyle(.plain)
+        .help("Click to install update")
     }
 }
 
@@ -68,10 +114,13 @@ struct OrbView: View {
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 6)
+        .frame(height: 32)
         .background(
             Capsule()
                 .fill(Color.orange.opacity(0.1))
         )
+        .animation(nil, value: histogramValues)
+        .animation(nil, value: totalTokens)
     }
 
     private func formatTokenCount(_ count: Int) -> String {

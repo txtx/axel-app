@@ -8,6 +8,52 @@ import Sparkle
 
 // MARK: - Sparkle Updater (Shared)
 
+/// Observable state for tracking update availability
+@MainActor
+@Observable
+final class SparkleUpdateState {
+    static let shared = SparkleUpdateState()
+
+    /// Whether an update is available
+    var updateAvailable = false
+
+    /// Version string of the available update (e.g., "1.2.0")
+    var availableVersion: String?
+
+    private init() {}
+}
+
+/// Delegate that receives Sparkle update callbacks and updates the shared state
+final class SparkleUpdaterDelegate: NSObject, SPUUpdaterDelegate {
+    static let shared = SparkleUpdaterDelegate()
+
+    private override init() {
+        super.init()
+    }
+
+    func updater(_ updater: SPUUpdater, didFindValidUpdate item: SUAppcastItem) {
+        Task { @MainActor in
+            SparkleUpdateState.shared.updateAvailable = true
+            SparkleUpdateState.shared.availableVersion = item.displayVersionString
+        }
+    }
+
+    func updaterDidNotFindUpdate(_ updater: SPUUpdater) {
+        Task { @MainActor in
+            SparkleUpdateState.shared.updateAvailable = false
+            SparkleUpdateState.shared.availableVersion = nil
+        }
+    }
+
+    func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
+        Task { @MainActor in
+            // On error, don't show update pill
+            SparkleUpdateState.shared.updateAvailable = false
+            SparkleUpdateState.shared.availableVersion = nil
+        }
+    }
+}
+
 /// Shared Sparkle updater controller - initialized once at app launch
 final class SparkleUpdater {
     static let shared = SparkleUpdater()
@@ -17,13 +63,18 @@ final class SparkleUpdater {
     private init() {
         controller = SPUStandardUpdaterController(
             startingUpdater: true,
-            updaterDelegate: nil,
+            updaterDelegate: SparkleUpdaterDelegate.shared,
             userDriverDelegate: nil
         )
     }
 
     var updater: SPUUpdater {
         controller.updater
+    }
+
+    /// Trigger the update check/installation
+    func checkForUpdates() {
+        updater.checkForUpdates()
     }
 }
 
