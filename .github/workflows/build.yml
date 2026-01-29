@@ -118,6 +118,16 @@ jobs:
           mkdir -p dist
           cp -R "build/Build/Products/Release/${{ env.PRODUCT_NAME }}.app" dist/
 
+      - name: Ad-hoc sign app (when no certificate)
+        if: steps.check_release.outputs.should_release == 'true' && env.MACOS_CERTIFICATE == ''
+        env:
+          MACOS_CERTIFICATE: ${{ secrets.MACOS_CERTIFICATE }}
+        run: |
+          echo "No signing certificate provided, using ad-hoc signing..."
+          codesign --force --deep --sign - "dist/${{ env.PRODUCT_NAME }}.app"
+          echo "Ad-hoc signing complete"
+          codesign -vvv --deep --strict "dist/${{ env.PRODUCT_NAME }}.app" || true
+
       - name: Import signing certificate
         if: steps.check_release.outputs.should_release == 'true' && env.MACOS_CERTIFICATE != ''
         env:
@@ -157,7 +167,12 @@ jobs:
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
         run: |
           if [ -n "$SPARKLE_PRIVATE_KEY" ]; then
-            echo "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle_private_key
+            # Write key without trailing newline
+            printf '%s' "$SPARKLE_PRIVATE_KEY" > /tmp/sparkle_private_key
+
+            # Debug: show key length (not the key itself)
+            echo "Key length: $(wc -c < /tmp/sparkle_private_key) bytes"
+
             ./sparkle-tools/bin/generate_appcast \
               --ed-key-file /tmp/sparkle_private_key \
               --download-url-prefix "https://${{ env.S3_BUCKET }}.s3.amazonaws.com/releases/axel/" \
