@@ -4,6 +4,49 @@ import SwiftData
 #if os(macOS)
 import AppKit
 
+// MARK: - Terminal Session Managing Protocol
+
+/// Protocol for terminal session management, enabling dependency injection and testing
+@MainActor
+protocol TerminalSessionManaging: AnyObject {
+    /// All active sessions
+    var sessions: [TerminalSession] { get }
+
+    /// Start a new session for a task or standalone terminal
+    func startSession(
+        for task: WorkTask?,
+        paneId: String?,
+        command: String?,
+        workingDirectory: String?,
+        workspaceId: UUID,
+        worktreeBranch: String?
+    ) -> TerminalSession
+
+    /// Get or create a session for a pane ID
+    func session(forPaneId paneId: String, workingDirectory: String?, workspaceId: UUID) -> TerminalSession
+
+    /// Get all sessions for a workspace
+    func sessions(for workspaceId: UUID) -> [TerminalSession]
+
+    /// Find a session by task
+    func session(for task: WorkTask) -> TerminalSession?
+
+    /// Stop a session by task
+    func stopSession(for task: WorkTask)
+
+    /// Stop a session directly
+    func stopSession(_ session: TerminalSession)
+
+    /// Stop a session by pane ID
+    func stopSession(forPaneId paneId: String)
+
+    /// Count of running sessions in a workspace
+    func runningCount(for workspaceId: UUID) -> Int
+
+    /// Whether there are any running sessions
+    var hasRunningSessions: Bool { get }
+}
+
 // MARK: - Terminal Session Manager Environment Key
 
 private struct TerminalSessionManagerKey: EnvironmentKey {
@@ -21,15 +64,21 @@ extension EnvironmentValues {
 
 @MainActor
 @Observable
-final class TerminalSessionManager {
+final class TerminalSessionManager: TerminalSessionManaging {
     static let shared = TerminalSessionManager()
 
     var sessions: [TerminalSession] = []
 
+    /// Internal initializer for singleton
     private init() {}
 
+    /// Initializer for testing with pre-populated sessions
+    init(sessions: [TerminalSession]) {
+        self.sessions = sessions
+    }
+
     /// Start a session for a task (or standalone with paneId), scoped to a workspace
-    func startSession(for task: WorkTask?, paneId: String? = nil, command: String? = nil, workingDirectory: String? = nil, workspaceId: UUID) -> TerminalSession {
+    func startSession(for task: WorkTask?, paneId: String? = nil, command: String? = nil, workingDirectory: String? = nil, workspaceId: UUID, worktreeBranch: String? = nil) -> TerminalSession {
         // Check if session already exists for this task
         if let task = task,
            let existing = sessions.first(where: { $0.taskId == task.persistentModelID }) {
@@ -42,7 +91,7 @@ final class TerminalSessionManager {
             return existing
         }
 
-        let session = TerminalSession(task: task, paneId: paneId, command: command, workingDirectory: workingDirectory, workspaceId: workspaceId)
+        let session = TerminalSession(task: task, paneId: paneId, command: command, workingDirectory: workingDirectory, workspaceId: workspaceId, worktreeBranch: worktreeBranch)
         sessions.append(session)
         return session
     }
@@ -65,6 +114,13 @@ final class TerminalSessionManager {
     /// Get running count for a specific workspace
     func runningCount(for workspaceId: UUID) -> Int {
         sessions(for: workspaceId).count
+    }
+
+    /// Group sessions by worktree branch for a specific workspace
+    /// Returns a dictionary where keys are worktree names ("main" for nil) and values are session arrays
+    func sessionsByWorktree(for workspaceId: UUID) -> [String: [TerminalSession]] {
+        let workspaceSessions = sessions(for: workspaceId)
+        return Dictionary(grouping: workspaceSessions) { $0.worktreeDisplayName }
     }
 
     func stopSession(for task: WorkTask) {
@@ -125,6 +181,15 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
     var isReady: Bool = false  // Terminal is ready to be displayed
     let initialCommand: String?
 
+    /// Git worktree branch this session is operating in.
+    /// nil means the session is in the main workspace (no worktree).
+    var worktreeBranch: String?
+
+    /// Display name for the worktree (returns "main" if no worktree)
+    var worktreeDisplayName: String {
+        worktreeBranch ?? "main"
+    }
+
     /// History of recent task titles (most recent first, max 3)
     /// Note: This is local-only, not synced to remote
     var taskHistory: [String] = []
@@ -152,10 +217,11 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
         SessionStatusService.shared.status(forPaneId: paneId, hasTask: hasTask)
     }
 
-    init(task: WorkTask?, paneId: String? = nil, command: String? = nil, workingDirectory: String? = nil, workspaceId: UUID) {
+    init(task: WorkTask?, paneId: String? = nil, command: String? = nil, workingDirectory: String? = nil, workspaceId: UUID, worktreeBranch: String? = nil) {
         self.paneId = paneId
         self.taskId = task?.persistentModelID
         self.workspaceId = workspaceId
+        self.worktreeBranch = worktreeBranch
         self.taskTitle = task?.title ?? "Terminal"
         self.startedAt = Date()
         self.initialCommand = command
@@ -704,6 +770,21 @@ struct TerminalMiniatureView: View {
                     .lineLimit(1)
 
                 Spacer()
+
+                // Worktree badge - only show if in a worktree (not main)
+                if session.worktreeBranch != nil {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.caption2)
+                        Text(session.worktreeDisplayName)
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(.purple)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(Color.purple.opacity(0.15))
+                    .clipShape(Capsule())
+                }
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 8)
@@ -1269,33 +1350,71 @@ struct TokenHistogramOverlay: View {
 #if os(macOS)
 // MARK: - Worker Picker Panel
 // ============================================================================
-// Panel for selecting an available agent when running a task.
-// Uses SessionStatusService for consistent status display.
+// Two-pane panel for selecting an agent when running a task.
+// Left pane: "New session" + all existing sessions
+// Right pane: Worktree selection (if new) or session details (if session selected)
 // ============================================================================
+
+/// Selection state for the left pane
+enum SessionPickerSelection: Equatable {
+    case newSession
+    case existingSession(TerminalSession)
+
+    static func == (lhs: SessionPickerSelection, rhs: SessionPickerSelection) -> Bool {
+        switch (lhs, rhs) {
+        case (.newSession, .newSession):
+            return true
+        case let (.existingSession(l), .existingSession(r)):
+            return l.id == r.id
+        default:
+            return false
+        }
+    }
+}
 
 /// Panel for selecting an available agent when running a task
 struct WorkerPickerPanel: View {
     let workspaceId: UUID?
+    let workspacePath: String?
     let onSelect: (TerminalSession?) -> Void  // nil = create new agent
+    let onCreateWorktreeAgent: ((String) -> Void)?  // Branch name for worktree agent
     @Environment(\.dismiss) private var dismiss
     @Environment(\.terminalSessionManager) private var sessionManager
-    @State private var selectedIndex: Int = 0  // 0 to workers.count (last index = "New Agent")
+    @State private var selection: SessionPickerSelection = .newSession
+    @State private var newWorktreeBranch: String = ""
+    @State private var availableWorktrees: [WorktreeInfo] = []
+    @State private var selectedWorktreeIndex: Int = 0  // 0 = main, then existing worktrees
     @FocusState private var isFocused: Bool
+    @FocusState private var isWorktreeFieldFocused: Bool
 
     // Use centralized status service
     private let statusService = SessionStatusService.shared
 
-    /// Sessions for this workspace (or all sessions if workspaceId is nil) - observed reactively
-    private var workers: [TerminalSession] {
-        if let workspaceId {
-            return sessionManager.sessions(for: workspaceId)
-        } else {
-            return sessionManager.sessions
-        }
+    /// All sessions for this workspace (sorted by start time, newest first)
+    private var allSessions: [TerminalSession] {
+        guard let workspaceId else { return [] }
+        return sessionManager.sessions(for: workspaceId).sorted { $0.startedAt > $1.startedAt }
     }
 
-    /// Total number of selectable items (workers + "New Agent" option)
-    private var itemCount: Int { workers.count + 1 }
+    /// Total sessions count
+    private var totalSessionsCount: Int {
+        allSessions.count
+    }
+
+    init(workspaceId: UUID?, workspacePath: String? = nil, onSelect: @escaping (TerminalSession?) -> Void, onCreateWorktreeAgent: ((String) -> Void)? = nil) {
+        self.workspaceId = workspaceId
+        self.workspacePath = workspacePath
+        self.onSelect = onSelect
+        self.onCreateWorktreeAgent = onCreateWorktreeAgent
+    }
+
+    // Backwards compatibility initializer
+    init(workspaceId: UUID?, onSelect: @escaping (TerminalSession?) -> Void) {
+        self.workspaceId = workspaceId
+        self.workspacePath = nil
+        self.onSelect = onSelect
+        self.onCreateWorktreeAgent = nil
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1318,86 +1437,40 @@ struct WorkerPickerPanel: View {
 
             Divider()
 
-            // Available workers
-            ScrollView {
-                VStack(spacing: 8) {
-                    ForEach(Array(workers.enumerated()), id: \.element.id) { index, worker in
-                        Button {
-                            onSelect(worker)
-                            dismiss()
-                        } label: {
-                            // Use session.status from SessionStatusService
-                            WorkerPickerRow(
-                                session: worker,
-                                status: worker.status,
-                                isSelected: selectedIndex == index
-                            )
-                        }
-                        .buttonStyle(.plain)
-                    }
-                }
-                .padding(12)
+            // Two-pane layout
+            HStack(spacing: 0) {
+                // Left pane: New session + all sessions
+                sessionListPane
+                    .frame(width: 200)
+
+                Divider()
+
+                // Right pane: Details based on selection
+                detailPane
+                    .frame(maxWidth: .infinity)
             }
-            .frame(maxHeight: 320)
-
-            Divider()
-
-            // New agent button
-            Button {
-                onSelect(nil)
-                dismiss()
-            } label: {
-                HStack(spacing: 12) {
-                    ZStack {
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(Color.green.opacity(0.15))
-                            .frame(width: 60, height: 40)
-                        Image(systemName: "plus")
-                            .font(.title3.weight(.semibold))
-                            .foregroundStyle(.green)
-                    }
-
-                    VStack(alignment: .leading, spacing: 2) {
-                        Text("New Agent")
-                            .font(.body.weight(.medium))
-                        Text("Start a fresh terminal")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-
-                    Spacer()
-                }
-                .padding(10)
-                .background(
-                    RoundedRectangle(cornerRadius: 8)
-                        .fill(selectedIndex == workers.count ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(selectedIndex == workers.count ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: selectedIndex == workers.count ? 2 : 1)
-                )
-            }
-            .buttonStyle(.plain)
-            .padding(12)
+            .frame(height: 360)
         }
-        .frame(width: 360)
+        .frame(width: 600)
         .background(.background)
         .focusable()
         .focused($isFocused)
         .focusEffectDisabled()
         .onAppear {
             isFocused = true
+            // Load available worktrees
+            if let path = workspacePath {
+                Task {
+                    availableWorktrees = await WorktreeService.shared.listWorktrees(in: path)
+                }
+            }
         }
         .onKeyPress(.upArrow) {
-            if selectedIndex > 0 {
-                selectedIndex -= 1
-            }
+            navigateUp()
             return .handled
         }
         .onKeyPress(.downArrow) {
-            if selectedIndex < itemCount - 1 {
-                selectedIndex += 1
-            }
+            navigateDown()
             return .handled
         }
         .onKeyPress(.return) {
@@ -1410,12 +1483,518 @@ struct WorkerPickerPanel: View {
         }
     }
 
-    private func confirmSelection() {
-        if selectedIndex < workers.count {
-            onSelect(workers[selectedIndex])
-        } else {
-            onSelect(nil)
+    // MARK: - Left Pane: Session List
+
+    private var sessionListPane: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Sessions")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+            ScrollView {
+                VStack(spacing: 2) {
+                    // New session option
+                    newSessionRow
+
+                    if !allSessions.isEmpty {
+                        Divider()
+                            .padding(.vertical, 6)
+                            .padding(.horizontal, 8)
+                    }
+
+                    // All existing sessions
+                    ForEach(allSessions) { session in
+                        sessionRow(for: session)
+                    }
+                }
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+            }
         }
+        .background(Color.primary.opacity(0.03))
+    }
+
+    private var newSessionRow: some View {
+        let isSelected = selection == .newSession
+
+        return Button {
+            selection = .newSession
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: "plus.circle.fill")
+                    .font(.body)
+                    .foregroundStyle(isSelected ? Color.white : Color.green)
+
+                Text("New session")
+                    .font(.body.weight(.medium))
+                    .lineLimit(1)
+
+                Spacer()
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.accentColor : Color.clear)
+            )
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private func sessionRow(for session: TerminalSession) -> some View {
+        let isSelected = selection == .existingSession(session)
+        let status = session.status
+
+        Button {
+            selection = .existingSession(session)
+        } label: {
+            HStack(spacing: 8) {
+                // Status indicator
+                Circle()
+                    .fill(status.color)
+                    .frame(width: 8, height: 8)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    // Session name / current task
+                    Text(session.taskTitle)
+                        .font(.body)
+                        .lineLimit(1)
+
+                    // Worktree badge
+                    HStack(spacing: 4) {
+                        Image(systemName: session.worktreeBranch == nil ? "folder" : "arrow.triangle.branch")
+                            .font(.system(size: 9))
+                        Text(session.worktreeDisplayName)
+                            .font(.caption2)
+                    }
+                    .foregroundStyle(isSelected ? Color.white.opacity(0.7) : Color.secondary)
+                }
+
+                Spacer()
+
+                // Queue count if any
+                if session.queueCount > 0 {
+                    Text("\(session.queueCount)")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(isSelected ? Color.white.opacity(0.8) : Color.orange)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(
+                            Capsule()
+                                .fill(isSelected ? Color.white.opacity(0.2) : Color.orange.opacity(0.15))
+                        )
+                }
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(isSelected ? Color.accentColor : Color.clear)
+            )
+            .foregroundStyle(isSelected ? Color.white : Color.primary)
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Right Pane: Detail View
+
+    private var detailPane: some View {
+        VStack(spacing: 0) {
+            switch selection {
+            case .newSession:
+                newSessionDetailPane
+            case .existingSession(let session):
+                sessionDetailPane(for: session)
+            }
+        }
+    }
+
+    // MARK: - New Session Detail Pane
+
+    private var newSessionDetailPane: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header
+            HStack {
+                Image(systemName: "plus.circle.fill")
+                    .font(.caption)
+                    .foregroundStyle(.green)
+                Text("New Session")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Worktree selection
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Select worktree")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+
+                        // Main worktree option
+                        worktreeOption(name: "main", isMain: true, index: 0)
+
+                        // Existing worktrees
+                        ForEach(Array(availableWorktrees.filter { !$0.isMain }.enumerated()), id: \.element.id) { index, worktree in
+                            worktreeOption(name: worktree.displayName, isMain: false, index: index + 1)
+                        }
+                    }
+
+                    Divider()
+
+                    // Create new worktree
+                    if onCreateWorktreeAgent != nil {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Or create new worktree")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+
+                            HStack {
+                                Image(systemName: "arrow.triangle.branch")
+                                    .font(.body)
+                                    .foregroundStyle(.purple)
+                                    .frame(width: 24)
+
+                                TextField("Branch name (e.g., feat-auth)", text: $newWorktreeBranch)
+                                    .textFieldStyle(.plain)
+                                    .font(.body)
+                                    .focused($isWorktreeFieldFocused)
+                                    .onSubmit {
+                                        if !newWorktreeBranch.isEmpty {
+                                            createWorktreeAgent()
+                                        }
+                                    }
+                            }
+                            .padding(10)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.primary.opacity(0.05))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(Color.purple.opacity(0.3), lineWidth: 1)
+                            )
+                        }
+                    }
+                }
+                .padding(16)
+            }
+
+            Divider()
+
+            // Action button
+            HStack {
+                Spacer()
+                Button {
+                    if !newWorktreeBranch.isEmpty {
+                        createWorktreeAgent()
+                    } else if selectedWorktreeIndex == 0 {
+                        // Main worktree - create new session
+                        onSelect(nil)
+                        dismiss()
+                    } else {
+                        // Existing worktree - create worktree agent
+                        let worktrees = availableWorktrees.filter { !$0.isMain }
+                        if selectedWorktreeIndex - 1 < worktrees.count {
+                            onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName)
+                            dismiss()
+                        }
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: "play.fill")
+                            .font(.caption)
+                        Text(newWorktreeBranch.isEmpty ? "Create Session" : "Create Worktree")
+                            .font(.body.weight(.medium))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(Color.green)
+                    )
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(12)
+        }
+    }
+
+    @ViewBuilder
+    private func worktreeOption(name: String, isMain: Bool, index: Int) -> some View {
+        let isSelected = selectedWorktreeIndex == index && newWorktreeBranch.isEmpty
+
+        Button {
+            selectedWorktreeIndex = index
+            newWorktreeBranch = ""
+        } label: {
+            HStack(spacing: 8) {
+                Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
+                    .font(.body)
+                    .foregroundStyle(isSelected ? .green : .secondary)
+
+                Image(systemName: isMain ? "folder.fill" : "arrow.triangle.branch")
+                    .font(.caption)
+                    .foregroundStyle(isMain ? .orange : .purple)
+
+                Text(name)
+                    .font(.body)
+
+                Spacer()
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.green.opacity(0.1) : Color.primary.opacity(0.03))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(isSelected ? Color.green.opacity(0.3) : Color.clear, lineWidth: 1)
+            )
+        }
+        .buttonStyle(.plain)
+    }
+
+    // MARK: - Existing Session Detail Pane
+
+    private func sessionDetailPane(for session: TerminalSession) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Header with session info
+            HStack {
+                Circle()
+                    .fill(session.status.color)
+                    .frame(width: 8, height: 8)
+                Text(session.taskTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                Spacer()
+                Text(session.status.label)
+                    .font(.caption)
+                    .foregroundStyle(session.status.color)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    // Session info
+                    VStack(alignment: .leading, spacing: 12) {
+                        // Worktree
+                        HStack(spacing: 8) {
+                            Image(systemName: session.worktreeBranch == nil ? "folder.fill" : "arrow.triangle.branch")
+                                .font(.caption)
+                                .foregroundStyle(session.worktreeBranch == nil ? .orange : .purple)
+                                .frame(width: 20)
+                            Text("Worktree:")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text(session.worktreeDisplayName)
+                                .font(.subheadline.weight(.medium))
+                        }
+
+                        // Started at
+                        HStack(spacing: 8) {
+                            Image(systemName: "clock")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .frame(width: 20)
+                            Text("Running:")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
+                            Text(session.startedAt, style: .relative)
+                                .font(.subheadline)
+                        }
+
+                        // Queue count
+                        if session.queueCount > 0 {
+                            HStack(spacing: 8) {
+                                Image(systemName: "list.bullet")
+                                    .font(.caption)
+                                    .foregroundStyle(.orange)
+                                    .frame(width: 20)
+                                Text("Queued:")
+                                    .font(.subheadline)
+                                    .foregroundStyle(.secondary)
+                                Text("\(session.queueCount) task\(session.queueCount == 1 ? "" : "s")")
+                                    .font(.subheadline.weight(.medium))
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                    }
+
+                    // Current task (if running)
+                    if session.hasTask {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Current Task")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+
+                            HStack(spacing: 8) {
+                                Image(systemName: "play.circle.fill")
+                                    .font(.body)
+                                    .foregroundStyle(.green)
+                                Text(session.taskTitle)
+                                    .font(.body)
+                                    .lineLimit(2)
+                            }
+                            .padding(12)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.green.opacity(0.1))
+                            )
+                        }
+                    }
+
+                    // Task history
+                    if !session.taskHistory.isEmpty {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Recent Tasks")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+
+                            VStack(spacing: 6) {
+                                ForEach(session.taskHistory.prefix(3), id: \.self) { taskTitle in
+                                    HStack(spacing: 8) {
+                                        Image(systemName: "checkmark.circle")
+                                            .font(.caption)
+                                            .foregroundStyle(.green)
+                                        Text(taskTitle)
+                                            .font(.subheadline)
+                                            .lineLimit(1)
+                                            .foregroundStyle(.secondary)
+                                        Spacer()
+                                    }
+                                }
+                            }
+                            .padding(12)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.primary.opacity(0.03))
+                            )
+                        }
+                    }
+
+                    // Thumbnail preview
+                    if let thumbnail = session.currentThumbnail {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text("Preview")
+                                .font(.subheadline.weight(.medium))
+                                .foregroundStyle(.secondary)
+
+                            Image(nsImage: thumbnail)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
+                                )
+                        }
+                    }
+                }
+                .padding(16)
+            }
+
+            Divider()
+
+            // Action button
+            HStack {
+                Spacer()
+                Button {
+                    onSelect(session)
+                    dismiss()
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: session.hasTask ? "plus.circle" : "play.fill")
+                            .font(.caption)
+                        Text(session.hasTask ? "Add to Queue" : "Run")
+                            .font(.body.weight(.medium))
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    .background(
+                        RoundedRectangle(cornerRadius: 8)
+                            .fill(session.hasTask ? Color.orange : Color.green)
+                    )
+                    .foregroundStyle(.white)
+                }
+                .buttonStyle(.plain)
+            }
+            .padding(12)
+        }
+    }
+
+    // MARK: - Navigation
+
+    private func navigateUp() {
+        switch selection {
+        case .newSession:
+            // Already at top
+            break
+        case .existingSession(let session):
+            if let index = allSessions.firstIndex(where: { $0.id == session.id }) {
+                if index == 0 {
+                    selection = .newSession
+                } else {
+                    selection = .existingSession(allSessions[index - 1])
+                }
+            }
+        }
+    }
+
+    private func navigateDown() {
+        switch selection {
+        case .newSession:
+            if let first = allSessions.first {
+                selection = .existingSession(first)
+            }
+        case .existingSession(let session):
+            if let index = allSessions.firstIndex(where: { $0.id == session.id }),
+               index < allSessions.count - 1 {
+                selection = .existingSession(allSessions[index + 1])
+            }
+        }
+    }
+
+    private func confirmSelection() {
+        switch selection {
+        case .newSession:
+            if !newWorktreeBranch.isEmpty {
+                createWorktreeAgent()
+            } else if selectedWorktreeIndex == 0 {
+                onSelect(nil)
+                dismiss()
+            } else {
+                let worktrees = availableWorktrees.filter { !$0.isMain }
+                if selectedWorktreeIndex - 1 < worktrees.count {
+                    onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName)
+                    dismiss()
+                }
+            }
+        case .existingSession(let session):
+            onSelect(session)
+            dismiss()
+        }
+    }
+
+    private func createWorktreeAgent() {
+        let branch = newWorktreeBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !branch.isEmpty else { return }
+        onCreateWorktreeAgent?(branch)
         dismiss()
     }
 }

@@ -149,8 +149,11 @@ struct WorkspaceContentView: View {
     /// Consume the next queued task on a terminal after current task completes
     /// Called when we receive a taskCompletedOnTerminal notification
     private func consumeNextQueuedTask(forPaneId paneId: String) {
+        print("[WorkspaceContentView] consumeNextQueuedTask: paneId=\(paneId)")
+
         // Find the session for this pane
         guard let session = sessionManager.sessions.first(where: { $0.paneId == paneId }) else {
+            print("[WorkspaceContentView] consumeNextQueuedTask: no session found for paneId")
             return
         }
 
@@ -160,12 +163,17 @@ struct WorkspaceContentView: View {
            let currentTask = modelContext.model(for: currentTaskId) as? WorkTask,
            currentTask.taskStatus == .running {
             // Session is already running a task - this is a duplicate notification
+            print("[WorkspaceContentView] consumeNextQueuedTask: idempotency guard - task still running")
             return
         }
 
         // Pop the next task from the queue (via TaskQueueService)
+        let queueCount = TaskQueueService.shared.queueCount(forTerminal: paneId)
+        print("[WorkspaceContentView] consumeNextQueuedTask: queue count before dequeue = \(queueCount)")
+
         guard let nextTaskId = TaskQueueService.shared.dequeue(fromTerminal: paneId) else {
             // No more tasks in queue - clear the current task reference
+            print("[WorkspaceContentView] consumeNextQueuedTask: no more tasks in queue, clearing session")
             session.taskId = nil
             session.taskTitle = "Terminal"
 
@@ -175,6 +183,7 @@ struct WorkspaceContentView: View {
             }
             return
         }
+        print("[WorkspaceContentView] consumeNextQueuedTask: dequeued taskId=\(nextTaskId)")
 
         // Find the task by ID
         let taskDescriptor = FetchDescriptor<WorkTask>(predicate: #Predicate { $0.id == nextTaskId })
@@ -189,7 +198,10 @@ struct WorkspaceContentView: View {
     }
 
     /// Create a new terminal session, optionally showing floating miniature
-    private func createNewTerminal(for task: WorkTask? = nil) {
+    /// - Parameters:
+    ///   - task: Optional task to run on the new terminal
+    ///   - worktreeBranch: Optional git worktree branch to use (nil = main workspace)
+    private func createNewTerminal(for task: WorkTask? = nil, worktreeBranch: String? = nil) {
         // Update task status if provided
         task?.updateStatus(.running)
 
@@ -204,6 +216,7 @@ struct WorkspaceContentView: View {
         terminal.paneId = paneId
         terminal.serverPort = port
         terminal.task = task
+        terminal.worktreeBranch = worktreeBranch
         terminal.workspace = workspace
         terminal.status = TerminalStatus.running.rawValue
         modelContext.insert(terminal)
@@ -216,6 +229,12 @@ struct WorkspaceContentView: View {
 
         // Build command with pane-id and port
         var command = "\(initPrefix)axel claude --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
+
+        // Add worktree flag if specified (axel-cli will create worktree if needed)
+        if let branch = worktreeBranch {
+            command += " -w \(branch.shellEscaped)"
+        }
+
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
@@ -232,7 +251,8 @@ struct WorkspaceContentView: View {
             paneId: paneId,
             command: command,
             workingDirectory: workspace.path,
-            workspaceId: workspace.id
+            workspaceId: workspace.id,
+            worktreeBranch: worktreeBranch
         )
 
         // Show floating miniature or navigate to Agents menu
@@ -509,7 +529,8 @@ struct WorkspaceContentView: View {
                 pendingTaskForPicker: $pendingTaskForPicker,
                 onStartTerminal: startTerminal,
                 onAssignTask: assignTaskToWorker,
-                onCreateNewTerminal: createNewTerminal
+                onCreateNewTerminal: { task in createNewTerminal(for: task) },
+                onCreateWorktreeTerminal: { task, branch in createNewTerminal(for: task, worktreeBranch: branch) }
             ))
             .overlay(alignment: .bottomTrailing) { floatingTerminalOverlay }
             .modifier(WorkspaceLifecycleModifier(
@@ -530,6 +551,8 @@ struct WorkspaceContentView: View {
             .modifier(WorkspaceNotificationModifier(
                 sidebarSelection: $sidebarSelection,
                 workspace: workspace,
+                sessionManager: sessionManager,
+                modelContext: modelContext,
                 onConsumeNextTask: consumeNextQueuedTask
             ))
     }
@@ -766,7 +789,8 @@ private struct WorkspaceSheetModifier: ViewModifier {
     @Binding var pendingTaskForPicker: WorkTask?
     let onStartTerminal: (WorkTask) -> Void
     let onAssignTask: (WorkTask, TerminalSession) -> Void
-    let onCreateNewTerminal: (WorkTask) -> Void
+    let onCreateNewTerminal: (WorkTask?) -> Void
+    let onCreateWorktreeTerminal: (WorkTask?, String) -> Void
 
     func body(content: Content) -> some View {
         content
@@ -778,16 +802,24 @@ private struct WorkspaceSheetModifier: ViewModifier {
             .sheet(item: $pendingTaskForPicker) { task in
                 // Using sheet(item:) guarantees task is non-nil when sheet is presented
                 // This eliminates the race condition where pendingTask was nil
-                WorkerPickerPanel(workspaceId: workspace.id) { selectedWorker in
-                    print("[WorkerPicker] Callback fired - task: \(task.title), selectedWorker: \(selectedWorker?.taskTitle ?? "nil (new agent)")")
-                    if let worker = selectedWorker {
-                        print("[WorkerPicker] → Assigning task '\(task.title)' to worker, hasTask: \(worker.hasTask), paneId: \(worker.paneId ?? "nil")")
-                        onAssignTask(task, worker)
-                    } else {
-                        print("[WorkerPicker] → Creating new terminal for task '\(task.title)'")
-                        onCreateNewTerminal(task)
+                WorkerPickerPanel(
+                    workspaceId: workspace.id,
+                    workspacePath: workspace.path,
+                    onSelect: { selectedWorker in
+                        print("[WorkerPicker] Callback fired - task: \(task.title), selectedWorker: \(selectedWorker?.taskTitle ?? "nil (new agent)")")
+                        if let worker = selectedWorker {
+                            print("[WorkerPicker] → Assigning task '\(task.title)' to worker, hasTask: \(worker.hasTask), paneId: \(worker.paneId ?? "nil")")
+                            onAssignTask(task, worker)
+                        } else {
+                            print("[WorkerPicker] → Creating new terminal for task '\(task.title)'")
+                            onCreateNewTerminal(task)
+                        }
+                    },
+                    onCreateWorktreeAgent: { branch in
+                        print("[WorkerPicker] → Creating worktree terminal for task '\(task.title)' on branch '\(branch)'")
+                        onCreateWorktreeTerminal(task, branch)
                     }
-                }
+                )
             }
     }
 }
@@ -862,6 +894,8 @@ private struct WorkspaceFocusedValuesModifier: ViewModifier {
 private struct WorkspaceNotificationModifier: ViewModifier {
     @Binding var sidebarSelection: SidebarSection?
     let workspace: Workspace
+    let sessionManager: TerminalSessionManager
+    let modelContext: ModelContext
     let onConsumeNextTask: (String) -> Void
 
     func body(content: Content) -> some View {
@@ -886,10 +920,35 @@ private struct WorkspaceNotificationModifier: ViewModifier {
             }
             .onReceive(NotificationCenter.default.publisher(for: .taskNoLongerRunning)) { notification in
                 // When a task's status changes from running (via Tasks scene), find terminal and cleanup
-                guard let taskId = notification.userInfo?["taskId"] as? UUID,
-                      let terminal = workspace.terminals.first(where: { $0.task?.id == taskId }),
-                      let paneId = terminal.paneId else { return }
-                onConsumeNextTask(paneId)
+                guard let taskId = notification.userInfo?["taskId"] as? UUID else {
+                    print("[WorkspaceNotificationModifier] .taskNoLongerRunning: no taskId in notification")
+                    return
+                }
+
+                print("[WorkspaceNotificationModifier] .taskNoLongerRunning: taskId=\(taskId), workspace=\(workspace.name), terminals=\(workspace.terminals.count)")
+
+                // Try to find paneId via Terminal model first
+                if let terminal = workspace.terminals.first(where: { $0.task?.id == taskId }),
+                   let paneId = terminal.paneId {
+                    print("[WorkspaceNotificationModifier] .taskNoLongerRunning: found via Terminal model, paneId=\(paneId)")
+                    onConsumeNextTask(paneId)
+                    return
+                }
+
+                // Fallback: Try to find paneId via TerminalSession
+                // The session tracks taskId as PersistentIdentifier, so we need to fetch the task first
+                let taskDescriptor = FetchDescriptor<WorkTask>(predicate: #Predicate { $0.id == taskId })
+                if let task = try? modelContext.fetch(taskDescriptor).first {
+                    let persistentId = task.persistentModelID
+                    if let session = sessionManager.sessions(for: workspace.id).first(where: { $0.taskId == persistentId }),
+                       let paneId = session.paneId {
+                        print("[WorkspaceNotificationModifier] .taskNoLongerRunning: found via TerminalSession fallback, paneId=\(paneId)")
+                        onConsumeNextTask(paneId)
+                        return
+                    }
+                }
+
+                print("[WorkspaceNotificationModifier] .taskNoLongerRunning: no terminal/session found for task \(taskId)")
             }
     }
 }

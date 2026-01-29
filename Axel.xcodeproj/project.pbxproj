@@ -8,6 +8,11 @@
 
 /* Begin PBXBuildFile section */
 		0C9C9A37C0FF97B7DA4B0AA1 /* CostTracker.swift in Sources */ = {isa = PBXBuildFile; fileRef = D28E5D714F17DA7A43A0182D /* CostTracker.swift */; };
+		18772BF65693156AC43F75D2 /* TaskAssignmentCoordinator.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0178D0EB98540F719EB6D5CE /* TaskAssignmentCoordinator.swift */; };
+		1A7D6291EFA4D08B52E90928 /* WorktreeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6238124A78A2C3A74FCFEDBB /* WorktreeService.swift */; };
+		224F4D7EECEE1287AF701CE6 /* TaskAssignmentCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE485CA04822282FDD056DFB /* TaskAssignmentCoordinatorTests.swift */; };
+		3724AAF9F7B57FC2766507ED /* SyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE366A3151FDDA78680EDF0C /* SyncEngineTests.swift */; };
+		39E9C6A3C0CAA85B4B8993D8 /* Axel.app in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000001001A0001 /* Axel.app */; };
 		43AB9E872F2AB9D2002A7A32 /* Axel.icon in Resources */ = {isa = PBXBuildFile; fileRef = 43AB9E862F2AB9D2002A7A32 /* Axel.icon */; };
 		43BD82722F1D63F40092A96C /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82712F1D63F40092A96C /* Supabase */; };
 		43BD82732F1D63F40092A96C /* AutomergeWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82742F1D63F40092A96C /* AutomergeWrapper */; };
@@ -78,11 +83,21 @@
 		A1000001201A0112 /* TasksSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0112 /* TasksSceneView.swift */; };
 		A1000001201A0200 /* TaskQueueService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0200 /* TaskQueueService.swift */; };
 		A100000120A10030 /* TaskAssignee.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000110A10030 /* TaskAssignee.swift */; };
+		AE133ED0512C6A98BDE08952 /* AutomergeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04E9C8657F1187F40A1EC1DB /* AutomergeModelTests.swift */; };
 		B81242E637B124591F5B7B93 /* SessionStatusService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C177CAE09A36E267719D856 /* SessionStatusService.swift */; };
+		BAF581097CA2F8F7B7EBBCB1 /* SyncIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */; };
+		E435BED8E7D96547E09E1C1C /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 23797E4E4415996BCCFE8E45 /* Cocoa.framework */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		43E774782F298D900093DEC6 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = A1000001701A0001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = A1000001501A0001;
+			remoteInfo = Axel;
+		};
+		54BCE5588AC4C28939B99617 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = A1000001701A0001 /* Project object */;
 			proxyType = 1;
@@ -105,8 +120,12 @@
 /* End PBXCopyFilesBuildPhase section */
 
 /* Begin PBXFileReference section */
+		0178D0EB98540F719EB6D5CE /* TaskAssignmentCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TaskAssignmentCoordinator.swift; sourceTree = "<group>"; };
+		04E9C8657F1187F40A1EC1DB /* AutomergeModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutomergeModelTests.swift; sourceTree = "<group>"; };
+		23797E4E4415996BCCFE8E45 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
 		43AB9E862F2AB9D2002A7A32 /* Axel.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Axel.icon; sourceTree = SOURCE_ROOT; };
 		43E774722F298D900093DEC6 /* AxelUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AxelUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		6238124A78A2C3A74FCFEDBB /* WorktreeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeService.swift; sourceTree = "<group>"; };
 		9C177CAE09A36E267719D856 /* SessionStatusService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStatusService.swift; sourceTree = "<group>"; };
 		A1000001001A0001 /* Axel.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Axel.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		A1000001101A0001 /* AxelApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AxelApp.swift; sourceTree = "<group>"; };
@@ -176,14 +195,37 @@
 		A1000001101A0112 /* TasksSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksSceneView.swift; sourceTree = "<group>"; };
 		A1000001101A0200 /* TaskQueueService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskQueueService.swift; sourceTree = "<group>"; };
 		A100000110A10030 /* TaskAssignee.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskAssignee.swift; sourceTree = "<group>"; };
+		ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncIntegrationTests.swift; sourceTree = "<group>"; };
+		BE366A3151FDDA78680EDF0C /* SyncEngineTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncEngineTests.swift; sourceTree = "<group>"; };
+		CE485CA04822282FDD056DFB /* TaskAssignmentCoordinatorTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TaskAssignmentCoordinatorTests.swift; sourceTree = "<group>"; };
 		D28E5D714F17DA7A43A0182D /* CostTracker.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = CostTracker.swift; sourceTree = "<group>"; };
+		D8B5FC316E3F66406BDA27A3 /* AxelTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AxelTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		43E774732F298D900093DEC6 /* AxelUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = AxelUITests; sourceTree = "<group>"; };
+		43E774732F298D900093DEC6 /* AxelUITests */ = {
+			isa = PBXFileSystemSynchronizedRootGroup;
+			exceptions = (
+			);
+			explicitFileTypes = {
+			};
+			explicitFolders = (
+			);
+			path = AxelUITests;
+			sourceTree = "<group>";
+		};
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
+		0F23AF57224D9C30EF71514F /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E435BED8E7D96547E09E1C1C /* Cocoa.framework in Frameworks */,
+				39E9C6A3C0CAA85B4B8993D8 /* Axel.app in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		43E7746F2F298D900093DEC6 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -205,6 +247,14 @@
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
+		2120377B4FD59EFFD3758AFA /* OS X */ = {
+			isa = PBXGroup;
+			children = (
+				23797E4E4415996BCCFE8E45 /* Cocoa.framework */,
+			);
+			name = "OS X";
+			sourceTree = "<group>";
+		};
 		A1000001401A0001 = {
 			isa = PBXGroup;
 			children = (
@@ -212,6 +262,7 @@
 				43E774732F298D900093DEC6 /* AxelUITests */,
 				A1000001401A0008 /* Frameworks */,
 				A1000001401A0003 /* Products */,
+				A4E7587943AE89703EFEDD6A /* AxelTests */,
 			);
 			sourceTree = "<group>";
 		};
@@ -240,6 +291,7 @@
 			children = (
 				A1000001001A0001 /* Axel.app */,
 				43E774722F298D900093DEC6 /* AxelUITests.xctest */,
+				D8B5FC316E3F66406BDA27A3 /* AxelTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -300,6 +352,7 @@
 		A1000001401A0008 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				2120377B4FD59EFFD3758AFA /* OS X */,
 			);
 			name = Frameworks;
 			sourceTree = "<group>";
@@ -321,11 +374,13 @@
 				A1000001101A0045 /* AutomergeStore.swift */,
 				A1000001101A0046 /* AutomergeSchemas.swift */,
 				A1000001101A0041 /* InboxService.swift */,
+				6238124A78A2C3A74FCFEDBB /* WorktreeService.swift */,
 				A1000001101A0200 /* TaskQueueService.swift */,
 				A1000001101A0047 /* WorkspaceContainerManager.swift */,
 				D28E5D714F17DA7A43A0182D /* CostTracker.swift */,
 				9C177CAE09A36E267719D856 /* SessionStatusService.swift */,
 				A1000001101A0111 /* TaskUndoManager.swift */,
+				0178D0EB98540F719EB6D5CE /* TaskAssignmentCoordinator.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -428,6 +483,18 @@
 			path = Terminal;
 			sourceTree = "<group>";
 		};
+		A4E7587943AE89703EFEDD6A /* AxelTests */ = {
+			isa = PBXGroup;
+			children = (
+				04E9C8657F1187F40A1EC1DB /* AutomergeModelTests.swift */,
+				BE366A3151FDDA78680EDF0C /* SyncEngineTests.swift */,
+				ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */,
+				CE485CA04822282FDD056DFB /* TaskAssignmentCoordinatorTests.swift */,
+			);
+			name = AxelTests;
+			path = AxelTests;
+			sourceTree = SOURCE_ROOT;
+		};
 /* End PBXGroup section */
 
 /* Begin PBXNativeTarget section */
@@ -451,6 +518,24 @@
 			productName = AxelUITests;
 			productReference = 43E774722F298D900093DEC6 /* AxelUITests.xctest */;
 			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		A03D3B65785484753F934B90 /* AxelTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 49A203A186B0637D51006780 /* Build configuration list for PBXNativeTarget "AxelTests" */;
+			buildPhases = (
+				F4A22F82AADCDAD11DDCD29C /* Sources */,
+				0F23AF57224D9C30EF71514F /* Frameworks */,
+				47D20FC29DA296E400EF03A1 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				83C59F130BBD06AE3834E3C5 /* PBXTargetDependency */,
+			);
+			name = AxelTests;
+			productName = AxelTests;
+			productReference = D8B5FC316E3F66406BDA27A3 /* AxelTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
 		};
 		A1000001501A0001 /* Axel */ = {
 			isa = PBXNativeTarget;
@@ -499,9 +584,9 @@
 			);
 			mainGroup = A1000001401A0001;
 			packageReferences = (
-				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */,
+				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */,
 				43BD82702F1D5F650092A96C /* XCRemoteSwiftPackageReference "supabase-swift" */,
-				43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */,
+				43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */,
 				43BD827E2F1D70000092A96C /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = A1000001401A0003 /* Products */;
@@ -510,12 +595,20 @@
 			targets = (
 				A1000001501A0001 /* Axel */,
 				43E774712F298D900093DEC6 /* AxelUITests */,
+				A03D3B65785484753F934B90 /* AxelTests */,
 			);
 		};
 /* End PBXProject section */
 
 /* Begin PBXResourcesBuildPhase section */
 		43E774702F298D900093DEC6 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		47D20FC29DA296E400EF03A1 /* Resources */ = {
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -579,6 +672,7 @@
 				A1000001201A0033 /* WorkspaceContentView.swift in Sources */,
 				A1000001201A0040 /* InboxEvent.swift in Sources */,
 				A1000001201A0041 /* InboxService.swift in Sources */,
+				1A7D6291EFA4D08B52E90928 /* WorktreeService.swift in Sources */,
 				A1000001201A0200 /* TaskQueueService.swift in Sources */,
 				A1000001201A0045 /* AutomergeStore.swift in Sources */,
 				A1000001201A0047 /* WorkspaceContainerManager.swift in Sources */,
@@ -611,6 +705,18 @@
 				B81242E637B124591F5B7B93 /* SessionStatusService.swift in Sources */,
 				A1000001201A0111 /* TaskUndoManager.swift in Sources */,
 				A1000001201A0112 /* TasksSceneView.swift in Sources */,
+				18772BF65693156AC43F75D2 /* TaskAssignmentCoordinator.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F4A22F82AADCDAD11DDCD29C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AE133ED0512C6A98BDE08952 /* AutomergeModelTests.swift in Sources */,
+				3724AAF9F7B57FC2766507ED /* SyncEngineTests.swift in Sources */,
+				BAF581097CA2F8F7B7EBBCB1 /* SyncIntegrationTests.swift in Sources */,
+				224F4D7EECEE1287AF701CE6 /* TaskAssignmentCoordinatorTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -621,6 +727,12 @@
 			isa = PBXTargetDependency;
 			target = A1000001501A0001 /* Axel */;
 			targetProxy = 43E774782F298D900093DEC6 /* PBXContainerItemProxy */;
+		};
+		83C59F130BBD06AE3834E3C5 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			name = Axel;
+			target = A1000001501A0001 /* Axel */;
+			targetProxy = 54BCE5588AC4C28939B99617 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -667,6 +779,56 @@
 				TARGETED_DEVICE_FAMILY = "1,2";
 				TEST_TARGET_NAME = Axel;
 				VALIDATE_PRODUCT = YES;
+			};
+			name = Release;
+		};
+		66EF590401962EDFDAE3B404 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 8ZJ55A62XN;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
+				PRODUCT_MODULE_NAME = AxelTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Axel.app/Contents/MacOS/Axel";
+			};
+			name = Debug;
+		};
+		789D0BFF36B08084C135C1A3 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_EMBED_SWIFT_STANDARD_LIBRARIES = YES;
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				DEVELOPMENT_TEAM = 8ZJ55A62XN;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_FILE = "";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
+				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
+				PRODUCT_MODULE_NAME = AxelTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Axel.app/Contents/MacOS/Axel";
 			};
 			name = Release;
 		};
@@ -908,6 +1070,15 @@
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;
 		};
+		49A203A186B0637D51006780 /* Build configuration list for PBXNativeTarget "AxelTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				789D0BFF36B08084C135C1A3 /* Release */,
+				66EF590401962EDFDAE3B404 /* Debug */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
 		A1000001601A0001 /* Build configuration list for PBXNativeTarget "Axel" */ = {
 			isa = XCConfigurationList;
 			buildConfigurations = (
@@ -929,11 +1100,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */ = {
+		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AutomergeWrapper;
 		};
-		43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */ = {
+		43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/SwiftTermWrapper;
 		};
@@ -966,12 +1137,12 @@
 		};
 		43BD82742F1D63F40092A96C /* AutomergeWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */;
+			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */;
 			productName = AutomergeWrapper;
 		};
 		43BD82772F1D63F50092A96C /* SwiftTermWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */;
+			package = 43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "SwiftTermWrapper" */;
 			productName = SwiftTermWrapper;
 		};
 		43BD827F2F1D70000092A96C /* Sparkle */ = {
