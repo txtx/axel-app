@@ -287,7 +287,7 @@ struct CommandCenterPanel: View {
     }
 
     private var queuedTasks: [WorkTask] {
-        tasks.filter { $0.taskStatus == .queued }.sorted { $0.priority < $1.priority }
+        tasks.filter { $0.taskStatus.isPending }.sorted { $0.priority < $1.priority }
     }
 
     private var pendingEvents: [InboxEvent] {

@@ -1,10 +1,11 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 #if os(macOS)
 import AppKit
 
-class AppDelegate: NSObject, NSApplicationDelegate {
+class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         // If no windows are visible, open the workspace picker
         if !flag {
@@ -26,7 +27,42 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        // Multi-window support enabled - no longer closing extra windows
+        // Set ourselves as the notification delegate
+        UNUserNotificationCenter.current().delegate = self
+    }
+
+    // MARK: - UNUserNotificationCenterDelegate
+
+    /// Handle notification action responses (Approve/Reject buttons)
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        didReceive response: UNNotificationResponse,
+        withCompletionHandler completionHandler: @escaping () -> Void
+    ) {
+        let actionIdentifier = response.actionIdentifier
+        let userInfo = response.notification.request.content.userInfo
+
+        // Handle approve/reject actions
+        if actionIdentifier == "APPROVE_ACTION" || actionIdentifier == "REJECT_ACTION" {
+            Task { @MainActor in
+                InboxService.shared.handleNotificationAction(
+                    actionIdentifier: actionIdentifier,
+                    userInfo: userInfo
+                )
+            }
+        }
+
+        completionHandler()
+    }
+
+    /// Show notifications even when app is in foreground
+    func userNotificationCenter(
+        _ center: UNUserNotificationCenter,
+        willPresent notification: UNNotification,
+        withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+    ) {
+        // Show banner and play sound even when app is active
+        completionHandler([.banner, .sound])
     }
 }
 
@@ -41,6 +77,8 @@ extension Notification.Name {
     static let deleteTasksTriggered = Notification.Name("deleteTasksTriggered")
     static let completeTaskTriggered = Notification.Name("completeTaskTriggered")
     static let cancelTaskTriggered = Notification.Name("cancelTaskTriggered")
+    /// Posted when a task completes on a terminal - used to trigger queue consumption
+    static let taskCompletedOnTerminal = Notification.Name("taskCompletedOnTerminal")
 }
 
 // MARK: - Focused Scene Values for Window-Specific Actions

@@ -3,6 +3,9 @@ import Foundation
 import SwiftData
 
 enum TaskStatus: String, Codable, CaseIterable {
+    /// Task is in the general backlog, not assigned to any terminal
+    case backlog = "backlog"
+    /// Task is assigned to a specific terminal's queue, waiting for its turn
     case queued = "queued"
     case running = "running"
     case completed = "completed"
@@ -11,6 +14,7 @@ enum TaskStatus: String, Codable, CaseIterable {
 
     var displayName: String {
         switch self {
+        case .backlog: return "BACKLOG"
         case .queued: return "QUEUED"
         case .running: return "RUNNING"
         case .completed: return "COMPLETED"
@@ -21,12 +25,18 @@ enum TaskStatus: String, Codable, CaseIterable {
 
     var menuLabel: String {
         switch self {
+        case .backlog: return "Backlog"
         case .queued: return "Queued"
         case .running: return "Running"
         case .completed: return "Completed"
         case .inReview: return "In Review"
         case .aborted: return "Aborted"
         }
+    }
+
+    /// Whether this status represents a task waiting to be run (backlog or queued)
+    var isPending: Bool {
+        self == .backlog || self == .queued
     }
 }
 
@@ -69,8 +79,14 @@ final class WorkTask {
     var syncId: UUID?
 
     var taskStatus: TaskStatus {
-        get { TaskStatus(rawValue: status) ?? .queued }
+        get { TaskStatus(rawValue: status) ?? .backlog }
         set { status = newValue.rawValue }
+    }
+
+    /// Composite ID that includes status, used for ForEach identity.
+    /// This forces SwiftUI to create a fresh view when a task moves between sections.
+    var compositeId: String {
+        "\(status)-\(id.uuidString)"
     }
 
     /// Convenience accessor for assigned profiles
@@ -90,7 +106,7 @@ final class WorkTask {
                 taskStatus = .completed
                 completedAt = Date()
             } else {
-                taskStatus = .queued
+                taskStatus = .backlog
                 completedAt = nil
             }
             updatedAt = Date()
@@ -105,7 +121,7 @@ final class WorkTask {
         self.id = UUID()
         self.title = title
         self.taskDescription = description
-        self.status = TaskStatus.queued.rawValue
+        self.status = TaskStatus.backlog.rawValue
         self.priority = 0
         self.createdAt = Date()
         self.updatedAt = Date()
@@ -132,10 +148,18 @@ final class WorkTask {
     }
 
     /// Update status and sync to Automerge document
+    /// Also handles TaskQueueService cleanup when leaving queued status
     @MainActor
     func updateStatus(_ newStatus: TaskStatus) {
+        let oldStatus = self.taskStatus
         self.status = newStatus.rawValue
         self.updatedAt = Date()
+
+        // Clean up TaskQueueService when leaving queued status
+        if oldStatus == .queued && newStatus != .queued {
+            TaskQueueService.shared.removeFromAnyTerminal(taskId: self.id)
+        }
+
         let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)
         try? doc.updateTaskStatus(newStatus.rawValue)
         // Trigger sync for status changes (important for cross-device sync)
@@ -166,12 +190,130 @@ final class WorkTask {
     /// Reopen task and sync to Automerge document
     @MainActor
     func reopen() {
-        self.status = TaskStatus.queued.rawValue
+        self.status = TaskStatus.backlog.rawValue
         self.completedAt = nil
         self.updatedAt = Date()
         let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)
-        try? doc.updateTaskStatus(TaskStatus.queued.rawValue)
+        try? doc.updateTaskStatus(TaskStatus.backlog.rawValue)
         try? doc.updateTaskCompletedAt(nil)
         SyncScheduler.shared.scheduleSync()
+    }
+
+    // MARK: - Undo-Aware Updates
+
+    /// Update status with undo support
+    @MainActor
+    func updateStatusWithUndo(_ newStatus: TaskStatus) {
+        let previousStatus = self.taskStatus
+        let previousCompletedAt = self.completedAt
+        let taskId = self.id
+        // Capture queue state for undo - if leaving queued, remember which terminal
+        let previousTerminal = previousStatus == .queued
+            ? TaskQueueService.shared.terminalForTask(taskId: taskId)
+            : nil
+
+        TaskUndoManager.shared.recordAction(TaskUndoAction(
+            taskId: taskId,
+            actionDescription: "Change Status to \(newStatus.menuLabel)",
+            undo: { [weak self] in
+                guard let self else { return }
+                self.status = previousStatus.rawValue
+                self.completedAt = previousCompletedAt
+                self.updatedAt = Date()
+                // Restore queue state if was previously queued
+                if previousStatus == .queued, let terminal = previousTerminal {
+                    TaskQueueService.shared.enqueue(taskId: self.id, onTerminal: terminal)
+                } else if previousStatus != .queued {
+                    // Was not queued before, ensure removed from any queue
+                    TaskQueueService.shared.removeFromAnyTerminal(taskId: self.id)
+                }
+                let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)
+                try? doc.updateTaskStatus(previousStatus.rawValue)
+                try? doc.updateTaskCompletedAt(previousCompletedAt)
+                SyncScheduler.shared.scheduleSync()
+            },
+            redo: { [weak self] in
+                guard let self else { return }
+                self.updateStatus(newStatus)
+            }
+        ))
+
+        updateStatus(newStatus)
+    }
+
+    /// Mark completed with undo support
+    @MainActor
+    func markCompletedWithUndo() {
+        let previousStatus = self.taskStatus
+        let previousCompletedAt = self.completedAt
+        let taskId = self.id
+
+        TaskUndoManager.shared.recordAction(TaskUndoAction(
+            taskId: taskId,
+            actionDescription: "Mark as Completed",
+            undo: { [weak self] in
+                guard let self else { return }
+                self.status = previousStatus.rawValue
+                self.completedAt = previousCompletedAt
+                self.updatedAt = Date()
+                let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)
+                try? doc.updateTaskStatus(previousStatus.rawValue)
+                try? doc.updateTaskCompletedAt(previousCompletedAt)
+                SyncScheduler.shared.scheduleSync()
+            },
+            redo: { [weak self] in
+                guard let self else { return }
+                self.markCompleted()
+            }
+        ))
+
+        markCompleted()
+    }
+
+    /// Reopen task with undo support
+    @MainActor
+    func reopenWithUndo() {
+        let previousStatus = self.taskStatus
+        let previousCompletedAt = self.completedAt
+        let taskId = self.id
+
+        TaskUndoManager.shared.recordAction(TaskUndoAction(
+            taskId: taskId,
+            actionDescription: "Reopen Task",
+            undo: { [weak self] in
+                guard let self else { return }
+                self.status = previousStatus.rawValue
+                self.completedAt = previousCompletedAt
+                self.updatedAt = Date()
+                let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)
+                try? doc.updateTaskStatus(previousStatus.rawValue)
+                try? doc.updateTaskCompletedAt(previousCompletedAt)
+                SyncScheduler.shared.scheduleSync()
+            },
+            redo: { [weak self] in
+                guard let self else { return }
+                self.reopen()
+            }
+        ))
+
+        reopen()
+    }
+
+    /// Toggle complete with undo support
+    @MainActor
+    func toggleCompleteWithUndo() {
+        if isCompleted {
+            reopenWithUndo()
+        } else {
+            markCompletedWithUndo()
+        }
+    }
+
+    /// Prepare task for deletion by cleaning up any associated state
+    /// Call this before deleting the task from SwiftData
+    @MainActor
+    func prepareForDeletion() {
+        // Remove from any terminal queue
+        TaskQueueService.shared.removeFromAnyTerminal(taskId: self.id)
     }
 }

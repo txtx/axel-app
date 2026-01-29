@@ -3,8 +3,21 @@ import SwiftUI
 /// The content displayed inside each permission request card
 struct PermissionCardContent: View {
     let event: InboxEvent
-    let onDeny: () -> Void
-    let onAllow: () -> Void
+    let onSelectOption: (PermissionOption) -> Void
+    @FocusState private var isFocused: Bool
+
+    /// The "allow" option (first non-destructive option)
+    private var allowOption: PermissionOption? {
+        event.permissionOptions.first { !$0.isDestructive }
+    }
+
+    /// The "deny" option (last destructive option)
+    private var denyOption: PermissionOption? {
+        if let last = event.permissionOptions.last, last.isDestructive {
+            return last
+        }
+        return nil
+    }
 
     /// Extract the tool name from the event
     private var toolName: String {
@@ -91,69 +104,90 @@ struct PermissionCardContent: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            headerSection
+        ZStack(alignment: .bottom) {
+            VStack(spacing: 0) {
+                // Header
+                headerSection
 
-            Divider()
+                Divider()
 
-            // Content
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    // File path or command preview
-                    if let command = bashCommand {
-                        bashCommandSection(command)
-                    } else if let path = filePath {
-                        filePathSection(path)
-                    }
-
-                    // Diff view for Edit/Write tools
-                    if let input = event.event.toolInput {
-                        if toolName == "Edit",
-                           let path = input["file_path"]?.value as? String,
-                           let oldString = input["old_string"]?.value as? String,
-                           let newString = input["new_string"]?.value as? String {
-                            EditToolDiffView(
-                                filePath: path,
-                                oldString: oldString,
-                                newString: newString
-                            )
-                            .frame(minHeight: 200, maxHeight: 300)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-                            )
-                        } else if toolName == "Write",
-                                  let path = input["file_path"]?.value as? String,
-                                  let content = input["content"]?.value as? String {
-                            WriteToolDiffView(
-                                filePath: path,
-                                content: content
-                            )
-                            .frame(minHeight: 200, maxHeight: 300)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-                            )
+                // Content
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        // File path or command preview
+                        if let command = bashCommand {
+                            bashCommandSection(command)
+                        } else if let path = filePath {
+                            filePathSection(path)
                         }
-                    }
 
-                    // Directory context
-                    if let cwd = event.event.cwd {
-                        directorySection(cwd)
+                        // Diff view for Edit/Write tools
+                        if let input = event.event.toolInput {
+                            if toolName == "Edit",
+                               let path = input["file_path"]?.value as? String,
+                               let oldString = input["old_string"]?.value as? String,
+                               let newString = input["new_string"]?.value as? String {
+                                EditToolDiffView(
+                                    filePath: path,
+                                    oldString: oldString,
+                                    newString: newString
+                                )
+                                .frame(minHeight: 200, maxHeight: 300)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                                )
+                            } else if toolName == "Write",
+                                      let path = input["file_path"]?.value as? String,
+                                      let content = input["content"]?.value as? String {
+                                WriteToolDiffView(
+                                    filePath: path,
+                                    content: content
+                                )
+                                .frame(minHeight: 200, maxHeight: 300)
+                                .clipShape(RoundedRectangle(cornerRadius: 8))
+                                .overlay(
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                                )
+                            }
+                        }
+
+                        // Directory context
+                        if let cwd = event.event.cwd {
+                            directorySection(cwd)
+                        }
+
+                        // Bottom padding to make room for floating buttons
+                        Color.clear.frame(height: 80)
                     }
+                    .padding()
                 }
-                .padding()
             }
+            .background(.background)
 
-            Divider()
-
-            // Action buttons
+            // Floating action buttons
             actionButtons
         }
-        .background(.background)
+        .focusable()
+        .focused($isFocused)
+        .focusEffectDisabled()
+        .onAppear { isFocused = true }
+        .onKeyPress(.escape) {
+            if let option = denyOption {
+                onSelectOption(option)
+                return .handled
+            }
+            return .ignored
+        }
+        .onKeyPress(.return) {
+            if let option = allowOption {
+                onSelectOption(option)
+                return .handled
+            }
+            return .ignored
+        }
     }
 
     // MARK: - Header Section
@@ -254,34 +288,75 @@ struct PermissionCardContent: View {
     // MARK: - Action Buttons
 
     private var actionButtons: some View {
-        HStack(spacing: 12) {
-            // Deny button
-            Button(action: onDeny) {
-                HStack {
-                    Image(systemName: "xmark.circle.fill")
-                    Text("Deny")
-                }
-                .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.bordered)
-            .tint(.red)
-            .controlSize(.large)
-            .keyboardShortcut(.leftArrow, modifiers: [])
+        let options = event.permissionOptions
 
-            // Allow button
-            Button(action: onAllow) {
-                HStack {
-                    Image(systemName: "checkmark.circle.fill")
-                    Text("Allow")
+        return VStack(spacing: 12) {
+            // Primary row: Yes and No buttons
+            HStack(spacing: 12) {
+                // No button (last option, destructive)
+                if let noOption = options.last, noOption.isDestructive {
+                    Button(action: { onSelectOption(noOption) }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "xmark")
+                                .fontWeight(.semibold)
+                            Text(noOption.shortLabel)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
+                        .background(Color.red)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                        .shadow(color: .red.opacity(0.3), radius: 8, y: 4)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.escape, modifiers: [])
                 }
-                .frame(maxWidth: .infinity)
+
+                // Yes button (first option)
+                if let yesOption = options.first, !yesOption.isDestructive {
+                    Button(action: { onSelectOption(yesOption) }) {
+                        HStack(spacing: 6) {
+                            Image(systemName: "checkmark")
+                                .fontWeight(.semibold)
+                            Text(yesOption.shortLabel)
+                        }
+                        .padding(.horizontal, 20)
+                        .padding(.vertical, 12)
+                        .background(Color.green)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                        .shadow(color: .green.opacity(0.3), radius: 8, y: 4)
+                    }
+                    .buttonStyle(.plain)
+                    .keyboardShortcut(.return, modifiers: [])
+                }
             }
-            .buttonStyle(.borderedProminent)
-            .tint(.green)
-            .controlSize(.large)
-            .keyboardShortcut(.rightArrow, modifiers: [])
+
+            // Secondary row: Session-wide options (middle options)
+            let middleOptions = options.dropFirst().dropLast()
+            if !middleOptions.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(Array(middleOptions)) { option in
+                        Button(action: { onSelectOption(option) }) {
+                            Text(option.shortLabel)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(Color.green.opacity(0.15))
+                                .foregroundStyle(.green)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                        .keyboardShortcut(
+                            KeyEquivalent(Character(String(option.id))),
+                            modifiers: []
+                        )
+                    }
+                }
+                .font(.callout.weight(.medium))
+            }
         }
-        .padding()
+        .font(.body.weight(.medium))
+        .padding(.bottom, 20)
     }
 }
 
@@ -394,14 +469,64 @@ private enum PermissionCardPreviewHelper {
         decoder.dateDecodingStrategy = .iso8601
         return try? decoder.decode(InboxEvent.self, from: mockJSON.data(using: .utf8)!)
     }
+
+    /// Mock event with permission suggestions (shows session-wide option)
+    static var mockEventWithSuggestions: InboxEvent? {
+        let mockJSON = """
+        {
+            "timestamp": "2024-01-15T12:00:00Z",
+            "event_type": "hook_event",
+            "pane_id": "test-pane",
+            "event": {
+                "hook_event_name": "PermissionRequest",
+                "tool_name": "Edit",
+                "cwd": "/Users/test/project",
+                "permission_suggestions": [
+                    {
+                        "type": "setMode",
+                        "mode": "acceptEdits",
+                        "destination": "session"
+                    }
+                ],
+                "tool_input": {
+                    "file_path": "/Users/test/project/src/main.swift",
+                    "old_string": "let x = 1",
+                    "new_string": "let x = 2"
+                }
+            }
+        }
+        """
+
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .iso8601
+        return try? decoder.decode(InboxEvent.self, from: mockJSON.data(using: .utf8)!)
+    }
 }
 
-#Preview("Permission Card Content") {
+#Preview("Permission Card - Simple") {
     if let event = PermissionCardPreviewHelper.mockEvent {
         PermissionCardContent(
             event: event,
-            onDeny: { },
-            onAllow: { }
+            onSelectOption: { option in
+                print("Selected: \(option.label)")
+            }
+        )
+        .frame(width: 400, height: 500)
+        .clipShape(RoundedRectangle(cornerRadius: 16))
+        .shadow(radius: 10)
+        .padding(40)
+    } else {
+        Text("Preview unavailable")
+    }
+}
+
+#Preview("Permission Card - With Session Option") {
+    if let event = PermissionCardPreviewHelper.mockEventWithSuggestions {
+        PermissionCardContent(
+            event: event,
+            onSelectOption: { option in
+                print("Selected: \(option.label)")
+            }
         )
         .frame(width: 400, height: 500)
         .clipShape(RoundedRectangle(cornerRadius: 16))

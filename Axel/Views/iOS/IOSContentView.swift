@@ -614,7 +614,7 @@ struct iPhoneQueueView: View {
     }
 
     private var queuedTasks: [WorkTask] {
-        tasks.filter { $0.taskStatus == .queued }.sorted { $0.priority < $1.priority }
+        tasks.filter { $0.taskStatus.isPending }.sorted { $0.priority < $1.priority }
     }
 
     private var runningTasks: [WorkTask] {
@@ -767,8 +767,8 @@ struct iPhoneQueueView: View {
     // Context menu actions matching macOS Task menu
     @ViewBuilder
     private func taskContextMenu(for task: WorkTask) -> some View {
-        // Run action (only for queued tasks)
-        if task.taskStatus == .queued {
+        // Run action (only for pending tasks)
+        if task.taskStatus.isPending {
             Button {
                 withAnimation {
                     task.updateStatus(.running)
@@ -779,8 +779,8 @@ struct iPhoneQueueView: View {
             }
         }
 
-        // Complete action (for queued or running tasks)
-        if task.taskStatus == .queued || task.taskStatus == .running {
+        // Complete action (for pending or running tasks)
+        if task.taskStatus.isPending || task.taskStatus == .running {
             Button {
                 withAnimation {
                     task.markCompleted()
@@ -807,7 +807,7 @@ struct iPhoneQueueView: View {
         if task.taskStatus == .completed || task.taskStatus == .aborted {
             Button {
                 withAnimation {
-                    task.updateStatus(.queued)
+                    task.updateStatus(.backlog)
                 }
                 syncService.performFullSyncInBackground(container: modelContext.container)
             } label: {
@@ -842,7 +842,7 @@ struct iPhoneTaskDetailView: View {
 
     private var statusColor: Color {
         switch task.taskStatus {
-        case .queued: .blue
+        case .backlog, .queued: .blue
         case .running: .orange
         case .completed: .green
         case .inReview: .yellow
@@ -852,7 +852,7 @@ struct iPhoneTaskDetailView: View {
 
     private var statusIcon: String {
         switch task.taskStatus {
-        case .queued: "clock.circle.fill"
+        case .backlog, .queued: "clock.circle.fill"
         case .running: "play.circle.fill"
         case .completed: "checkmark.circle.fill"
         case .inReview: "eye.circle.fill"
@@ -864,8 +864,8 @@ struct iPhoneTaskDetailView: View {
         Form {
             // Quick Actions Section (consistent with macOS Task menu)
             Section {
-                // Run action (only for queued tasks)
-                if task.taskStatus == .queued {
+                // Run action (only for pending tasks)
+                if task.taskStatus.isPending {
                     Button {
                         withAnimation {
                             task.updateStatus(.running)
@@ -879,8 +879,8 @@ struct iPhoneTaskDetailView: View {
                     }
                 }
 
-                // Complete action (for queued or running tasks)
-                if task.taskStatus == .queued || task.taskStatus == .running {
+                // Complete action (for pending or running tasks)
+                if task.taskStatus.isPending || task.taskStatus == .running {
                     Button {
                         withAnimation {
                             task.markCompleted()
@@ -913,7 +913,7 @@ struct iPhoneTaskDetailView: View {
                 if task.taskStatus == .completed || task.taskStatus == .aborted {
                     Button {
                         withAnimation {
-                            task.updateStatus(.queued)
+                            task.updateStatus(.backlog)
                         }
                         Task {
                             await syncService.performFullSync(context: modelContext)
@@ -1529,7 +1529,7 @@ struct SlickTaskRow: View {
 
     private var isRunning: Bool { task.taskStatus == .running }
     private var isCompleted: Bool { task.taskStatus == .completed }
-    private var isQueued: Bool { task.taskStatus == .queued }
+    private var isQueued: Bool { task.taskStatus.isPending }
 
     var body: some View {
         HStack(spacing: 16) {

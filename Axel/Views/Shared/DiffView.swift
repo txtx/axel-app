@@ -186,11 +186,13 @@ struct DiffView: View {
             }
 
             // Toggle view mode
-            Picker("View", selection: $showUnified) {
+            Picker(selection: $showUnified) {
                 Image(systemName: "list.bullet")
                     .tag(true)
                 Image(systemName: "rectangle.split.2x1")
                     .tag(false)
+            } label: {
+                EmptyView()
             }
             .pickerStyle(.segmented)
             .frame(width: 80)

@@ -59,6 +59,7 @@ struct InboxEventPayload: Codable {
 
     // Permission request fields
     let permissionRequest: PermissionRequestInfo?
+    let permissionSuggestions: [PermissionSuggestion]?
 
     enum CodingKeys: String, CodingKey {
         case hookEventName = "hook_event_name"
@@ -71,6 +72,7 @@ struct InboxEventPayload: Codable {
         case toolResponse = "tool_response"
         case toolUseId = "tool_use_id"
         case permissionRequest = "permission_request"
+        case permissionSuggestions = "permission_suggestions"
     }
 }
 
@@ -82,6 +84,53 @@ struct PermissionRequestInfo: Codable {
     enum CodingKeys: String, CodingKey {
         case toolName = "tool_name"
         case description
+    }
+}
+
+/// Permission suggestion from Claude Code (e.g., "allow all edits this session")
+struct PermissionSuggestion: Codable, Hashable, Sendable {
+    let type: String  // e.g., "setMode"
+    let mode: String?  // e.g., "acceptEdits"
+    let destination: String?  // e.g., "session"
+
+    /// Human-readable label for this suggestion
+    var label: String {
+        switch mode {
+        case "acceptEdits":
+            return "Yes, allow all edits this session"
+        case "bypassPermissions":
+            return "Yes, don't ask again this session"
+        default:
+            if destination == "session" {
+                return "Yes, allow all this session"
+            }
+            return "Yes, allow"
+        }
+    }
+
+    var shortLabel: String {
+        switch mode {
+        case "acceptEdits":
+            return "Allow all edits"
+        case "bypassPermissions":
+            return "Allow all"
+        default:
+            return "Allow session"
+        }
+    }
+}
+
+/// A permission option that can be selected by the user
+struct PermissionOption: Identifiable, Hashable {
+    let id: Int  // The option number (1, 2, 3...)
+    let label: String
+    let shortLabel: String  // For compact display
+    let isDestructive: Bool
+    let suggestion: PermissionSuggestion?
+
+    /// The response text to send for this option
+    var responseText: String {
+        "\(id)"
     }
 }
 
@@ -168,5 +217,47 @@ extension InboxEvent {
         default:
             return "bell"
         }
+    }
+
+    /// Generate permission options based on the event data
+    /// Options are numbered 1, 2, 3... matching Claude Code's CLI
+    var permissionOptions: [PermissionOption] {
+        var options: [PermissionOption] = []
+        var optionNum = 1
+
+        // Option 1: Yes (always present for permission requests)
+        options.append(PermissionOption(
+            id: optionNum,
+            label: "Yes",
+            shortLabel: "Yes",
+            isDestructive: false,
+            suggestion: nil
+        ))
+        optionNum += 1
+
+        // Middle options from permission_suggestions (e.g., "allow all edits this session")
+        if let suggestions = event.permissionSuggestions {
+            for suggestion in suggestions {
+                options.append(PermissionOption(
+                    id: optionNum,
+                    label: suggestion.label,
+                    shortLabel: suggestion.shortLabel,
+                    isDestructive: false,
+                    suggestion: suggestion
+                ))
+                optionNum += 1
+            }
+        }
+
+        // Last option: No
+        options.append(PermissionOption(
+            id: optionNum,
+            label: "No",
+            shortLabel: "No",
+            isDestructive: true,
+            suggestion: nil
+        ))
+
+        return options
     }
 }

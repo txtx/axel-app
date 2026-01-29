@@ -11,6 +11,8 @@ enum AppKeyboardShortcut {
     case showAgents
     case showInbox
     case showSkills
+    case undo
+    case redo
 
     var key: KeyEquivalent {
         switch self {
@@ -21,6 +23,8 @@ enum AppKeyboardShortcut {
         case .showAgents: return "2"
         case .showInbox: return "3"
         case .showSkills: return "4"
+        case .undo: return "z"
+        case .redo: return "z"
         }
     }
 
@@ -33,6 +37,8 @@ enum AppKeyboardShortcut {
         case .showAgents: return .command
         case .showInbox: return .command
         case .showSkills: return .command
+        case .undo: return .command
+        case .redo: return [.command, .shift]
         }
     }
 }

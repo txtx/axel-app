@@ -53,21 +53,11 @@ struct InboxView: View {
             .padding(.vertical, 12)
 
             if pendingEvents.isEmpty {
-                VStack(spacing: 12) {
-                    Spacer()
-                    Image(systemName: "checkmark.circle")
-                        .font(.system(size: 40))
-                        .foregroundStyle(.quaternary)
-                    Text("No Blockers")
-                        .font(.headline)
-                        .foregroundStyle(.secondary)
-                    Text("Permissions and questions will appear here")
-                        .font(.callout)
-                        .foregroundStyle(.tertiary)
-                        .multilineTextAlignment(.center)
-                    Spacer()
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                EmptyStateView(
+                    image: "checkmark.circle",
+                    title: "No Blockers",
+                    description: "Permissions and questions will appear here"
+                )
             } else {
                 List(pendingEvents, selection: $selection) { event in
                     InboxEventListRow(event: event)
@@ -79,6 +69,16 @@ struct InboxView: View {
         .background(.background)
         .onAppear {
             inboxService.connect()
+            // Auto-select the first item when inbox opens
+            if selection == nil, let first = pendingEvents.first {
+                selection = first
+            }
+        }
+        .onChange(of: pendingEvents) { _, newEvents in
+            // Auto-select the first item when events change and nothing is selected
+            if selection == nil, let first = newEvents.first {
+                selection = first
+            }
         }
     }
 }
@@ -403,6 +403,7 @@ struct InboxEventDetailView: View {
     @Binding var selection: InboxEvent?
     @State private var inboxService = InboxService.shared
     @State private var costTracker = CostTracker.shared
+    @State private var taskQueueService = TaskQueueService.shared
     @Environment(\.modelContext) private var modelContext
     #if os(macOS)
     @Environment(\.terminalSessionManager) private var sessionManager
@@ -447,8 +448,8 @@ struct InboxEventDetailView: View {
         inboxService.isResolved(event.id)
     }
 
-    /// Send permission response
-    private func sendPermissionResponse(allow: Bool) {
+    /// Send permission response with selected option
+    private func sendPermissionResponse(option: PermissionOption) {
         guard let sessionId = event.event.claudeSessionId else {
             print("[InboxView] No session ID for permission response")
             return
@@ -456,7 +457,11 @@ struct InboxEventDetailView: View {
 
         Task {
             do {
-                try await inboxService.sendPermissionResponse(sessionId: sessionId, allow: allow)
+                try await inboxService.sendPermissionResponse(
+                    sessionId: sessionId,
+                    option: option,
+                    paneId: event.paneId
+                )
                 await MainActor.run {
                     inboxService.resolveEvent(event.id)
                     selection = nil
@@ -469,6 +474,9 @@ struct InboxEventDetailView: View {
 
     /// The task title for this terminal (fetched on appear)
     @State private var taskTitle: String?
+
+    /// The current task on this terminal (for marking complete)
+    @State private var currentTask: WorkTask?
 
     /// Fetch task context and related data
     private func fetchEventData() {
@@ -486,7 +494,8 @@ struct InboxEventDetailView: View {
         }
 
         if let terminal = try? modelContext.fetch(terminalDescriptor).first {
-            // Get task title
+            // Get task and title
+            currentTask = terminal.task
             taskTitle = terminal.task?.title
 
             // Get workspace from task or terminal
@@ -509,24 +518,23 @@ struct InboxEventDetailView: View {
             }
         }
 
-        // Fetch queued tasks for completion events
+        // Fetch queued tasks for completion events - only tasks queued on this terminal
         guard isCompletionEvent else { return }
 
-        // Get queued tasks from workspace, or all queued tasks if no workspace
-        let queuedStatus = TaskStatus.queued.rawValue
-        // Sort by priority ascending (lower = top of queue), then by createdAt
-        let taskDescriptor = FetchDescriptor<WorkTask>(
-            sortBy: [SortDescriptor(\WorkTask.priority, order: .forward), SortDescriptor(\WorkTask.createdAt)]
-        )
+        // Get task IDs queued on this specific terminal from TaskQueueService
+        let queuedTaskIds = TaskQueueService.shared.tasksQueued(onTerminal: paneId)
 
-        if let tasks = try? modelContext.fetch(taskDescriptor) {
-            if let workspace = eventWorkspace {
-                // Filter to workspace
-                let workspaceId = workspace.id
-                nextQueuedTasks = Array(tasks.filter { $0.status == queuedStatus && $0.workspace?.id == workspaceId }.prefix(5))
-            } else {
-                // No workspace context - show all queued tasks
-                nextQueuedTasks = Array(tasks.filter { $0.status == queuedStatus }.prefix(5))
+        guard !queuedTaskIds.isEmpty else {
+            nextQueuedTasks = []
+            return
+        }
+
+        // Fetch tasks by ID, preserving queue order
+        let taskDescriptor = FetchDescriptor<WorkTask>()
+        if let allTasks = try? modelContext.fetch(taskDescriptor) {
+            // Map task IDs to tasks, preserving queue order
+            nextQueuedTasks = queuedTaskIds.compactMap { taskId in
+                allTasks.first { $0.id == taskId }
             }
         }
 
@@ -537,149 +545,153 @@ struct InboxEventDetailView: View {
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
-                // Header
-                header
+        ZStack(alignment: .bottom) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // Header
+                    header
 
-                // Task context for permission requests
-                if isPermissionRequest, let title = taskTitle {
-                    HStack(spacing: 8) {
-                        Image(systemName: "doc.text.fill")
-                            .foregroundStyle(.secondary)
-                        Text("Task: \(title)")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-
-                // Allow/Deny buttons for permission requests
-                if isPermissionRequest && !isResolved {
-                    HStack(spacing: 12) {
-                        Spacer()
-                        Button {
-                            sendPermissionResponse(allow: false)
-                        } label: {
-                            Label("Deny", systemImage: "xmark.circle.fill")
+                    // Task context for permission requests
+                    if isPermissionRequest, let title = taskTitle {
+                        HStack(spacing: 8) {
+                            Image(systemName: "doc.text.fill")
+                                .foregroundStyle(.secondary)
+                            Text("Task: \(title)")
+                                .font(.subheadline)
+                                .foregroundStyle(.secondary)
                         }
-                        .buttonStyle(.bordered)
-                        .tint(.red)
-                        .controlSize(.large)
-
-                        Button {
-                            sendPermissionResponse(allow: true)
-                        } label: {
-                            Label("Allow", systemImage: "checkmark.circle.fill")
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .tint(.green)
-                        .controlSize(.large)
                     }
-                }
 
-                // Task metrics snapshot (only available for completion events)
-                if let snapshot = metricsSnapshot {
-                    metricsSection(snapshot)
-                }
+                    // Task metrics snapshot (only available for completion events)
+                    if let snapshot = metricsSnapshot {
+                        metricsSection(snapshot)
+                    }
 
-                // Cost breakdown by segments (from CostTracker)
-                if isCompletionEvent && !taskSegments.isEmpty {
-                    Divider()
-                    costBreakdownSection
-                }
+                    // Cost breakdown by segments (from CostTracker)
+                    if isCompletionEvent && !taskSegments.isEmpty {
+                        Divider()
+                        costBreakdownSection
+                    }
 
-                // Permissions recap for completion events
-                if isCompletionEvent && !permissionEvents.isEmpty {
-                    Divider()
-                    permissionsRecapSection
-                }
+                    // Permissions recap for completion events
+                    if isCompletionEvent && !permissionEvents.isEmpty {
+                        Divider()
+                        permissionsRecapSection
+                    }
 
-                // Next queued tasks for completion events
-                if isCompletionEvent {
-                    Divider()
-                    nextTasksSection
-                }
+                    // Next queued tasks for completion events (only if there are tasks queued on this terminal)
+                    if isCompletionEvent && !nextQueuedTasks.isEmpty {
+                        Divider()
+                        nextTasksSection
+                    }
 
-                // Confirm button for completion events (after queue section)
-                if isCompletionEvent && !isResolved {
-                    HStack {
-                        Spacer()
-                        Button {
-                            // Resolve the current event
-                            inboxService.resolveEvent(event.id)
+                    // Confirm button for completion events (after queue section)
+                    if isCompletionEvent && !isResolved {
+                        HStack {
+                            Spacer()
+                            Button {
+                                // Resolve the current event
+                                inboxService.resolveEvent(event.id)
 
-                            // Start the next queued task if available
-                            #if os(macOS)
-                            if let nextTask = nextQueuedTasks.first,
-                               let workspaceId = nextTask.workspace?.id {
-                                // Update task status to running
-                                nextTask.status = TaskStatus.running.rawValue
-                                try? modelContext.save()
+                                // Mark the current task as completed
+                                if let task = currentTask {
+                                    task.updateStatus(.completed)
+                                    try? modelContext.save()
+                                }
 
-                                // Start the terminal session for this task
-                                let workingDir = nextTask.workspace?.path ?? FileManager.default.currentDirectoryPath
-                                _ = sessionManager.startSession(
-                                    for: nextTask,
-                                    workingDirectory: workingDir,
-                                    workspaceId: workspaceId
-                                )
+                                // Trigger queue consumption via notification
+                                // This will dequeue and start the next task if one is queued
+                                inboxService.confirmTaskCompletion(forPaneId: event.paneId)
+
+                                selection = nil
+                            } label: {
+                                Label(nextQueuedTasks.isEmpty ? "Done" : "Complete and Continue", systemImage: nextQueuedTasks.isEmpty ? "checkmark.circle.fill" : "arrow.right.circle.fill")
                             }
-                            #endif
-
-                            selection = nil
-                        } label: {
-                            Label(nextQueuedTasks.isEmpty ? "Done" : "Complete and Continue", systemImage: nextQueuedTasks.isEmpty ? "checkmark.circle.fill" : "arrow.right.circle.fill")
+                            .buttonStyle(.borderedProminent)
+                            .tint(nextQueuedTasks.isEmpty ? .green : .blue)
+                            .controlSize(.large)
                         }
-                        .buttonStyle(.borderedProminent)
-                        .tint(nextQueuedTasks.isEmpty ? .green : .blue)
-                        .controlSize(.large)
+                    }
+
+                    // Tool input section for permission requests (with diff view for Edit/Write tools)
+                    if let input = event.event.toolInput {
+                        if event.event.toolName == "Edit",
+                           let filePath = input["file_path"]?.value as? String,
+                           let oldString = input["old_string"]?.value as? String,
+                           let newString = input["new_string"]?.value as? String {
+                            // Show diff view for Edit tool
+                            EditToolDiffView(
+                                filePath: filePath,
+                                oldString: oldString,
+                                newString: newString
+                            )
+                            .frame(minHeight: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                            )
+                        } else if event.event.toolName == "Write",
+                                  let filePath = input["file_path"]?.value as? String,
+                                  let content = input["content"]?.value as? String {
+                            // Show diff view for Write tool
+                            WriteToolDiffView(
+                                filePath: filePath,
+                                content: content
+                            )
+                            .frame(minHeight: 200)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .stroke(Color.primary.opacity(0.1), lineWidth: 1)
+                            )
+                        } else {
+                            // Show raw tool input for other tools
+                            toolInputSection(input)
+                        }
+                    }
+
+                    // Bottom padding to make room for floating buttons
+                    if isPermissionRequest && !isResolved {
+                        Color.clear.frame(height: 100)
                     }
                 }
-
-                // Tool input section for permission requests (with diff view for Edit/Write tools)
-                if let input = event.event.toolInput {
-                    if event.event.toolName == "Edit",
-                       let filePath = input["file_path"]?.value as? String,
-                       let oldString = input["old_string"]?.value as? String,
-                       let newString = input["new_string"]?.value as? String {
-                        // Show diff view for Edit tool
-                        EditToolDiffView(
-                            filePath: filePath,
-                            oldString: oldString,
-                            newString: newString
-                        )
-                        .frame(minHeight: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-                        )
-                    } else if event.event.toolName == "Write",
-                              let filePath = input["file_path"]?.value as? String,
-                              let content = input["content"]?.value as? String {
-                        // Show diff view for Write tool
-                        WriteToolDiffView(
-                            filePath: filePath,
-                            content: content
-                        )
-                        .frame(minHeight: 200)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                        .overlay(
-                            RoundedRectangle(cornerRadius: 8)
-                                .stroke(Color.primary.opacity(0.1), lineWidth: 1)
-                        )
-                    } else {
-                        // Show raw tool input for other tools
-                        toolInputSection(input)
-                    }
-                }
-
+                .padding()
             }
-            .padding()
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+
+            // Floating action buttons for permission requests
+            if isPermissionRequest && !isResolved {
+                permissionActionButtons
+            }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear {
             fetchEventData()
+        }
+        .onChange(of: taskQueueService.terminalQueues[event.paneId]) { _, _ in
+            // Refresh queued tasks when the queue changes
+            refreshQueuedTasks()
+        }
+    }
+
+    /// Refresh only the queued tasks list (lighter weight than full fetch)
+    private func refreshQueuedTasks() {
+        guard isCompletionEvent else { return }
+
+        let paneId = event.paneId
+        let queuedTaskIds = taskQueueService.tasksQueued(onTerminal: paneId)
+
+        guard !queuedTaskIds.isEmpty else {
+            nextQueuedTasks = []
+            return
+        }
+
+        // Fetch tasks by ID, preserving queue order
+        let taskDescriptor = FetchDescriptor<WorkTask>()
+        if let allTasks = try? modelContext.fetch(taskDescriptor) {
+            nextQueuedTasks = queuedTaskIds.compactMap { taskId in
+                allTasks.first { $0.id == taskId }
+            }
         }
     }
 
@@ -783,24 +795,24 @@ struct InboxEventDetailView: View {
                 Text("Up Next")
                     .font(.headline)
                 Spacer()
-                if !nextQueuedTasks.isEmpty {
-                    Text("\(nextQueuedTasks.count) queued")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
+                Text("\(nextQueuedTasks.count) queued")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
             }
 
-            if nextQueuedTasks.isEmpty {
-                HStack {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.green)
-                    Text("No tasks in queue")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-                .padding(.vertical, 8)
-            } else {
+            Group {
                 ForEach(Array(nextQueuedTasks.enumerated()), id: \.element.id) { index, task in
+                    let isBeingDragged = draggingTaskId == task.id
+
+                    // Show drop placeholder before this item if it's the drop target
+                    if let targetIndex = dropTargetIndex,
+                       targetIndex == index,
+                       !isBeingDragged {
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color(red: 0.078, green: 0.078, blue: 0.078))
+                            .frame(height: 28)
+                    }
+
                     HStack(spacing: 8) {
                         Image(systemName: "line.3.horizontal")
                             .foregroundStyle(.tertiary)
@@ -826,9 +838,12 @@ struct InboxEventDetailView: View {
                     .padding(.horizontal, 8)
                     .background(
                         RoundedRectangle(cornerRadius: 6)
-                            .fill(draggingTaskId == task.id ? Color.accentColor.opacity(0.1) : Color.clear)
+                            .fill(Color.clear)
                     )
                     .contentShape(Rectangle())
+                    .frame(height: isBeingDragged ? 0 : nil)
+                    .opacity(isBeingDragged ? 0 : 1)
+                    .clipped()
                     .onDrag {
                         draggingTaskId = task.id
                         return NSItemProvider(object: task.id.uuidString as NSString)
@@ -843,28 +858,34 @@ struct InboxEventDetailView: View {
                             }
                         }
                     )) { providers in
-                        guard let provider = providers.first else { return false }
+                        // Capture state before clearing - must clear synchronously
+                        // to ensure task reappears even if async callback fails
+                        let targetIndex = index
+                        let currentDropTarget = dropTargetIndex
+                        draggingTaskId = nil
+                        dropTargetIndex = nil
+
+                        guard let provider = providers.first,
+                              currentDropTarget == targetIndex else {
+                            return false
+                        }
 
                         provider.loadObject(ofClass: NSString.self) { item, _ in
-                            guard let droppedId = item as? String,
-                                  let droppedUUID = UUID(uuidString: droppedId),
-                                  let fromIndex = nextQueuedTasks.firstIndex(where: { $0.id == droppedUUID }),
-                                  fromIndex != index else {
-                                return
-                            }
                             DispatchQueue.main.async {
-                                moveTask(from: fromIndex, to: index)
+                                guard let droppedId = item as? String,
+                                      let droppedUUID = UUID(uuidString: droppedId),
+                                      let fromIndex = nextQueuedTasks.firstIndex(where: { $0.id == droppedUUID }),
+                                      fromIndex != targetIndex else {
+                                    return
+                                }
+                                moveTask(from: fromIndex, to: targetIndex)
                             }
                         }
                         return true
                     }
-                    .overlay {
-                        if dropTargetIndex == index && draggingTaskId != task.id {
-                            RoundedRectangle(cornerRadius: 6)
-                                .fill(Color(red: 0.078, green: 0.078, blue: 0.078))
-                        }
-                    }
                 }
+                .animation(.easeInOut(duration: 0.2), value: draggingTaskId)
+                .animation(.easeInOut(duration: 0.15), value: dropTargetIndex)
             }
         }
     }
@@ -873,41 +894,14 @@ struct InboxEventDetailView: View {
     private func moveTask(from sourceIndex: Int, to destinationIndex: Int) {
         let movedTask = nextQueuedTasks[sourceIndex]
 
-        // Calculate new priority based on neighbors (midpoint algorithm)
-        // Priority is sorted descending, so higher priority = earlier in list
-        let newPriority: Int
-
-        if destinationIndex == 0 {
-            // Moving to top - take priority above the current first item
-            let firstPriority = nextQueuedTasks.first?.priority ?? 0
-            newPriority = firstPriority + 100
-        } else if destinationIndex >= nextQueuedTasks.count - 1 || (destinationIndex == nextQueuedTasks.count - 1 && sourceIndex != nextQueuedTasks.count - 1) {
-            // Moving to bottom - take priority below the last item
-            let lastPriority = nextQueuedTasks.last?.priority ?? 0
-            newPriority = max(0, lastPriority - 100)
-        } else {
-            // Moving between two items - use midpoint
-            let adjustedDest = sourceIndex < destinationIndex ? destinationIndex : destinationIndex - 1
-            let aboveIndex = adjustedDest
-            let belowIndex = adjustedDest + 1
-            let abovePriority = nextQueuedTasks[aboveIndex].priority
-            let belowPriority = nextQueuedTasks[belowIndex].priority
-            newPriority = (abovePriority + belowPriority) / 2
-        }
-
-        // Update the array for immediate UI feedback
+        // Update the local array for immediate UI feedback
         nextQueuedTasks.remove(at: sourceIndex)
-        let insertIndex = sourceIndex < destinationIndex ? destinationIndex : destinationIndex
+        // After removal, indices shift down - adjust destination if moving forward
+        let insertIndex = sourceIndex < destinationIndex ? destinationIndex - 1 : destinationIndex
         nextQueuedTasks.insert(movedTask, at: insertIndex)
 
-        // Clear drag state
-        draggingTaskId = nil
-        dropTargetIndex = nil
-
-        // Persist the new priority
-        Task { @MainActor in
-            movedTask.updatePriority(newPriority)
-        }
+        // Persist the reorder in TaskQueueService
+        taskQueueService.reorder(taskId: movedTask.id, toIndex: insertIndex, inTerminal: event.paneId)
     }
 
     @ViewBuilder
@@ -929,6 +923,82 @@ struct InboxEventDetailView: View {
 
             Spacer()
         }
+    }
+
+    // MARK: - Permission Action Buttons
+
+    @ViewBuilder
+    private var permissionActionButtons: some View {
+        let options = event.permissionOptions
+
+        VStack(spacing: 12) {
+            // Primary row: Yes and No buttons
+            HStack(spacing: 16) {
+                // No button (last option, destructive)
+                if let noOption = options.last, noOption.isDestructive {
+                    Button {
+                        sendPermissionResponse(option: noOption)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "xmark")
+                                .fontWeight(.semibold)
+                            Text(noOption.shortLabel)
+                                .fontWeight(.semibold)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 14)
+                        .background(Color.red)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                        .shadow(color: .red.opacity(0.3), radius: 8, y: 4)
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                // Yes button (first option)
+                if let yesOption = options.first, !yesOption.isDestructive {
+                    Button {
+                        sendPermissionResponse(option: yesOption)
+                    } label: {
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark")
+                                .fontWeight(.semibold)
+                            Text(yesOption.shortLabel)
+                                .fontWeight(.semibold)
+                        }
+                        .padding(.horizontal, 24)
+                        .padding(.vertical, 14)
+                        .background(Color.green)
+                        .foregroundStyle(.white)
+                        .clipShape(Capsule())
+                        .shadow(color: .green.opacity(0.3), radius: 8, y: 4)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+
+            // Secondary row: Session-wide options (middle options)
+            let middleOptions = options.dropFirst().dropLast()
+            if !middleOptions.isEmpty {
+                HStack(spacing: 10) {
+                    ForEach(Array(middleOptions)) { option in
+                        Button {
+                            sendPermissionResponse(option: option)
+                        } label: {
+                            Text(option.shortLabel)
+                                .fontWeight(.medium)
+                                .padding(.horizontal, 16)
+                                .padding(.vertical, 8)
+                                .background(Color.green.opacity(0.15))
+                                .foregroundStyle(.green)
+                                .clipShape(Capsule())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+        }
+        .padding(.bottom, 20)
     }
 
     private var headerIcon: String {

@@ -18,7 +18,7 @@ struct visionOSContentView: View {
     @Environment(\.dismissImmersiveSpace) private var dismissImmersiveSpace
     @Query(sort: \Workspace.updatedAt, order: .reverse) private var workspaces: [Workspace]
 
-    @State private var selectedSection: SidebarSection? = .queue(.queued)
+    @State private var selectedSection: SidebarSection? = .queue(.backlog)
     @State private var selectedInboxEvent: InboxEvent?
     @State private var selectedMember: OrganizationMember?
     @State private var columnVisibility: NavigationSplitViewVisibility = .all
@@ -223,7 +223,7 @@ struct VisionSidebarView: View {
                     Image(systemName: "rectangle.stack")
                         .foregroundStyle(.blue)
                 }
-                .tag(SidebarSection.queue(.queued))
+                .tag(SidebarSection.queue(.backlog))
 
                 // Agents
                 Label {
@@ -451,7 +451,7 @@ struct VisionTaskListView: View {
     }
 
     private var queuedTasks: [WorkTask] {
-        tasks.filter { $0.taskStatus == .queued }.sorted { $0.priority < $1.priority }
+        tasks.filter { $0.taskStatus.isPending }.sorted { $0.priority < $1.priority }
     }
 
     private var completedTasks: [WorkTask] {
@@ -521,7 +521,7 @@ struct VisionTaskRow: View {
     private var statusColor: Color {
         switch task.taskStatus {
         case .running: return .green
-        case .queued: return .blue
+        case .backlog, .queued: return .blue
         case .completed: return .secondary
         case .inReview: return .orange
         case .aborted: return .red
