@@ -10,67 +10,106 @@ struct WorkspacePickerView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
     @Query(sort: \Workspace.updatedAt, order: .reverse) private var workspaces: [Workspace]
+    @State private var selectedWorkspaceId: UUID?
     @State private var hoveredWorkspaceId: UUID?
     @State private var isTargeted = false
 
-    var body: some View {
-        HStack(spacing: 0) {
-            // Left side - Recent Workspaces
-            recentWorkspacesPanel
-
-            Divider()
-
-            // Right side - Open Directory
-            openDirectoryPanel
-        }
-        .frame(width: 700, height: 480)
-        .background(.background)
+    private var appVersion: String {
+        Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
-    // MARK: - Recent Workspaces Panel
+    var body: some View {
+        HStack(spacing: 0) {
+            // Left side - Branding and Actions
+            brandingPanel
+
+            // Right side - Recent Workspaces
+            recentWorkspacesPanel
+        }
+        .frame(width: 760, height: 420)
+        .clipShape(RoundedRectangle(cornerRadius: 12))
+        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
+            handleDrop(providers: providers)
+        }
+    }
+
+    // MARK: - Branding Panel (Left)
+
+    private var brandingPanel: some View {
+        VStack(spacing: 0) {
+            Spacer()
+
+            // App icon and title
+            VStack(spacing: 8) {
+                Image(nsImage: NSApp.applicationIconImage)
+                    .resizable()
+                    .aspectRatio(contentMode: .fit)
+                    .frame(width: 128, height: 128)
+
+                VStack(spacing: 2) {
+                    Text("Axel")
+                        .font(.system(size: 28, weight: .regular))
+                        .foregroundStyle(.white)
+
+                    Text("Version \(appVersion)")
+                        .font(.system(size: 12))
+                        .foregroundStyle(Color.white.opacity(0.5))
+                }
+            }
+
+            Spacer()
+
+            // Action buttons
+            VStack(spacing: 6) {
+                XcodeStyleButton(
+                    icon: "folder",
+                    title: "Open Workspace...",
+                    action: selectDirectory
+                )
+            }
+            .padding(.horizontal, 24)
+
+            Spacer()
+                .frame(height: 40)
+        }
+        .frame(width: 280)
+        .background(Color(white: 0.12))
+    }
+
+    // MARK: - Recent Workspaces Panel (Right)
 
     private var recentWorkspacesPanel: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Header
-            VStack(alignment: .leading, spacing: 4) {
-                Text("Recent")
-                    .font(.title2.weight(.semibold))
-                Text("Open a recently used workspace")
-                    .font(.subheadline)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 20)
-            .padding(.top, 24)
-            .padding(.bottom, 16)
-
-            Divider()
-                .padding(.horizontal, 20)
-
-            // Workspaces list
+        VStack(spacing: 0) {
             if workspaces.isEmpty {
                 recentEmptyState
             } else {
                 ScrollView {
-                    LazyVStack(spacing: 2) {
+                    LazyVStack(spacing: 0) {
                         ForEach(workspaces) { workspace in
                             RecentWorkspaceRow(
                                 workspace: workspace,
+                                isSelected: selectedWorkspaceId == workspace.id,
                                 isHovered: hoveredWorkspaceId == workspace.id,
                                 onOpen: { openWorkspace(workspace) },
                                 onDelete: { deleteWorkspace(workspace) }
                             )
+                            .onTapGesture(count: 2) {
+                                openWorkspace(workspace)
+                            }
+                            .onTapGesture(count: 1) {
+                                selectedWorkspaceId = workspace.id
+                            }
                             .onHover { isHovered in
                                 hoveredWorkspaceId = isHovered ? workspace.id : nil
                             }
                         }
                     }
                     .padding(.vertical, 8)
-                    .padding(.horizontal, 12)
                 }
             }
         }
-        .frame(width: 340)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(Color(white: 0.18))
     }
 
     private var recentEmptyState: some View {
@@ -79,103 +118,21 @@ struct WorkspacePickerView: View {
 
             Image(systemName: "clock.arrow.circlepath")
                 .font(.system(size: 36))
-                .foregroundStyle(.quaternary)
+                .foregroundStyle(Color.white.opacity(0.2))
 
             Text("No Recent Workspaces")
                 .font(.headline)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(Color.white.opacity(0.5))
 
             Text("Workspaces you open will appear here")
                 .font(.caption)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(Color.white.opacity(0.3))
                 .multilineTextAlignment(.center)
 
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .padding()
-    }
-
-    // MARK: - Open Directory Panel
-
-    private var openDirectoryPanel: some View {
-        VStack(spacing: 24) {
-            Spacer()
-
-            // App icon and title
-            VStack(spacing: 16) {
-                Image(systemName: "square.stack.3d.up.fill")
-                    .font(.system(size: 56))
-                    .foregroundStyle(.tint)
-                    // .symbolEffect(.pulse, options: .repeating.speed(0.3))  // Disabled - causes hang
-
-                VStack(spacing: 4) {
-                    Text("Axel")
-                        .font(.largeTitle.weight(.bold))
-
-                    Text("AI-Assisted Development")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            Spacer()
-
-            // Drop zone / Open button
-            openDirectoryDropZone
-
-            Spacer()
-
-            // Keyboard hint
-            Text("Or drag a folder here")
-                .font(.caption)
-                .foregroundStyle(.tertiary)
-                .padding(.bottom, 8)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(24)
-    }
-
-    private var openDirectoryDropZone: some View {
-        Button {
-            selectDirectory()
-        } label: {
-            VStack(spacing: 16) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 16)
-                        .strokeBorder(
-                            isTargeted ? Color.accentColor : Color.secondary.opacity(0.3),
-                            style: StrokeStyle(lineWidth: 2, dash: [8, 4])
-                        )
-                        .background(
-                            RoundedRectangle(cornerRadius: 16)
-                                .fill(isTargeted ? Color.accentColor.opacity(0.1) : Color.clear)
-                        )
-
-                    VStack(spacing: 12) {
-                        Image(systemName: "folder.badge.plus")
-                            .font(.system(size: 40))
-                            .foregroundStyle(isTargeted ? Color.accentColor : Color.secondary)
-
-                        VStack(spacing: 4) {
-                            Text("Open Directory")
-                                .font(.headline)
-                                .foregroundStyle(.primary)
-
-                            Text("Select a project folder")
-                                .font(.caption)
-                                .foregroundStyle(.secondary)
-                        }
-                    }
-                    .padding(32)
-                }
-            }
-        }
-        .buttonStyle(.plain)
-        .frame(width: 240, height: 160)
-        .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
-            handleDrop(providers: providers)
-        }
     }
 
     // MARK: - Actions
@@ -274,70 +231,120 @@ struct WorkspacePickerView: View {
     }
 }
 
+// MARK: - Xcode-Style Button
+
+struct XcodeStyleButton: View {
+    let icon: String
+    let title: String
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 10) {
+                // Icon in dark rounded rect
+                Image(systemName: icon)
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(Color.white.opacity(0.8))
+                    .frame(width: 28, height: 28)
+                    .background(
+                        RoundedRectangle(cornerRadius: 6)
+                            .fill(Color.white.opacity(0.1))
+                    )
+
+                Text(title)
+                    .font(.system(size: 13))
+                    .foregroundStyle(Color.white.opacity(0.85))
+
+                Spacer()
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isHovered ? Color.white.opacity(0.08) : Color.clear)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering in
+            isHovered = hovering
+        }
+    }
+}
+
 // MARK: - Recent Workspace Row
 
 struct RecentWorkspaceRow: View {
     let workspace: Workspace
+    let isSelected: Bool
     let isHovered: Bool
     let onOpen: () -> Void
     let onDelete: () -> Void
 
     @State private var showDeleteConfirmation = false
 
+    private var pathExists: Bool {
+        guard let path = workspace.path else { return false }
+        return FileManager.default.fileExists(atPath: path)
+    }
+
     var body: some View {
-        Button(action: onOpen) {
-            HStack(spacing: 12) {
-                // Folder icon with color based on path existence
-                folderIcon
+        HStack(spacing: 10) {
+            // Folder icon (Xcode-style)
+            folderIcon
 
-                // Workspace info
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(workspace.name)
-                        .font(.body.weight(.medium))
-                        .foregroundStyle(.primary)
+            // Workspace info
+            VStack(alignment: .leading, spacing: 1) {
+                Text(workspace.name)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(isSelected ? .white : Color.white.opacity(0.9))
+                    .lineLimit(1)
+
+                if let path = workspace.path {
+                    Text(abbreviatePath(path))
+                        .font(.system(size: 11))
+                        .foregroundStyle(isSelected ? .white.opacity(0.7) : Color.white.opacity(0.45))
                         .lineLimit(1)
-
-                    if let path = workspace.path {
-                        Text(abbreviatePath(path))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                    } else {
-                        Text("No directory")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    }
-                }
-
-                Spacer()
-
-                // Time ago
-                Text(workspace.updatedAt, style: .relative)
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
-
-                // Delete button (shown on hover)
-                if isHovered {
-                    Button {
-                        showDeleteConfirmation = true
-                    } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .font(.body)
-                            .foregroundStyle(.secondary)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Remove from recent")
+                } else {
+                    Text("No directory")
+                        .font(.system(size: 11))
+                        .foregroundStyle(isSelected ? .white.opacity(0.5) : Color.white.opacity(0.3))
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .background(
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(isHovered ? Color.accentColor.opacity(0.1) : Color.clear)
-            )
-            .contentShape(Rectangle())
+
+            Spacer()
+
+            // Delete button (shown on hover, not when selected)
+            if isHovered && !isSelected {
+                Button {
+                    showDeleteConfirmation = true
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                        .font(.system(size: 14))
+                        .foregroundStyle(Color.white.opacity(0.4))
+                }
+                .buttonStyle(.plain)
+                .help("Remove from recent")
+            }
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            Group {
+                if isSelected {
+                    Color.accentColor
+                } else if isHovered {
+                    Color.white.opacity(0.06)
+                } else {
+                    Color.clear
+                }
+            }
+        )
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .padding(.horizontal, 8)
+        .contentShape(Rectangle())
         .confirmationDialog("Remove Workspace?", isPresented: $showDeleteConfirmation) {
             Button("Remove", role: .destructive, action: onDelete)
             Button("Cancel", role: .cancel) {}
@@ -347,20 +354,9 @@ struct RecentWorkspaceRow: View {
     }
 
     private var folderIcon: some View {
-        ZStack {
-            RoundedRectangle(cornerRadius: 6)
-                .fill(pathExists ? Color.accentColor.opacity(0.15) : Color.secondary.opacity(0.1))
-                .frame(width: 36, height: 36)
-
-            Image(systemName: pathExists ? "folder.fill" : "folder.badge.questionmark")
-                .font(.system(size: 18))
-                .foregroundStyle(pathExists ? Color.accentColor : Color.secondary)
-        }
-    }
-
-    private var pathExists: Bool {
-        guard let path = workspace.path else { return false }
-        return FileManager.default.fileExists(atPath: path)
+        Image(systemName: pathExists ? "folder.fill" : "folder.badge.questionmark")
+            .font(.system(size: 28))
+            .foregroundStyle(isSelected ? .white : Color(red: 0.35, green: 0.78, blue: 0.98))
     }
 
     private func abbreviatePath(_ path: String) -> String {

@@ -122,6 +122,10 @@ struct WorkspaceContentView: View {
         if let description = task.taskDescription, !description.isEmpty {
             prompt += "\n\n" + description
         }
+        if !task.attachments.isEmpty {
+            let fileUrls = task.attachments.map { $0.fileUrl }.joined(separator: ", ")
+            prompt += "\n\nAttached files: \(fileUrls)"
+        }
 
         // Send the prompt via outbox (tmux send-keys) for reliable delivery
         if let paneId = worker.paneId {
@@ -240,6 +244,10 @@ struct WorkspaceContentView: View {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
                 prompt += "\n\n" + description
+            }
+            if !task.attachments.isEmpty {
+                let fileUrls = task.attachments.map { $0.fileUrl }.joined(separator: ", ")
+                prompt += "\n\nAttached files: \(fileUrls)"
             }
             command += " --prompt \(prompt.shellEscaped)"
         }
@@ -1232,7 +1240,7 @@ struct WorkspaceSidebarView: View {
                     Text("Skills")
                 } icon: {
                     Image(systemName: "hammer.fill")
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
                 }
                 .padding(.leading, 16)
                 .tag(SidebarSection.optimizations(.skills))
@@ -1242,7 +1250,7 @@ struct WorkspaceSidebarView: View {
                     Text("Context")
                 } icon: {
                     Image(systemName: "briefcase.fill")
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.primary)
                 }
                 .padding(.leading, 16)
                 .tag(SidebarSection.optimizations(.context))

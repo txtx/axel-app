@@ -136,7 +136,8 @@ final class SyncEngineTests: XCTestCase {
         let originalData = Data([0x85, 0x6f, 0x4a, 0x83])
         let base64String = originalData.base64EncodedString() // "hW9Kgw=="
         let base64Bytes = base64String.data(using: .utf8)! // ASCII bytes of "hW9Kgw=="
-        let hexOfBase64 = "\\x" + base64Bytes.map { String(format: "%02x", $0) }.joined()
+        // Use \\\\x to create valid JSON with escaped backslash (\\x in JSON bytes -> \x when decoded)
+        let hexOfBase64 = "\\\\x" + base64Bytes.map { String(format: "%02x", $0) }.joined()
 
         let jsonData = "\"\(hexOfBase64)\"".data(using: .utf8)!
         let decoder = JSONDecoder()

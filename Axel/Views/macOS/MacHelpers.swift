@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 #if os(macOS)
 import AppKit
@@ -69,6 +70,7 @@ struct UpdatePill: View {
 // Orb - Token usage histogram display (connected to CostTracker)
 struct OrbView: View {
     @State private var costTracker = CostTracker.shared
+    @Environment(\.colorScheme) private var colorScheme
 
     private var histogramValues: [Double] {
         costTracker.globalHistogramValues
@@ -104,11 +106,11 @@ struct OrbView: View {
             HStack(spacing: 8) {
                 Text(formatTokenCount(totalTokens))
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(.orange)
+                    .foregroundStyle(colorScheme == .dark ? .orange : Color.orange.opacity(0.9))
                 if totalCost > 0 {
                     Text(String(format: "$%.4f", totalCost))
                         .font(.system(size: 11, weight: .medium).monospacedDigit())
-                        .foregroundStyle(.orange.opacity(0.8))
+                        .foregroundStyle(colorScheme == .dark ? .orange.opacity(0.8) : Color.orange.opacity(0.7))
                 }
             }
         }
@@ -117,7 +119,7 @@ struct OrbView: View {
         .frame(height: 32)
         .background(
             Capsule()
-                .fill(Color.orange.opacity(0.1))
+                .fill(colorScheme == .dark ? Color.orange.opacity(0.1) : Color.orange.opacity(0.15))
         )
         .animation(nil, value: histogramValues)
         .animation(nil, value: totalTokens)
@@ -1674,6 +1676,8 @@ struct CreateTaskView: View {
     var workspace: Workspace?
     @Environment(\.modelContext) private var modelContext
     @State private var title = ""
+    @State private var pendingAttachments: [(fileName: String, fileUrl: String)] = []
+    @State private var isFileDropTarget: Bool = false
     @FocusState private var isFocused: Bool
 
     var body: some View {
@@ -1730,9 +1734,48 @@ struct CreateTaskView: View {
             }
             .padding(20)
 
+            // Pending attachments display
+            if !pendingAttachments.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(pendingAttachments.indices, id: \.self) { index in
+                        HStack(spacing: 6) {
+                            Image(systemName: "doc.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Text(pendingAttachments[index].fileName)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Button {
+                                pendingAttachments.remove(at: index)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.primary.opacity(0.05))
+                        )
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+
             Spacer()
 
             HStack(spacing: 16) {
+                Text("Drop files to attach")
+                    .font(.callout)
+                    .foregroundStyle(.tertiary)
+                    .opacity(isFileDropTarget ? 1 : 0.5)
+
                 Spacer()
 
                 Text("Press ⏎ to save")
@@ -1750,8 +1793,16 @@ struct CreateTaskView: View {
             .padding(16)
             .background(.bar)
         }
-        .frame(width: 480, height: 180)
+        .frame(width: 480, height: pendingAttachments.isEmpty ? 180 : 180 + CGFloat(pendingAttachments.count * 30))
         .background(.background)
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(Color.blue.opacity(isFileDropTarget ? 0.6 : 0), lineWidth: 2)
+        )
+        .animation(.easeInOut(duration: 0.15), value: isFileDropTarget)
+        .onDrop(of: [.fileURL], isTargeted: $isFileDropTarget) { providers in
+            handleFileDrop(providers: providers)
+        }
         .onAppear {
             isFocused = true
         }
@@ -1805,12 +1856,46 @@ struct CreateTaskView: View {
         todo.workspace = workspace
         todo.priority = maxPriority + 50  // New tasks go to bottom of queue
         modelContext.insert(todo)
+
+        // Create attachments from pending files
+        for pending in pendingAttachments {
+            let attachment = TaskAttachment(
+                fileName: pending.fileName,
+                fileUrl: pending.fileUrl,
+                fileType: "file"
+            )
+            attachment.task = todo
+            modelContext.insert(attachment)
+        }
+
         isPresented = false
 
         // Sync to push the new task to Supabase
         Task {
             await SyncService.shared.performFullSync(context: modelContext)
         }
+    }
+
+    private func handleFileDrop(providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    guard let data = item as? Data,
+                          let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                    DispatchQueue.main.async {
+                        let fileName = url.lastPathComponent
+                        let fileUrl = url.path
+                        // Avoid duplicates
+                        if !pendingAttachments.contains(where: { $0.fileUrl == fileUrl }) {
+                            pendingAttachments.append((fileName: fileName, fileUrl: fileUrl))
+                        }
+                    }
+                }
+                handled = true
+            }
+        }
+        return handled
     }
 }
 

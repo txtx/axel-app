@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UniformTypeIdentifiers
 
 #if os(macOS)
 import AppKit
@@ -27,6 +28,7 @@ struct WorkspaceQueueListView: View {
     @State private var showDeleteConfirmation = false
     @State private var isClearingSelection = false  // Prevents onChange handlers from re-adding during clear
     @FocusState private var isListFocused: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
     // Running tasks (sorted by priority)
     private var runningTasks: [WorkTask] {
@@ -832,7 +834,7 @@ struct WorkspaceQueueListView: View {
     }
 
     private var backgroundView: some View {
-        Color(white: 27.0 / 255.0)
+        (colorScheme == .dark ? Color(white: 27.0 / 255.0) : Color.white)
             .onTapGesture {
                 clearSelection()
             }
@@ -1186,6 +1188,7 @@ struct TaskRow: View {
     @State private var isDescriptionFocused: Bool = false
     @State private var isStatusHovering: Bool = false
     @State private var showSkillPicker: Bool = false
+    @State private var isFileDropTarget: Bool = false
 
     private var isRunning: Bool {
         task.taskStatus == .running
@@ -1298,6 +1301,13 @@ struct TaskRow: View {
                     .background(.orange.opacity(0.15))
                     .clipShape(Capsule())
                 }
+
+                // Attachment indicator - shown when task has attachments
+                if !task.attachments.isEmpty {
+                    Image(systemName: "paperclip")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                }
             }
             .contextMenu {
                 if isQueued, let onRun = onRun {
@@ -1359,6 +1369,43 @@ struct TaskRow: View {
                     .truncationMode(.tail)
                     .padding(.top, 4)
                     .padding(.leading, 32)
+            }
+
+            // Attachments row - only in expanded state
+            if isExpanded && !task.attachments.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(task.attachments, id: \.id) { attachment in
+                        HStack(spacing: 6) {
+                            Image(systemName: "doc.fill")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                            Text(attachment.fileName)
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                                .truncationMode(.middle)
+                            Spacer()
+                            Button {
+                                modelContext.delete(attachment)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 9, weight: .medium))
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(Color.primary.opacity(0.05))
+                        )
+                    }
+                }
+                .padding(.top, 6)
+                .padding(.leading, 32)
+                .opacity(showNotes ? 1 : 0)
+                .animation(.easeIn(duration: 0.12), value: showNotes)
             }
 
             // Skills and Status row - only in expanded state
@@ -1478,6 +1525,11 @@ struct TaskRow: View {
                 .fill(isExpanded ? Color(white: 0.20) : (isHighlighted ? Color.orange.opacity(0.08) : .clear))
                 .shadow(color: isExpanded ? .black.opacity(0.3) : .clear, radius: isExpanded ? 8 : 0, y: isExpanded ? 4 : 0)
         )
+        .overlay(
+            RoundedRectangle(cornerRadius: isExpanded ? 10 : 6)
+                .strokeBorder(Color.blue.opacity(isFileDropTarget ? 0.6 : 0), lineWidth: 2)
+        )
+        .animation(.easeInOut(duration: 0.15), value: isFileDropTarget)
         .padding(.top, isDragTarget ? 44 : 0)
         .overlay(alignment: .top) {
             if isDragTarget {
@@ -1528,8 +1580,36 @@ struct TaskRow: View {
                 onStatusChange?()
             }
         }
+        .onDrop(of: [.fileURL], isTargeted: $isFileDropTarget) { providers in
+            handleFileDrop(providers: providers)
+        }
         .accessibilityIdentifier("TaskRow")
         .accessibilityLabel(task.title)
+    }
+
+    private func handleFileDrop(providers: [NSItemProvider]) -> Bool {
+        var handled = false
+        for provider in providers {
+            if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+                provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                    guard let data = item as? Data,
+                          let url = URL(dataRepresentation: data, relativeTo: nil) else { return }
+                    DispatchQueue.main.async {
+                        let fileName = url.lastPathComponent
+                        let fileUrl = url.path
+                        let attachment = TaskAttachment(
+                            fileName: fileName,
+                            fileUrl: fileUrl,
+                            fileType: "file"
+                        )
+                        attachment.task = task
+                        modelContext.insert(attachment)
+                    }
+                }
+                handled = true
+            }
+        }
+        return handled
     }
 }
 
