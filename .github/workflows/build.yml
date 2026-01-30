@@ -6,6 +6,16 @@ on:
       - main
     paths:
       - 'Axel/**'
+      - 'AxelTests/**'
+      - 'Packages/**'
+      - 'Axel.xcodeproj/**'
+      - '.github/workflows/build.yml'
+  pull_request:
+    branches:
+      - main
+    paths:
+      - 'Axel/**'
+      - 'AxelTests/**'
       - 'Packages/**'
       - 'Axel.xcodeproj/**'
       - '.github/workflows/build.yml'
@@ -20,14 +30,44 @@ on:
 env:
   SCHEME: Axel
   PRODUCT_NAME: Axel
-  XCODE_VERSION: '16.2'
+  XCODE_VERSION: '26.2'
   AWS_REGION: us-east-1
   S3_BUCKET: txtx-public
 
 jobs:
+  test:
+    name: Run Tests
+    runs-on: macos-26-arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app
+
+      - name: Run Unit Tests
+        run: |
+          xcodebuild test \
+            -scheme "${{ env.SCHEME }}" \
+            -project Axel.xcodeproj \
+            -destination "platform=macOS" \
+            -only-testing:AxelTests \
+            -resultBundlePath TestResults.xcresult
+
+      - name: Upload Test Results
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results
+          path: TestResults.xcresult
+
   build-macos:
     name: Build macOS App
-    runs-on: macos-15
+    needs: test
+    runs-on: macos-26-arm64
     outputs:
       version: ${{ steps.version.outputs.version }}
       dmg_name: ${{ steps.dmg.outputs.name }}
@@ -100,6 +140,33 @@ jobs:
           rm -rf ~/Library/Caches/org.swift.swiftpm
           rm -rf ~/Library/Developer/Xcode/DerivedData
 
+      - name: Download Axel CLI binary
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          # Detect architecture
+          ARCH=$(uname -m)
+          if [ "$ARCH" = "arm64" ]; then
+            PLATFORM="darwin-arm64"
+          else
+            PLATFORM="darwin-x64"
+          fi
+
+          # Get latest version from GitHub API
+          AXEL_VERSION=$(curl -s https://api.github.com/repos/txtx/axel/releases/latest | grep '"tag_name"' | sed -E 's/.*"([^"]+)".*/\1/')
+          echo "Downloading axel $AXEL_VERSION for $PLATFORM..."
+
+          # Download and extract
+          curl -fsSL "https://github.com/txtx/axel/releases/download/${AXEL_VERSION}/axel-${PLATFORM}.tar.gz" -o axel.tar.gz
+          mkdir -p axel-cli
+          tar -xzf axel.tar.gz -C axel-cli
+          chmod +x axel-cli/axel
+
+          # Verify binary works
+          ./axel-cli/axel --version || echo "Warning: Could not verify axel binary"
+
+          echo "axel_version=$AXEL_VERSION" >> $GITHUB_OUTPUT
+          echo "axel_platform=$PLATFORM" >> $GITHUB_OUTPUT
+
       - name: Build macOS app
         if: steps.check_release.outputs.should_release == 'true'
         run: |
@@ -121,6 +188,16 @@ jobs:
         run: |
           mkdir -p dist
           cp -R "build/Build/Products/Release/${{ env.PRODUCT_NAME }}.app" dist/
+
+      - name: Embed Axel CLI in app bundle
+        if: steps.check_release.outputs.should_release == 'true'
+        run: |
+          # Copy axel binary to app bundle Resources
+          APP_RESOURCES="dist/${{ env.PRODUCT_NAME }}.app/Contents/Resources"
+          cp axel-cli/axel "$APP_RESOURCES/axel"
+          chmod +x "$APP_RESOURCES/axel"
+          echo "Embedded axel CLI into app bundle at $APP_RESOURCES/axel"
+          ls -la "$APP_RESOURCES/axel"
 
       - name: Ad-hoc sign app (when no certificate)
         if: steps.check_release.outputs.should_release == 'true' && env.MACOS_CERTIFICATE == ''
@@ -207,9 +284,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Axel-macOS-${{ steps.version.outputs.version }}
-          path: |
-            dist/*.dmg
-            dist/appcast.xml
+          path: dist/
           if-no-files-found: warn
 
   publish-s3:

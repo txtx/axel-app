@@ -68,12 +68,14 @@ struct UpdatePill: View {
 }
 
 // Orb - Token usage histogram display (connected to CostTracker)
+// Shows histograms for each active AI provider
 struct OrbView: View {
     @State private var costTracker = CostTracker.shared
     @Environment(\.colorScheme) private var colorScheme
 
-    private var histogramValues: [Double] {
-        costTracker.globalHistogramValues
+    /// Providers that have terminals (even if no activity yet)
+    private var activeProviders: [AIProvider] {
+        costTracker.activeProviders
     }
 
     private var totalTokens: Int {
@@ -86,31 +88,20 @@ struct OrbView: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Histogram bars
-            HStack(alignment: .bottom, spacing: 2) {
-                ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(
-                            LinearGradient(
-                                colors: [.orange, .orange.opacity(0.7)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 5, height: max(3, CGFloat(value) * 20))
-                }
+            // Provider histograms
+            ForEach(activeProviders.isEmpty ? [AIProvider.claude] : activeProviders, id: \.self) { provider in
+                ProviderHistogramView(provider: provider, costTracker: costTracker, colorScheme: colorScheme)
             }
-            .frame(height: 20)
 
-            // Token count and cost - wider display
+            // Total token count and cost
             HStack(spacing: 8) {
                 Text(formatTokenCount(totalTokens))
                     .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(colorScheme == .dark ? .orange : Color.orange.opacity(0.9))
+                    .foregroundStyle(colorScheme == .dark ? Color.primary : Color.primary.opacity(0.9))
                 if totalCost > 0 {
                     Text(String(format: "$%.4f", totalCost))
                         .font(.system(size: 11, weight: .medium).monospacedDigit())
-                        .foregroundStyle(colorScheme == .dark ? .orange.opacity(0.8) : Color.orange.opacity(0.7))
+                        .foregroundStyle(colorScheme == .dark ? Color.secondary : Color.secondary.opacity(0.8))
                 }
             }
         }
@@ -119,10 +110,8 @@ struct OrbView: View {
         .frame(height: 32)
         .background(
             Capsule()
-                .fill(colorScheme == .dark ? Color.orange.opacity(0.1) : Color.orange.opacity(0.15))
+                .fill(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.1))
         )
-        .animation(nil, value: histogramValues)
-        .animation(nil, value: totalTokens)
     }
 
     private func formatTokenCount(_ count: Int) -> String {
@@ -132,6 +121,41 @@ struct OrbView: View {
             return String(format: "%.1fK", Double(count) / 1_000)
         }
         return "\(count)"
+    }
+}
+
+/// Histogram view for a single AI provider
+private struct ProviderHistogramView: View {
+    let provider: AIProvider
+    let costTracker: CostTracker
+    let colorScheme: ColorScheme
+
+    private var histogramValues: [Double] {
+        costTracker.histogramValues(forProvider: provider)
+    }
+
+    var body: some View {
+        HStack(spacing: 4) {
+            // Provider icon
+            AIProviderIcon(provider: provider, size: 10)
+                .opacity(0.8)
+
+            // Histogram bars
+            HStack(alignment: .bottom, spacing: 2) {
+                ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
+                    RoundedRectangle(cornerRadius: 1.5)
+                        .fill(
+                            LinearGradient(
+                                colors: [provider.color, provider.color.opacity(0.7)],
+                                startPoint: .top,
+                                endPoint: .bottom
+                            )
+                        )
+                        .frame(width: 5, height: max(3, CGFloat(value) * 20))
+                }
+            }
+            .frame(height: 20)
+        }
     }
 }
 

@@ -54,21 +54,20 @@ struct WorkspaceContentView: View {
     }
 
     /// Start a terminal session, optionally linked to a task
-    /// - If any terminals exist (running or idle), shows a picker panel
-    /// - If no terminals exist, creates a new one and shows floating miniature
-    private func startTerminal(for task: WorkTask? = nil) {
+    /// - If task is provided, always show picker to choose agent/provider
+    /// - If no task, create a new terminal immediately
+    private func startTerminal(for task: WorkTask? = nil, provider: AIProvider = .claude) {
         let hasExistingSessions = !sessionManager.sessions(for: workspace.id).isEmpty
-        print("[WorkspaceContentView] startTerminal: task='\(task?.title ?? "nil")', hasExistingSessions=\(hasExistingSessions)")
+        print("[WorkspaceContentView] startTerminal: task='\(task?.title ?? "nil")', hasExistingSessions=\(hasExistingSessions), provider=\(provider.displayName)")
 
-        if task != nil && hasExistingSessions {
-            // Terminals exist - show picker to let user choose or create new
-            // Using sheet(item:) so setting the task triggers the sheet
+        if task != nil {
+            // Always show picker to allow provider + session selection
             pendingTaskForPicker = task
             print("[WorkspaceContentView] → Set pendingTaskForPicker to trigger sheet")
         } else {
-            // No terminals or no task - create new terminal
+            // No task - create new terminal
             print("[WorkspaceContentView] → Creating new terminal")
-            createNewTerminal(for: task)
+            createNewTerminal(for: task, provider: provider)
         }
     }
 
@@ -206,7 +205,7 @@ struct WorkspaceContentView: View {
     /// - Parameters:
     ///   - task: Optional task to run on the new terminal
     ///   - worktreeBranch: Optional git worktree branch to use (nil = main workspace)
-    private func createNewTerminal(for task: WorkTask? = nil, worktreeBranch: String? = nil) {
+    private func createNewTerminal(for task: WorkTask? = nil, worktreeBranch: String? = nil, provider: AIProvider = .claude) {
         // Update task status if provided
         task?.updateStatus(.running)
 
@@ -224,6 +223,7 @@ struct WorkspaceContentView: View {
         terminal.worktreeBranch = worktreeBranch
         terminal.workspace = workspace
         terminal.status = TerminalStatus.running.rawValue
+        terminal.provider = provider
         modelContext.insert(terminal)
 
         // Check if workspace needs initialization (no AXEL.md)
@@ -233,7 +233,9 @@ struct WorkspaceContentView: View {
         )
 
         // Build command with pane-id and port
-        var command = "\(initPrefix)axel claude --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
+        // Use executablePath which prefers PATH version, falls back to bundled binary
+        let axelPath = AxelSetupService.shared.executablePath
+        var command = "\(initPrefix)\(axelPath) \(provider.commandName) --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
 
         // Add worktree flag if specified (axel-cli will create worktree if needed)
         if let branch = worktreeBranch {
@@ -255,13 +257,17 @@ struct WorkspaceContentView: View {
         // Connect to this terminal's SSE endpoint
         InboxService.shared.connect(paneId: paneId, port: port)
 
+        // Register provider with CostTracker for this terminal
+        _ = CostTracker.shared.tracker(forPaneId: paneId, provider: provider)
+
         let session = sessionManager.startSession(
             for: task,
             paneId: paneId,
             command: command,
             workingDirectory: workspace.path,
             workspaceId: workspace.id,
-            worktreeBranch: worktreeBranch
+            worktreeBranch: worktreeBranch,
+            provider: provider
         )
 
         // Show floating miniature or navigate to Agents menu
@@ -359,7 +365,7 @@ struct WorkspaceContentView: View {
                 filter: currentTaskFilter,
                 highlightedTask: $selectedTask,
                 onNewTask: { appState.isNewTaskPresented = true },
-                onStartTerminal: startTerminal
+                onStartTerminal: { task in startTerminal(for: task) }
             )
         case .optimizations(.overview):
             OptimizationsOverviewView(workspace: workspace)
@@ -538,10 +544,10 @@ struct WorkspaceContentView: View {
                 workspace: workspace,
                 appState: appState,
                 pendingTaskForPicker: $pendingTaskForPicker,
-                onStartTerminal: startTerminal,
+                onStartTerminal: { task in startTerminal(for: task) },
                 onAssignTask: assignTaskToWorker,
-                onCreateNewTerminal: { task in createNewTerminal(for: task) },
-                onCreateWorktreeTerminal: { task, branch in createNewTerminal(for: task, worktreeBranch: branch) }
+                onCreateNewTerminal: { task, provider in createNewTerminal(for: task, provider: provider) },
+                onCreateWorktreeTerminal: { task, branch, provider in createNewTerminal(for: task, worktreeBranch: branch, provider: provider) }
             ))
             .overlay(alignment: .bottomTrailing) { floatingTerminalOverlay }
             .modifier(WorkspaceLifecycleModifier(
@@ -812,8 +818,8 @@ private struct WorkspaceSheetModifier: ViewModifier {
     @Binding var pendingTaskForPicker: WorkTask?
     let onStartTerminal: (WorkTask) -> Void
     let onAssignTask: (WorkTask, TerminalSession) -> Void
-    let onCreateNewTerminal: (WorkTask?) -> Void
-    let onCreateWorktreeTerminal: (WorkTask?, String) -> Void
+    let onCreateNewTerminal: (WorkTask?, AIProvider) -> Void
+    let onCreateWorktreeTerminal: (WorkTask?, String, AIProvider) -> Void
 
     func body(content: Content) -> some View {
         content
@@ -828,19 +834,19 @@ private struct WorkspaceSheetModifier: ViewModifier {
                 WorkerPickerPanel(
                     workspaceId: workspace.id,
                     workspacePath: workspace.path,
-                    onSelect: { selectedWorker in
+                    onSelect: { selectedWorker, provider in
                         print("[WorkerPicker] Callback fired - task: \(task.title), selectedWorker: \(selectedWorker?.taskTitle ?? "nil (new agent)")")
                         if let worker = selectedWorker {
                             print("[WorkerPicker] → Assigning task '\(task.title)' to worker, hasTask: \(worker.hasTask), paneId: \(worker.paneId ?? "nil")")
                             onAssignTask(task, worker)
                         } else {
                             print("[WorkerPicker] → Creating new terminal for task '\(task.title)'")
-                            onCreateNewTerminal(task)
+                            onCreateNewTerminal(task, provider)
                         }
                     },
-                    onCreateWorktreeAgent: { branch in
+                    onCreateWorktreeAgent: { branch, provider in
                         print("[WorkerPicker] → Creating worktree terminal for task '\(task.title)' on branch '\(branch)'")
-                        onCreateWorktreeTerminal(task, branch)
+                        onCreateWorktreeTerminal(task, branch, provider)
                     }
                 )
             }
@@ -982,6 +988,7 @@ struct WorkspaceToolbarHeader: View {
     let workspace: Workspace
     @Binding var showTerminal: Bool
     @Environment(\.terminalSessionManager) private var sessionManager
+    @Environment(\.colorScheme) private var colorScheme
     @State private var costTracker = CostTracker.shared
 
     private var terminalsCount: Int {
@@ -992,8 +999,9 @@ struct WorkspaceToolbarHeader: View {
         workspace.tasks.filter { $0.taskStatus.isPending }.count
     }
 
-    private var histogramValues: [Double] {
-        costTracker.globalHistogramValues
+    /// Providers that have terminals (even if no activity yet)
+    private var activeProviders: [AIProvider] {
+        costTracker.activeProviders
     }
 
     private var totalTokens: Int {
@@ -1015,54 +1023,56 @@ struct WorkspaceToolbarHeader: View {
 
     var body: some View {
         HStack(spacing: 12) {
-            // Orange histogram from CostTracker
-            HStack(alignment: .bottom, spacing: 1.5) {
-                ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
-                    UnevenRoundedRectangle(topLeadingRadius: 1, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 1)
-                        .fill(Color.orange)
-                        .frame(width: 7, height: 2 + CGFloat(value) * 5)
-                }
+            // Per-provider histograms
+            ForEach(activeProviders.isEmpty ? [AIProvider.claude] : activeProviders, id: \.self) { provider in
+                ToolbarProviderHistogram(provider: provider, costTracker: costTracker)
             }
 
-            // Claude icon (glowing) + token count
-            HStack(spacing: 6) {
-                ClaudeIcon()
-                    .frame(width: 14, height: 10)
-                Text(formattedTokenCount)
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(Color(hex: "DCDCDC")!)
-            }
+            // Total token count
+            Text(formattedTokenCount)
+                .font(.system(size: 11, weight: .medium).monospacedDigit())
+                .foregroundStyle(colorScheme == .dark ? Color(hex: "DCDCDC")! : Color(hex: "666666")!)
 
             // Show cost if available
             if totalCost > 0 {
                 Text(String(format: "$%.2f", totalCost))
                     .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(Color(hex: "DCDCDC")!.opacity(0.7))
+                    .foregroundStyle(colorScheme == .dark ? Color(hex: "DCDCDC")!.opacity(0.7) : Color(hex: "666666")!.opacity(0.7))
             }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
         .background(
             Capsule()
-                .fill(Color(white: 0.08)) // Darker background
+                .fill(colorScheme == .dark ? Color(white: 0.08) : Color(hex: "F7F7F7")!)
         )
         .fixedSize()
     }
 }
 
-// MARK: - Claude Icon
+// MARK: - Toolbar Provider Histogram
 
-struct ClaudeIcon: View {
-    @State private var animationAmount: CGFloat = 0.5
+private struct ToolbarProviderHistogram: View {
+    let provider: AIProvider
+    let costTracker: CostTracker
+
+    private var histogramValues: [Double] {
+        costTracker.histogramValues(forProvider: provider)
+    }
 
     var body: some View {
-        ClaudeShape()
-            .fill(Color(hex: "DCDCDC")!.opacity(0.5 + animationAmount * 0.5))
-            .onAppear {
-                withAnimation(.easeInOut(duration: 1.2).repeatForever(autoreverses: true)) {
-                    animationAmount = 1.0
+        HStack(spacing: 4) {
+            AIProviderIcon(provider: provider, size: 12)
+                .opacity(0.8)
+
+            HStack(alignment: .bottom, spacing: 1.5) {
+                ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
+                    UnevenRoundedRectangle(topLeadingRadius: 1, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 1)
+                        .fill(provider.color)
+                        .frame(width: 7, height: 2 + CGFloat(value) * 5)
                 }
             }
+        }
     }
 }
 
@@ -1451,8 +1461,6 @@ struct WorkspaceCreateTaskView: View {
             Spacer()
 
             HStack(spacing: 16) {
-                Spacer()
-
                 Button {
                     createTask()
                 } label: {
@@ -1703,9 +1711,10 @@ struct CursorAtEndTextField: NSViewRepresentable {
 
 // MARK: - Multiline Title Field
 
-private class TitleTextView: NSTextView {
+class TitleTextView: NSTextView {
     var onEscape: (() -> Void)?
     var onTab: (() -> Void)?
+    private var lastLineCount: Int = 1
 
     override func cancelOperation(_ sender: Any?) {
         window?.makeFirstResponder(nil)
@@ -1731,12 +1740,39 @@ private class TitleTextView: NSTextView {
 
     override func didChangeText() {
         super.didChangeText()
-        invalidateIntrinsicContentSize()
+        // Only invalidate intrinsic content size if line count changed (due to word wrapping or Enter)
+        let newLineCount = countRenderedLines()
+        if newLineCount != lastLineCount {
+            lastLineCount = newLineCount
+            invalidateIntrinsicContentSize()
+        }
+    }
+
+    /// Count the actual number of rendered lines (includes word-wrapped lines)
+    private func countRenderedLines() -> Int {
+        guard let manager = layoutManager, let container = textContainer else {
+            return 1
+        }
+        manager.ensureLayout(for: container)
+
+        var lineCount = 0
+        var index = 0
+        let glyphCount = manager.numberOfGlyphs
+
+        while index < glyphCount {
+            var lineRange = NSRange()
+            manager.lineFragmentRect(forGlyphAt: index, effectiveRange: &lineRange)
+            lineCount += 1
+            index = NSMaxRange(lineRange)
+        }
+
+        // Empty text or single line minimum
+        return max(1, lineCount)
     }
 }
 
 struct MultilineTitleField: NSViewRepresentable {
-    typealias NSViewType = NSScrollView
+    typealias NSViewType = TitleTextView
 
     @Binding var text: String
     var font: NSFont
@@ -1744,13 +1780,7 @@ struct MultilineTitleField: NSViewRepresentable {
     var onEscape: (() -> Void)?
     var onTab: (() -> Void)?
 
-    func makeNSView(context: NSViewRepresentableContext<MultilineTitleField>) -> NSScrollView {
-        let scrollView = NSScrollView()
-        scrollView.hasVerticalScroller = false
-        scrollView.hasHorizontalScroller = false
-        scrollView.drawsBackground = false
-        scrollView.borderType = .noBorder
-
+    func makeNSView(context: NSViewRepresentableContext<MultilineTitleField>) -> TitleTextView {
         let textView = TitleTextView()
         textView.onEscape = onEscape
         textView.onTab = onTab
@@ -1767,24 +1797,28 @@ struct MultilineTitleField: NSViewRepresentable {
         textView.textContainerInset = .zero
         textView.textContainer?.lineFragmentPadding = 0
         textView.textContainer?.widthTracksTextView = true
+        textView.textContainer?.containerSize = NSSize(width: 0, height: CGFloat.greatestFiniteMagnitude)
         textView.delegate = context.coordinator
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
         textView.focusRingType = .none
         textView.string = text
 
-        scrollView.documentView = textView
-        return scrollView
+        return textView
     }
 
-    func updateNSView(_ scrollView: NSScrollView, context: NSViewRepresentableContext<MultilineTitleField>) {
-        guard let textView = scrollView.documentView as? TitleTextView else { return }
-
+    func updateNSView(_ textView: TitleTextView, context: NSViewRepresentableContext<MultilineTitleField>) {
         textView.onEscape = onEscape
         textView.onTab = onTab
 
         if textView.string != text {
             textView.string = text
+            textView.invalidateIntrinsicContentSize()
+        }
+
+        // Update container width to match view width for proper word wrapping
+        if let container = textView.textContainer, textView.bounds.width > 0 {
+            container.containerSize = NSSize(width: textView.bounds.width, height: CGFloat.greatestFiniteMagnitude)
         }
 
         if shouldFocus && textView.window?.firstResponder != textView {
@@ -1808,6 +1842,8 @@ struct MultilineTitleField: NSViewRepresentable {
 
         func textDidChange(_ notification: Notification) {
             guard let textView = notification.object as? NSTextView else { return }
+            // Update binding immediately - the TitleTextView handles intrinsic size invalidation
+            // only when line count changes, so this won't cause constant row height updates
             parent.text = textView.string
         }
     }

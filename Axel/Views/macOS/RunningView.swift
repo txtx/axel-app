@@ -19,7 +19,8 @@ protocol TerminalSessionManaging: AnyObject {
         command: String?,
         workingDirectory: String?,
         workspaceId: UUID,
-        worktreeBranch: String?
+        worktreeBranch: String?,
+        provider: AIProvider
     ) -> TerminalSession
 
     /// Get or create a session for a pane ID
@@ -78,7 +79,7 @@ final class TerminalSessionManager: TerminalSessionManaging {
     }
 
     /// Start a session for a task (or standalone with paneId), scoped to a workspace
-    func startSession(for task: WorkTask?, paneId: String? = nil, command: String? = nil, workingDirectory: String? = nil, workspaceId: UUID, worktreeBranch: String? = nil) -> TerminalSession {
+    func startSession(for task: WorkTask?, paneId: String? = nil, command: String? = nil, workingDirectory: String? = nil, workspaceId: UUID, worktreeBranch: String? = nil, provider: AIProvider = .claude) -> TerminalSession {
         // Check if session already exists for this task
         if let task = task,
            let existing = sessions.first(where: { $0.taskId == task.persistentModelID }) {
@@ -91,7 +92,7 @@ final class TerminalSessionManager: TerminalSessionManaging {
             return existing
         }
 
-        let session = TerminalSession(task: task, paneId: paneId, command: command, workingDirectory: workingDirectory, workspaceId: workspaceId, worktreeBranch: worktreeBranch)
+        let session = TerminalSession(task: task, paneId: paneId, command: command, workingDirectory: workingDirectory, workspaceId: workspaceId, worktreeBranch: worktreeBranch, provider: provider)
         sessions.append(session)
         return session
     }
@@ -185,6 +186,9 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
     /// nil means the session is in the main workspace (no worktree).
     var worktreeBranch: String?
 
+    /// AI provider for this session (claude, codex, etc.)
+    var provider: AIProvider
+
     /// Display name for the worktree (returns "main" if no worktree)
     var worktreeDisplayName: String {
         worktreeBranch ?? "main"
@@ -217,11 +221,12 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
         SessionStatusService.shared.status(forPaneId: paneId, hasTask: hasTask)
     }
 
-    init(task: WorkTask?, paneId: String? = nil, command: String? = nil, workingDirectory: String? = nil, workspaceId: UUID, worktreeBranch: String? = nil) {
+    init(task: WorkTask?, paneId: String? = nil, command: String? = nil, workingDirectory: String? = nil, workspaceId: UUID, worktreeBranch: String? = nil, provider: AIProvider = .claude) {
         self.paneId = paneId
         self.taskId = task?.persistentModelID
         self.workspaceId = workspaceId
         self.worktreeBranch = worktreeBranch
+        self.provider = provider
         self.taskTitle = task?.title ?? "Terminal"
         self.startedAt = Date()
         self.initialCommand = command
@@ -1086,7 +1091,8 @@ struct TerminalGlassPill: View {
                     Menu {
                         ForEach(installedTerminals) { terminal in
                             Button {
-                                terminal.open(withCommand: "axel session join \(paneId)")
+                                let axelPath = AxelSetupService.shared.executablePath
+                                terminal.open(withCommand: "\(axelPath) session join \(paneId)")
                             } label: {
                                 Label(terminal.name, systemImage: terminal.iconName)
                             }
@@ -1230,66 +1236,14 @@ struct EmptyRunningSelectionView: View {
 
 // MARK: - Token Histogram Overlay (Cross-platform)
 
-/// Claude logo shape for the histogram overlay
-struct ClaudeShape: Shape {
-    func path(in rect: CGRect) -> Path {
-        let scaleX = rect.width / 128
-        let scaleY = rect.height / 88
-
-        var path = Path()
-
-        // Main shape
-        path.move(to: CGPoint(x: 112 * scaleX, y: 35 * scaleY))
-        path.addLine(to: CGPoint(x: 128 * scaleX, y: 35 * scaleY))
-        path.addLine(to: CGPoint(x: 128 * scaleX, y: 53 * scaleY))
-        path.addLine(to: CGPoint(x: 112 * scaleX, y: 53 * scaleY))
-        path.addLine(to: CGPoint(x: 112 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 104 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 104 * scaleX, y: 88 * scaleY))
-        path.addLine(to: CGPoint(x: 96 * scaleX, y: 88 * scaleY))
-        path.addLine(to: CGPoint(x: 96 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 88 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 88 * scaleX, y: 88 * scaleY))
-        path.addLine(to: CGPoint(x: 80 * scaleX, y: 88 * scaleY))
-        path.addLine(to: CGPoint(x: 80 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 48 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 48 * scaleX, y: 88 * scaleY))
-        path.addLine(to: CGPoint(x: 40 * scaleX, y: 88 * scaleY))
-        path.addLine(to: CGPoint(x: 40 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 32 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 32 * scaleX, y: 88 * scaleY))
-        path.addLine(to: CGPoint(x: 24 * scaleX, y: 88 * scaleY))
-        path.addLine(to: CGPoint(x: 24 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 16 * scaleX, y: 70 * scaleY))
-        path.addLine(to: CGPoint(x: 16 * scaleX, y: 53 * scaleY))
-        path.addLine(to: CGPoint(x: 0 * scaleX, y: 53 * scaleY))
-        path.addLine(to: CGPoint(x: 0 * scaleX, y: 35 * scaleY))
-        path.addLine(to: CGPoint(x: 16 * scaleX, y: 35 * scaleY))
-        path.addLine(to: CGPoint(x: 16 * scaleX, y: 0 * scaleY))
-        path.addLine(to: CGPoint(x: 112 * scaleX, y: 0 * scaleY))
-        path.closeSubpath()
-
-        // Left eye (cutout)
-        path.move(to: CGPoint(x: 32 * scaleX, y: 35 * scaleY))
-        path.addLine(to: CGPoint(x: 40 * scaleX, y: 35 * scaleY))
-        path.addLine(to: CGPoint(x: 40 * scaleX, y: 17 * scaleY))
-        path.addLine(to: CGPoint(x: 32 * scaleX, y: 17 * scaleY))
-        path.closeSubpath()
-
-        // Right eye (cutout)
-        path.move(to: CGPoint(x: 88 * scaleX, y: 17 * scaleY))
-        path.addLine(to: CGPoint(x: 88 * scaleX, y: 35 * scaleY))
-        path.addLine(to: CGPoint(x: 96 * scaleX, y: 35 * scaleY))
-        path.addLine(to: CGPoint(x: 96 * scaleX, y: 17 * scaleY))
-        path.closeSubpath()
-
-        return path
-    }
-}
-
 struct TokenHistogramOverlay: View {
     let paneId: String?
     @State private var costTracker = CostTracker.shared
+
+    private var provider: AIProvider {
+        guard let paneId = paneId else { return .claude }
+        return costTracker.provider(forPaneId: paneId)
+    }
 
     private var histogramValues: [Double] {
         guard let paneId = paneId else {
@@ -1305,15 +1259,14 @@ struct TokenHistogramOverlay: View {
 
     var body: some View {
         HStack(spacing: 6) {
-            ClaudeShape()
-                .fill(.white.opacity(0.7))
-                .frame(width: 14, height: 10)
+            AIProviderIcon(provider: provider, size: 14)
+                .opacity(0.7)
 
             // Histogram bars
             HStack(alignment: .bottom, spacing: 1.5) {
                 ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
                     UnevenRoundedRectangle(topLeadingRadius: 1, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 1)
-                        .fill(Color.orange)
+                        .fill(provider.color)
                         .frame(width: 5, height: max(2, value * 12))
                 }
             }
@@ -1376,14 +1329,15 @@ enum SessionPickerSelection: Equatable {
 struct WorkerPickerPanel: View {
     let workspaceId: UUID?
     let workspacePath: String?
-    let onSelect: (TerminalSession?) -> Void  // nil = create new agent
-    let onCreateWorktreeAgent: ((String) -> Void)?  // Branch name for worktree agent
+    let onSelect: (TerminalSession?, AIProvider) -> Void  // nil = create new agent
+    let onCreateWorktreeAgent: ((String, AIProvider) -> Void)?  // Branch name for worktree agent
     @Environment(\.dismiss) private var dismiss
     @Environment(\.terminalSessionManager) private var sessionManager
     @State private var selection: SessionPickerSelection = .newSession
     @State private var newWorktreeBranch: String = ""
     @State private var availableWorktrees: [WorktreeInfo] = []
     @State private var selectedWorktreeIndex: Int = 0  // 0 = main, then existing worktrees
+    @State private var selectedProvider: AIProvider = .claude
     @FocusState private var isFocused: Bool
     @FocusState private var isWorktreeFieldFocused: Bool
 
@@ -1401,7 +1355,7 @@ struct WorkerPickerPanel: View {
         allSessions.count
     }
 
-    init(workspaceId: UUID?, workspacePath: String? = nil, onSelect: @escaping (TerminalSession?) -> Void, onCreateWorktreeAgent: ((String) -> Void)? = nil) {
+    init(workspaceId: UUID?, workspacePath: String? = nil, onSelect: @escaping (TerminalSession?, AIProvider) -> Void, onCreateWorktreeAgent: ((String, AIProvider) -> Void)? = nil) {
         self.workspaceId = workspaceId
         self.workspacePath = workspacePath
         self.onSelect = onSelect
@@ -1409,7 +1363,7 @@ struct WorkerPickerPanel: View {
     }
 
     // Backwards compatibility initializer
-    init(workspaceId: UUID?, onSelect: @escaping (TerminalSession?) -> Void) {
+    init(workspaceId: UUID?, onSelect: @escaping (TerminalSession?, AIProvider) -> Void) {
         self.workspaceId = workspaceId
         self.workspacePath = nil
         self.onSelect = onSelect
@@ -1633,6 +1587,24 @@ struct WorkerPickerPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
+                    // Provider selection
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("Provider")
+                            .font(.subheadline.weight(.medium))
+                            .foregroundStyle(.secondary)
+
+                        Picker("Provider", selection: $selectedProvider) {
+                            ForEach(AIProvider.allCases, id: \.self) { provider in
+                                Label(provider.displayName, systemImage: provider.systemImage)
+                                    .tag(provider)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .fixedSize()
+                    }
+
+                    Divider()
+
                     // Worktree selection
                     VStack(alignment: .leading, spacing: 8) {
                         Text("Select worktree")
@@ -1698,13 +1670,13 @@ struct WorkerPickerPanel: View {
                         createWorktreeAgent()
                     } else if selectedWorktreeIndex == 0 {
                         // Main worktree - create new session
-                        onSelect(nil)
+                        onSelect(nil, selectedProvider)
                         dismiss()
                     } else {
                         // Existing worktree - create worktree agent
                         let worktrees = availableWorktrees.filter { !$0.isMain }
                         if selectedWorktreeIndex - 1 < worktrees.count {
-                            onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName)
+                            onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName, selectedProvider)
                             dismiss()
                         }
                     }
@@ -1915,7 +1887,7 @@ struct WorkerPickerPanel: View {
             HStack {
                 Spacer()
                 Button {
-                    onSelect(session)
+                    onSelect(session, selectedProvider)
                     dismiss()
                 } label: {
                     HStack(spacing: 6) {
@@ -1926,6 +1898,7 @@ struct WorkerPickerPanel: View {
                     }
                     .padding(.horizontal, 16)
                     .padding(.vertical, 8)
+                    
                     .background(
                         RoundedRectangle(cornerRadius: 8)
                             .fill(session.hasTask ? Color.orange : Color.green)
@@ -1976,17 +1949,17 @@ struct WorkerPickerPanel: View {
             if !newWorktreeBranch.isEmpty {
                 createWorktreeAgent()
             } else if selectedWorktreeIndex == 0 {
-                onSelect(nil)
+                onSelect(nil, selectedProvider)
                 dismiss()
             } else {
                 let worktrees = availableWorktrees.filter { !$0.isMain }
                 if selectedWorktreeIndex - 1 < worktrees.count {
-                    onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName)
+                    onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName, selectedProvider)
                     dismiss()
                 }
             }
         case .existingSession(let session):
-            onSelect(session)
+            onSelect(session, selectedProvider)
             dismiss()
         }
     }
@@ -1994,7 +1967,7 @@ struct WorkerPickerPanel: View {
     private func createWorktreeAgent() {
         let branch = newWorktreeBranch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !branch.isEmpty else { return }
-        onCreateWorktreeAgent?(branch)
+        onCreateWorktreeAgent?(branch, selectedProvider)
         dismiss()
     }
 }
