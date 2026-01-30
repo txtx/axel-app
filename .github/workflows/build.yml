@@ -30,14 +30,14 @@ on:
 env:
   SCHEME: Axel
   PRODUCT_NAME: Axel
-  XCODE_VERSION: '26.2'
+  XCODE_VERSION: '16.3'
   AWS_REGION: us-east-1
   S3_BUCKET: txtx-public
 
 jobs:
   test:
     name: Run Tests
-    runs-on: macos-26-arm64
+    runs-on: macos-15
 
     steps:
       - name: Checkout
@@ -55,7 +55,12 @@ jobs:
             -project Axel.xcodeproj \
             -destination "platform=macOS" \
             -only-testing:AxelTests \
-            -resultBundlePath TestResults.xcresult
+            -resultBundlePath TestResults.xcresult \
+            -skipPackagePluginValidation \
+            MACOSX_DEPLOYMENT_TARGET=15.0 \
+            CODE_SIGN_IDENTITY="-" \
+            CODE_SIGNING_REQUIRED=NO \
+            CODE_SIGNING_ALLOWED=NO
 
       - name: Upload Test Results
         if: failure()
@@ -67,7 +72,7 @@ jobs:
   build-macos:
     name: Build macOS App
     needs: test
-    runs-on: macos-26-arm64
+    runs-on: macos-15
     outputs:
       version: ${{ steps.version.outputs.version }}
       dmg_name: ${{ steps.dmg.outputs.name }}
@@ -176,8 +181,10 @@ jobs:
             -configuration Release \
             -destination "platform=macOS" \
             -derivedDataPath build \
+            -skipPackagePluginValidation \
             MARKETING_VERSION="${{ steps.version.outputs.version }}" \
             CURRENT_PROJECT_VERSION="${{ steps.version.outputs.build_number }}" \
+            MACOSX_DEPLOYMENT_TARGET=15.0 \
             CODE_SIGN_IDENTITY="-" \
             CODE_SIGNING_REQUIRED=NO \
             CODE_SIGNING_ALLOWED=NO \
@@ -188,6 +195,13 @@ jobs:
         run: |
           mkdir -p dist
           cp -R "build/Build/Products/Release/${{ env.PRODUCT_NAME }}.app" dist/
+
+          # Ensure icon exists (use pre-built fallback if .icon format wasn't compiled)
+          ICNS_PATH="dist/${{ env.PRODUCT_NAME }}.app/Contents/Resources/Axel.icns"
+          if [ ! -f "$ICNS_PATH" ] && [ -f "Axel/Axel.icns" ]; then
+            echo "Using pre-built icon fallback..."
+            cp "Axel/Axel.icns" "$ICNS_PATH"
+          fi
 
       - name: Embed Axel CLI in app bundle
         if: steps.check_release.outputs.should_release == 'true'

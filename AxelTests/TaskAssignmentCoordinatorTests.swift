@@ -133,7 +133,8 @@ final class MockSessionManager: TerminalSessionManaging {
         command: String?,
         workingDirectory: String?,
         workspaceId: UUID,
-        worktreeBranch: String?
+        worktreeBranch: String?,
+        provider: AIProvider = .claude
     ) -> TerminalSession {
         startSessionCallCount += 1
 
@@ -153,7 +154,8 @@ final class MockSessionManager: TerminalSessionManaging {
             command: command,
             workingDirectory: workingDirectory,
             workspaceId: workspaceId,
-            worktreeBranch: worktreeBranch
+            worktreeBranch: worktreeBranch,
+            provider: provider
         )
         sessions.append(session)
         return session
