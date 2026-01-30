@@ -42,21 +42,13 @@ struct ContentView: View {
     }
 
     /// Start a terminal session, optionally linked to a task
-    /// - If multiple inactive workers exist, shows a picker panel
-    /// - If one worker exists, reuses it
-    /// - If no workers exist, creates a new one and shows floating miniature
+    /// - If task is provided, always show the picker (provider + agent selection)
+    /// - If no task, create a new terminal immediately
     private func startTerminal(for task: WorkTask? = nil) {
-        let available = availableWorkers
-
-        if task != nil && available.count > 1 {
-            // Multiple workers available - show picker
+        if let task {
             pendingTask = task
             showWorkerPicker = true
-        } else if task != nil && available.count == 1 {
-            // Single worker available - reuse it
-            assignTaskToWorker(task!, worker: available[0])
         } else {
-            // No workers or no task - create new terminal
             createNewTerminal(for: task)
         }
     }
@@ -154,7 +146,7 @@ struct ContentView: View {
     }
 
     /// Create a new terminal session, optionally showing floating miniature
-    private func createNewTerminal(for task: WorkTask? = nil) {
+    private func createNewTerminal(for task: WorkTask? = nil, provider: AIProvider = .claude) {
         // Update task status if provided
         task?.updateStatus(.running)
 
@@ -171,10 +163,13 @@ struct ContentView: View {
         terminal.task = task
         terminal.workspace = task?.workspace
         terminal.status = TerminalStatus.running.rawValue
+        terminal.provider = provider
         modelContext.insert(terminal)
 
         // Build command with pane-id and port
-        var command = "axel claude --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
+        // Use executablePath which prefers PATH version, falls back to bundled binary
+        let axelPath = AxelSetupService.shared.executablePath
+        var command = "\(axelPath) \(provider.commandName) --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
@@ -186,12 +181,16 @@ struct ContentView: View {
         // Connect to this terminal's SSE endpoint
         InboxService.shared.connect(paneId: paneId, port: port)
 
+        // Register provider with CostTracker for this terminal
+        _ = CostTracker.shared.tracker(forPaneId: paneId, provider: provider)
+
         let session = sessionManager.startSession(
             for: task,
             paneId: paneId,
             command: command,
             workingDirectory: task?.workspace?.path,
-            workspaceId: task?.workspace?.id ?? UUID()
+            workspaceId: task?.workspace?.id ?? UUID(),
+            provider: provider
         )
 
         // Show floating miniature instead of switching sidebar
@@ -397,14 +396,14 @@ struct ContentView: View {
         .keyboardShortcut(for: .undo) { TaskUndoManager.shared.undo() }
         .keyboardShortcut(for: .redo) { TaskUndoManager.shared.redo() }
         .sheet(isPresented: $showWorkerPicker) {
-            WorkerPickerPanel(workspaceId: nil) { selectedWorker in
+            WorkerPickerPanel(workspaceId: nil) { selectedWorker, provider in
                 if let task = pendingTask {
                     if let worker = selectedWorker {
                         // User selected an existing worker
                         assignTaskToWorker(task, worker: worker)
                     } else {
                         // User chose to create a new agent
-                        createNewTerminal(for: task)
+                        createNewTerminal(for: task, provider: provider)
                     }
                 }
                 pendingTask = nil

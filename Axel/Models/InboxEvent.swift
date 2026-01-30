@@ -34,6 +34,15 @@ struct InboxEvent: Identifiable, Codable, Hashable {
         self.event = try container.decode(InboxEventPayload.self, forKey: .event)
     }
 
+    /// Programmatic initializer for creating events from OTEL data (Codex)
+    init(paneId: String, eventType: String, event: InboxEventPayload) {
+        self.id = UUID()
+        self.timestamp = Date()
+        self.paneId = paneId
+        self.eventType = eventType
+        self.event = event
+    }
+
     func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         try container.encode(timestamp, forKey: .timestamp)
@@ -73,6 +82,28 @@ struct InboxEventPayload: Codable {
         case toolUseId = "tool_use_id"
         case permissionRequest = "permission_request"
         case permissionSuggestions = "permission_suggestions"
+    }
+
+    /// Programmatic initializer for creating payloads from OTEL data (Codex)
+    init(
+        hookEventName: String?,
+        claudeSessionId: String?,
+        toolName: String? = nil,
+        toolInput: [String: AnyCodable]? = nil,
+        cwd: String? = nil,
+        permissionOptions: [PermissionSuggestion]? = nil
+    ) {
+        self.hookEventName = hookEventName
+        self.claudeSessionId = claudeSessionId
+        self.toolName = toolName
+        self.toolInput = toolInput
+        self.cwd = cwd
+        self.permissionMode = nil
+        self.transcriptPath = nil
+        self.toolResponse = nil
+        self.toolUseId = nil
+        self.permissionRequest = nil
+        self.permissionSuggestions = permissionOptions
     }
 }
 

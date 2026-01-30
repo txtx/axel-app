@@ -20,7 +20,7 @@ final class Terminal {
     var updatedAt: Date
 
     /// Pane ID (UUID string) used to identify this terminal in hook events.
-    /// This is the ID passed to `axel claude --pane-id=<uuid>`.
+    /// This is the ID passed to `axel <provider> --pane-id=<uuid>`.
     var paneId: String?
 
     /// Server port for this terminal's event server.
@@ -30,6 +30,14 @@ final class Terminal {
     /// Git worktree branch this terminal is operating in.
     /// nil means the terminal is in the main workspace (no worktree).
     var worktreeBranch: String?
+
+    /// AI provider for this terminal session (claude or codex).
+    var providerRaw: String = AIProvider.claude.rawValue
+
+    var provider: AIProvider {
+        get { AIProvider(rawValue: providerRaw) ?? .claude }
+        set { providerRaw = newValue.rawValue }
+    }
 
     /// Display name for the worktree (returns "main" if no worktree)
     var worktreeDisplayName: String {

@@ -124,7 +124,7 @@ struct AxelSetupSheet: View {
                 Text("Install Axel CLI")
                     .font(.title2.bold())
 
-                Text("The Axel CLI is required to run AI agents. Would you like to install it to ~/.local/bin/axel?")
+                Text("The Axel CLI is required to run AI agents. Would you like to install it to ~/.local/bin?")
                     .font(.body)
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
@@ -165,7 +165,9 @@ struct AxelSetupSheet: View {
                             .multilineTextAlignment(.center)
                     }
                 } else {
-                    Text("This will download and install axel from GitHub to ~/.local/bin")
+                    Text(axelSetupService.hasBundledBinary
+                        ? "This will install the bundled axel CLI to ~/.local/bin"
+                        : "This will download and install axel from GitHub to ~/.local/bin")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -262,6 +264,34 @@ final class AxelSetupService {
 
     // MARK: - Constants
 
+    /// Path to bundled axel binary in app Resources
+    private var bundledAxelPath: String? {
+        Bundle.main.path(forResource: "axel", ofType: nil)
+    }
+
+    /// Whether the app has a bundled axel binary
+    var hasBundledBinary: Bool {
+        bundledAxelPath != nil
+    }
+
+    /// Returns the path to the axel executable to use.
+    /// Prefers system-installed version (in PATH), falls back to bundled binary.
+    var executablePath: String {
+        // If already found in PATH, use that
+        if let path = axelPath {
+            return path
+        }
+        // Fall back to bundled binary if available
+        if let bundled = bundledAxelPath {
+            return bundled
+        }
+        // Last resort: just return "axel" and hope it's in PATH
+        return "axel"
+    }
+
+    /// Preferred install location
+    private let preferredInstallPath = "\(NSHomeDirectory())/.local/bin/axel"
+
     /// Locations to check for axel binary
     private let searchPaths = [
         "\(NSHomeDirectory())/.local/bin/axel",
@@ -282,6 +312,7 @@ final class AxelSetupService {
     // MARK: - Public API
 
     /// Check if axel is installed and available
+    /// Returns true if axel is available (either in PATH or bundled)
     @discardableResult
     func checkInstallation() async -> Bool {
         isChecking = true
@@ -303,16 +334,33 @@ final class AxelSetupService {
             return true
         }
 
+        // Check if we have a bundled binary - this is sufficient for the app to work
+        if let bundled = bundledAxelPath, FileManager.default.isExecutableFile(atPath: bundled) {
+            // Bundled binary is available - app can run without installation
+            axelPath = nil  // axelPath remains nil to indicate not installed to PATH
+            isAxelInstalled = true  // But we consider it "installed" since bundled works
+            return true
+        }
+
         isAxelInstalled = false
         axelPath = nil
         return false
     }
 
-    /// Install axel using the official install script from GitHub
+    /// Install axel - uses bundled binary if available, otherwise downloads from GitHub
     func installFromRelease() async -> Bool {
         isInstalling = true
         lastError = nil
         defer { isInstalling = false }
+
+        // Try to install from bundled binary first
+        if let bundledPath = bundledAxelPath {
+            let success = await installFromBundledBinary(bundledPath)
+            if success {
+                return true
+            }
+            // Fall through to download if bundled install fails
+        }
 
         // Run the install script from GitHub
         let process = Process()
@@ -348,6 +396,37 @@ final class AxelSetupService {
         }
     }
 
+    /// Install from bundled binary by copying to ~/.local/bin
+    private func installFromBundledBinary(_ bundledPath: String) async -> Bool {
+        let fm = FileManager.default
+        let installDir = (preferredInstallPath as NSString).deletingLastPathComponent
+
+        do {
+            // Create ~/.local/bin if needed
+            if !fm.fileExists(atPath: installDir) {
+                try fm.createDirectory(atPath: installDir, withIntermediateDirectories: true)
+            }
+
+            // Remove existing binary if present
+            if fm.fileExists(atPath: preferredInstallPath) {
+                try fm.removeItem(atPath: preferredInstallPath)
+            }
+
+            // Copy bundled binary
+            try fm.copyItem(atPath: bundledPath, toPath: preferredInstallPath)
+
+            // Ensure it's executable
+            try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: preferredInstallPath)
+
+            // Verify installation
+            let installed = await checkInstallation()
+            return installed
+        } catch {
+            lastError = "Failed to install bundled binary: \(error.localizedDescription)"
+            return false
+        }
+    }
+
     /// Check if a workspace directory has AXEL.md
     func hasAxelManifest(at workspacePath: String?) -> Bool {
         guard let path = workspacePath else { return false }
@@ -356,7 +435,7 @@ final class AxelSetupService {
     }
 
     /// Get the command prefix to initialize workspace if needed
-    /// Returns empty string if no init needed, or "axel init --workspace <name> && " if init is needed
+    /// Returns empty string if no init needed, or "<axelPath> init --workspace <name> && " if init is needed
     func getInitCommandPrefix(workspacePath: String?, workspaceName: String) -> String {
         guard let path = workspacePath else { return "" }
 
@@ -367,7 +446,7 @@ final class AxelSetupService {
         // Need to initialize the workspace first
         // Shell-escape the workspace name
         let escaped = workspaceName.replacingOccurrences(of: "'", with: "'\\''")
-        return "axel init --workspace '\(escaped)' && "
+        return "\(executablePath) init --workspace '\(escaped)' && "
     }
 
     // MARK: - Private

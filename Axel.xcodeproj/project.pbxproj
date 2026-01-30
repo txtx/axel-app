@@ -81,6 +81,11 @@
 		A1000001201A0110 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0110 /* EmptyStateView.swift */; };
 		A1000001201A0111 /* TaskUndoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0111 /* TaskUndoManager.swift */; };
 		A1000001201A0112 /* TasksSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0112 /* TasksSceneView.swift */; };
+		A1000001201A0113 /* AIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0113 /* AIProvider.swift */; };
+		A1000001201A0114 /* TasksSceneViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0114 /* TasksSceneViewModel.swift */; };
+		A1000001201A0115 /* TasksSceneViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0115 /* TasksSceneViewModelTests.swift */; };
+		A1000001201A0116 /* AIProviderUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0116 /* AIProviderUI.swift */; };
+		A1000001201A0117 /* TasksTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0117 /* TasksTableView.swift */; };
 		A1000001201A0200 /* TaskQueueService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0200 /* TaskQueueService.swift */; };
 		A100000120A10030 /* TaskAssignee.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000110A10030 /* TaskAssignee.swift */; };
 		AE133ED0512C6A98BDE08952 /* AutomergeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04E9C8657F1187F40A1EC1DB /* AutomergeModelTests.swift */; };
@@ -194,6 +199,11 @@
 		A1000001101A0110 /* EmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
 		A1000001101A0111 /* TaskUndoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskUndoManager.swift; sourceTree = "<group>"; };
 		A1000001101A0112 /* TasksSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksSceneView.swift; sourceTree = "<group>"; };
+		A1000001101A0113 /* AIProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProvider.swift; sourceTree = "<group>"; };
+		A1000001101A0114 /* TasksSceneViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksSceneViewModel.swift; sourceTree = "<group>"; };
+		A1000001101A0115 /* TasksSceneViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksSceneViewModelTests.swift; sourceTree = "<group>"; };
+		A1000001101A0116 /* AIProviderUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderUI.swift; sourceTree = "<group>"; };
+		A1000001101A0117 /* TasksTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksTableView.swift; sourceTree = "<group>"; };
 		A1000001101A0200 /* TaskQueueService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskQueueService.swift; sourceTree = "<group>"; };
 		A100000110A10030 /* TaskAssignee.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskAssignee.swift; sourceTree = "<group>"; };
 		ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncIntegrationTests.swift; sourceTree = "<group>"; };
@@ -296,6 +306,7 @@
 				A1000001101A0023 /* OrganizationMember.swift */,
 				A1000001101A0060 /* OrganizationInvitation.swift */,
 				A1000001101A0024 /* Workspace.swift */,
+				A1000001101A0113 /* AIProvider.swift */,
 				A1000001101A0003 /* Task.swift */,
 				A1000001101A0025 /* TaskComment.swift */,
 				A1000001101A0026 /* TaskAttachment.swift */,
@@ -317,6 +328,7 @@
 			isa = PBXGroup;
 			children = (
 				A1000001101A0004 /* TodoViewModel.swift */,
+				A1000001101A0114 /* TasksSceneViewModel.swift */,
 			);
 			path = ViewModels;
 			sourceTree = "<group>";
@@ -382,6 +394,7 @@
 			children = (
 				A1000001101A0094 /* NavigationTypes.swift */,
 				A1000001101A0110 /* EmptyStateView.swift */,
+				A1000001101A0116 /* AIProviderUI.swift */,
 				A1000001101A0013 /* SkillsView.swift */,
 				A1000001101A0015 /* ContextView.swift */,
 				A1000001101A0042 /* InboxView.swift */,
@@ -406,6 +419,7 @@
 				A1000001101A0032 /* WorkspaceWindowView.swift */,
 				A1000001101A0033 /* WorkspaceContentView.swift */,
 				A1000001101A0112 /* TasksSceneView.swift */,
+				A1000001101A0117 /* TasksTableView.swift */,
 				A1000001101A0070 /* SimpleTerminalView.swift */,
 				A1000001401A001A /* Terminal */,
 			);
@@ -483,6 +497,7 @@
 				BE366A3151FDDA78680EDF0C /* SyncEngineTests.swift */,
 				ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */,
 				CE485CA04822282FDD056DFB /* TaskAssignmentCoordinatorTests.swift */,
+				A1000001101A0115 /* TasksSceneViewModelTests.swift */,
 			);
 			path = AxelTests;
 			sourceTree = SOURCE_ROOT;
@@ -632,6 +647,7 @@
 			files = (
 				A1000001201A0001 /* AxelApp.swift in Sources */,
 				A1000001201A0002 /* ContentView.swift in Sources */,
+				A1000001201A0113 /* AIProvider.swift in Sources */,
 				A1000001201A0003 /* Task.swift in Sources */,
 				A1000001201A0021 /* Profile.swift in Sources */,
 				A1000001201A0022 /* Organization.swift in Sources */,
@@ -645,6 +661,7 @@
 				A1000001201A0029 /* Hint.swift in Sources */,
 				A100000120A10030 /* TaskAssignee.swift in Sources */,
 				A1000001201A0004 /* TodoViewModel.swift in Sources */,
+				A1000001201A0114 /* TasksSceneViewModel.swift in Sources */,
 				A1000001201A0008 /* PreviewContainer.swift in Sources */,
 				A1000001201A0010 /* TerminalPanelView.swift in Sources */,
 				A1000001201A0011 /* SwiftTermWrapper.swift in Sources */,
@@ -686,6 +703,7 @@
 				A1000001201A0092 /* PlatformServices.swift in Sources */,
 				A1000001201A0093 /* KeyboardShortcuts.swift in Sources */,
 				A1000001201A0094 /* NavigationTypes.swift in Sources */,
+				A1000001201A0116 /* AIProviderUI.swift in Sources */,
 				A1000001201A0095 /* IOSContentView.swift in Sources */,
 				A1000001201A0096 /* VisionContentView.swift in Sources */,
 				A1000001201A0097 /* MacHelpers.swift in Sources */,
@@ -698,6 +716,7 @@
 				B81242E637B124591F5B7B93 /* SessionStatusService.swift in Sources */,
 				A1000001201A0111 /* TaskUndoManager.swift in Sources */,
 				A1000001201A0112 /* TasksSceneView.swift in Sources */,
+				A1000001201A0117 /* TasksTableView.swift in Sources */,
 				18772BF65693156AC43F75D2 /* TaskAssignmentCoordinator.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -710,6 +729,7 @@
 				3724AAF9F7B57FC2766507ED /* SyncEngineTests.swift in Sources */,
 				BAF581097CA2F8F7B7EBBCB1 /* SyncIntegrationTests.swift in Sources */,
 				224F4D7EECEE1287AF701CE6 /* TaskAssignmentCoordinatorTests.swift in Sources */,
+				A1000001201A0115 /* TasksSceneViewModelTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -738,7 +758,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.3;
+				MARKETING_VERSION = 0.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -760,7 +780,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.3;
+				MARKETING_VERSION = 0.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -790,7 +810,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.3;
+				MARKETING_VERSION = 0.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -816,7 +836,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.3;
+				MARKETING_VERSION = 0.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -986,7 +1006,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.3;
+				MARKETING_VERSION = 0.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
@@ -1039,7 +1059,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.3;
+				MARKETING_VERSION = 0.1.4;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;

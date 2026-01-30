@@ -2,7 +2,7 @@ import Foundation
 
 // MARK: - Token Counting Architecture
 //
-// This file implements the cost tracking system for Claude Code sessions.
+// This file implements the cost tracking system for AI coding sessions (Claude, Codex, etc.).
 //
 // ## Data Flow
 //
@@ -154,12 +154,15 @@ struct TaskSegment: Identifiable, Equatable {
 final class TerminalCostTracker: Identifiable {
     let id: String  // paneId (terminal identifier)
 
+    /// AI provider for this terminal (claude or codex)
+    var provider: AIProvider = .claude
+
     /// Time series of token deltas (not cumulative). Each entry represents
     /// new tokens consumed since the previous entry. Used for histograms
     /// and activity detection (recent entry = "thinking" state).
     private(set) var timeSeries: [TokenDataPoint] = []
 
-    /// All-time cumulative totals. These persist across Claude session resets
+    /// All-time cumulative totals. These persist across session resets
     /// and represent total consumption for this terminal's lifetime.
     private(set) var totalInputTokens: Int = 0
     private(set) var totalOutputTokens: Int = 0
@@ -168,7 +171,7 @@ final class TerminalCostTracker: Identifiable {
     private(set) var totalCostUSD: Double = 0
 
     /// Last reported cumulative values from OTEL (for delta calculation).
-    /// These are reset when a new Claude session is detected.
+    /// These are reset when a new session is detected.
     private var lastSessionInputTokens: Int = 0
     private var lastSessionOutputTokens: Int = 0
     private var lastSessionCacheReadTokens: Int = 0
@@ -184,21 +187,22 @@ final class TerminalCostTracker: Identifiable {
 
     /// Recent token values for histogram (normalized 0-1)
     var histogramValues: [Double] {
-        let recent = Array(timeSeries.suffix(12))
-        guard !recent.isEmpty else { return Array(repeating: 0.1, count: 12) }
+        let recent = Array(timeSeries.suffix(6))
+        guard !recent.isEmpty else { return Array(repeating: 0.1, count: 6) }
 
         let maxTokens = recent.map { Double($0.totalTokens) }.max() ?? 1
         let values = recent.map { maxTokens > 0 ? Double($0.totalTokens) / maxTokens : 0.1 }
 
-        // Pad to 12 values if needed
-        if values.count < 12 {
-            return Array(repeating: 0.1, count: 12 - values.count) + values
+        // Pad to 6 values if needed
+        if values.count < 6 {
+            return Array(repeating: 0.1, count: 6 - values.count) + values
         }
         return values
     }
 
-    init(id: String) {
+    init(id: String, provider: AIProvider = .claude) {
         self.id = id
+        self.provider = provider
     }
 
     /// Record a metrics update from OTEL data.
@@ -476,15 +480,15 @@ final class CostTracker {
 
     /// Recent global token values for histogram (normalized 0-1)
     var globalHistogramValues: [Double] {
-        let recent = Array(globalTimeSeries.suffix(12))
-        guard !recent.isEmpty else { return Array(repeating: 0.1, count: 12) }
+        let recent = Array(globalTimeSeries.suffix(6))
+        guard !recent.isEmpty else { return Array(repeating: 0.1, count: 6) }
 
         let maxTokens = recent.map { Double($0.totalTokens) }.max() ?? 1
         let values = recent.map { maxTokens > 0 ? Double($0.totalTokens) / maxTokens : 0.1 }
 
-        // Pad to 12 values if needed
-        if values.count < 12 {
-            return Array(repeating: 0.1, count: 12 - values.count) + values
+        // Pad to 6 values if needed
+        if values.count < 6 {
+            return Array(repeating: 0.1, count: 6 - values.count) + values
         }
         return values
     }
@@ -507,13 +511,75 @@ final class CostTracker {
     // MARK: - Terminal Tracking
 
     /// Get or create a terminal tracker by paneId
-    func tracker(forPaneId paneId: String) -> TerminalCostTracker {
+    func tracker(forPaneId paneId: String, provider: AIProvider = .claude) -> TerminalCostTracker {
         if let existing = terminalTrackers[paneId] {
+            print("[CostTracker] Returning existing tracker for paneId: \(paneId.prefix(8)), provider: \(existing.provider.displayName)")
             return existing
         }
-        let tracker = TerminalCostTracker(id: paneId)
+        let tracker = TerminalCostTracker(id: paneId, provider: provider)
         terminalTrackers[paneId] = tracker
+        print("[CostTracker] Created new tracker for paneId: \(paneId.prefix(8)), provider: \(provider.displayName)")
         return tracker
+    }
+
+    /// Set the provider for a terminal tracker
+    func setProvider(_ provider: AIProvider, forPaneId paneId: String) {
+        if let tracker = terminalTrackers[paneId] {
+            tracker.provider = provider
+        }
+    }
+
+    /// Get provider for a terminal
+    func provider(forPaneId paneId: String) -> AIProvider {
+        terminalTrackers[paneId]?.provider ?? .claude
+    }
+
+    // MARK: - Per-Provider Totals
+
+    /// Providers that have at least one terminal
+    var activeProviders: [AIProvider] {
+        let providers = Set(terminalTrackers.values.map { $0.provider })
+        return AIProvider.allCases.filter { providers.contains($0) }
+    }
+
+    /// Check if a provider has any terminals
+    func hasTerminals(forProvider provider: AIProvider) -> Bool {
+        terminalTrackers.values.contains { $0.provider == provider }
+    }
+
+    /// Total tokens for a specific provider across all terminals
+    func totalTokens(forProvider provider: AIProvider) -> Int {
+        terminalTrackers.values
+            .filter { $0.provider == provider }
+            .reduce(0) { $0 + $1.totalTokens }
+    }
+
+    /// Total cost for a specific provider across all terminals
+    func totalCost(forProvider provider: AIProvider) -> Double {
+        terminalTrackers.values
+            .filter { $0.provider == provider }
+            .reduce(0) { $0 + $1.totalCostUSD }
+    }
+
+    /// Histogram values for a specific provider (aggregated across all terminals of that provider)
+    func histogramValues(forProvider provider: AIProvider) -> [Double] {
+        let providerTrackers = terminalTrackers.values.filter { $0.provider == provider }
+        guard !providerTrackers.isEmpty else { return Array(repeating: 0.1, count: 6) }
+
+        // Aggregate recent time series from all terminals of this provider
+        var aggregatedValues: [Int] = Array(repeating: 0, count: 6)
+        for tracker in providerTrackers {
+            let recent = Array(tracker.timeSeries.suffix(6))
+            for (index, point) in recent.enumerated() {
+                let adjustedIndex = 6 - recent.count + index
+                if adjustedIndex >= 0 && adjustedIndex < 6 {
+                    aggregatedValues[adjustedIndex] += point.totalTokens
+                }
+            }
+        }
+
+        let maxTokens = Double(aggregatedValues.max() ?? 1)
+        return aggregatedValues.map { maxTokens > 0 ? Double($0) / maxTokens : 0.1 }
     }
 
     /// Link a terminal (by paneId) to a task
@@ -530,8 +596,8 @@ final class CostTracker {
 
     // MARK: - Metrics Recording
 
-    /// Record metrics update from OTEL data (OTEL uses Claude's sessionId)
-    /// This is the primary entry point for token consumption data from Claude Code.
+    /// Record metrics update from OTEL data (OTEL uses the AI provider's sessionId)
+    /// This is the primary entry point for token consumption data from AI coding assistants.
     /// When tokens are consumed, it indicates the LLM is actively working ("thinking").
     func recordMetrics(
         forSession sessionId: String,
