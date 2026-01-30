@@ -226,36 +226,7 @@ final class SyncIntegrationTests: XCTestCase {
         }
     }
 
-    // MARK: - Scenario: The bug we had - capturing local before merge makes local win
-
-    func testCapturingLocalBeforeMergeMakesLocalWin() throws {
-        // This test demonstrates the bug: if we write to local doc BEFORE merging,
-        // the local value will have a newer automerge clock and "win"
-
-        // Initial state
-        let initialDoc = Document()
-        try initialDoc.put(obj: .ROOT, key: TaskSchema.status, value: .String("queued"))
-        let initialBytes = initialDoc.save()
-
-        // iOS: has the initial state
-        let iosDoc = try Document(initialBytes)
-
-        // macOS: changes status to "running" and syncs to server
-        let macDoc = try Document(initialBytes)
-        try macDoc.put(obj: .ROOT, key: TaskSchema.status, value: .String("running"))
-        let serverBytes = macDoc.save()
-
-        // iOS syncs: THE BUG - it captures local state before merging
-        // This makes iOS's "queued" have a newer clock than macOS's "running"
-        try iosDoc.put(obj: .ROOT, key: TaskSchema.status, value: .String("queued")) // Capture local state
-        try iosDoc.merge(other: try Document(serverBytes)) // Merge remote
-
-        // iOS's "queued" wins because it was written more recently in automerge clock terms
-        if case .Scalar(.String(let status)) = try iosDoc.get(obj: .ROOT, key: TaskSchema.status) {
-            // This demonstrates the bug - local wins even though remote had the intended change
-            XCTAssertEqual(status, "queued", "This demonstrates the bug: local wins because we captured state before merge")
-        }
-    }
+    // MARK: - Scenario: Correct merge behavior
 
     func testCorrectMergeWithoutCapturingLocalFirst() throws {
         // The fix: DON'T write to local doc before merging

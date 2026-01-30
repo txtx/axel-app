@@ -260,7 +260,7 @@ struct MacScenes: Scene {
             WorkspacePickerView()
         }
         .modelContainer(sharedContainer)
-        .defaultSize(width: 700, height: 480)
+        .defaultSize(width: 800, height: 460)
         .windowResizability(.contentSize)
 
         // Workspace Windows (one per workspace) - each gets its own container

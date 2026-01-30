@@ -605,7 +605,7 @@ struct InboxEventDetailView: View {
 
                                 selection = nil
                             } label: {
-                                Label(nextQueuedTasks.isEmpty ? "Done" : "Complete and Continue", systemImage: nextQueuedTasks.isEmpty ? "checkmark.circle.fill" : "arrow.right.circle.fill")
+                                Label(nextQueuedTasks.isEmpty ? "Mark Completed" : "Complete and Continue", systemImage: nextQueuedTasks.isEmpty ? "checkmark.circle.fill" : "arrow.right.circle.fill")
                             }
                             .buttonStyle(.borderedProminent)
                             .tint(nextQueuedTasks.isEmpty ? .green : .blue)

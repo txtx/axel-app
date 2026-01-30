@@ -40,6 +40,16 @@ final class InboxService {
     /// Used to avoid auto-resolving based on stale OTEL data from before the request
     private var permissionRequestTokenSnapshot: [String: Int] = [:]
 
+    /// Timestamp when permission request arrived (paneId -> timestamp)
+    /// Used to add a time delay before auto-resolving
+    private var permissionRequestTimestamp: [String: Date] = [:]
+
+    /// Minimum token increase required to auto-resolve a permission request
+    private let autoResolveTokenThreshold = 100
+
+    /// Minimum seconds before a permission request can be auto-resolved
+    private let autoResolveDelaySeconds: TimeInterval = 15
+
     /// Connection state (true if at least one terminal is connected)
     var isConnected: Bool {
         !activeConnections.isEmpty
@@ -203,6 +213,25 @@ final class InboxService {
         return nil
     }
 
+    /// Check if terminal has a running task (for determining if completion screen should show)
+    private func hasRunningTask(forPaneId paneId: String) -> Bool {
+        guard let context = modelContext else { return false }
+
+        do {
+            let descriptor = FetchDescriptor<Terminal>(
+                predicate: #Predicate { $0.paneId == paneId }
+            )
+            if let terminal = try context.fetch(descriptor).first,
+               let task = terminal.task {
+                return task.status == TaskStatus.running.rawValue
+            }
+        } catch {
+            print("[InboxService] Failed to check running task: \(error)")
+        }
+
+        return false
+    }
+
     /// Handle notification action response (called from AppDelegate)
     func handleNotificationAction(actionIdentifier: String, userInfo: [AnyHashable: Any]) {
         guard let sessionId = userInfo["sessionId"] as? String,
@@ -301,6 +330,7 @@ final class InboxService {
         lastStopEventPerSession.removeAll()
         lastPermissionRequestPerSession.removeAll()
         permissionRequestTokenSnapshot.removeAll()
+        permissionRequestTimestamp.removeAll()
     }
 
     /// Mark an event as resolved (confirmed by user)
@@ -493,8 +523,9 @@ final class InboxService {
                 let metricsId = event.event.claudeSessionId ?? paneId
                 let metrics = self.metrics(for: metricsId)
 
-                // Snapshot current token count to avoid auto-resolving based on stale OTEL data
+                // Snapshot current token count and timestamp for auto-resolve logic
                 permissionRequestTokenSnapshot[paneId] = metrics.inputTokens + metrics.outputTokens
+                permissionRequestTimestamp[paneId] = Date()
 
                 metrics.recordPermissionRequest(
                     toolName: event.event.toolName ?? "Unknown",
@@ -522,6 +553,11 @@ final class InboxService {
                 }
                 lastStopEventPerSession[sessionId] = event.id
 
+                // Skip showing completion screen if no running task (user is interacting manually with LLM)
+                if !hasRunningTask(forPaneId: event.paneId) {
+                    resolvedEventIds.insert(event.id)
+                }
+
                 // Auto-resolve all pending permission requests for this session
                 for existingEvent in events {
                     if existingEvent.event.hookEventName == "PermissionRequest",
@@ -532,6 +568,7 @@ final class InboxService {
                 }
                 lastPermissionRequestPerSession.removeValue(forKey: event.paneId)
                 permissionRequestTokenSnapshot.removeValue(forKey: event.paneId)
+                permissionRequestTimestamp.removeValue(forKey: event.paneId)
 
                 // Finalize task in CostTracker (use paneId)
                 CostTracker.shared.finalizeTask(forPaneId: event.paneId)
@@ -745,22 +782,29 @@ final class InboxService {
                 costUSD: metrics.costUSD
             )
 
-            // Auto-resolve pending permission requests when we see NEW token activity
-            // (tokens beyond what was recorded when the permission request arrived).
-            // This handles the case where permission was granted directly in the terminal
-            // (e.g., on Sequoia where SSE permission events may not be received)
+            // Auto-resolve pending permission requests when we see significant NEW token activity
+            // after a delay. This handles the case where permission was granted directly in
+            // the terminal (e.g., on Sequoia where SSE permission events may not be received)
             if let paneId = CostTracker.shared.paneId(forSessionId: sid),
                let pendingEventId = lastPermissionRequestPerSession[paneId],
                !resolvedEventIds.contains(pendingEventId) {
                 let currentTokens = metrics.inputTokens + metrics.outputTokens
                 let snapshotTokens = permissionRequestTokenSnapshot[paneId] ?? 0
+                let requestTime = permissionRequestTimestamp[paneId] ?? .distantPast
+                let timeSinceRequest = Date().timeIntervalSince(requestTime)
 
-                // Only auto-resolve if we see token activity AFTER the permission request
-                if currentTokens > snapshotTokens {
+                // Only auto-resolve if:
+                // 1. Enough time has passed (give inbox time to display the request)
+                // 2. Meaningful token activity occurred (not just metric noise)
+                let hasEnoughTime = timeSinceRequest >= autoResolveDelaySeconds
+                let hasEnoughTokens = currentTokens >= snapshotTokens + autoResolveTokenThreshold
+
+                if hasEnoughTime && hasEnoughTokens {
                     resolvedEventIds.insert(pendingEventId)
                     lastPermissionRequestPerSession.removeValue(forKey: paneId)
                     permissionRequestTokenSnapshot.removeValue(forKey: paneId)
-                    print("[InboxService] Auto-resolved permission request for pane \(paneId) due to new token activity (current: \(currentTokens), snapshot: \(snapshotTokens))")
+                    permissionRequestTimestamp.removeValue(forKey: paneId)
+                    print("[InboxService] Auto-resolved permission request for pane \(paneId) due to new token activity (current: \(currentTokens), snapshot: \(snapshotTokens), elapsed: \(String(format: "%.1f", timeSinceRequest))s)")
                 }
             }
         }
