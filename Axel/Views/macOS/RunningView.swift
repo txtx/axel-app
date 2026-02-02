@@ -276,7 +276,7 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
         window.ignoresMouseEvents = true  // Cannot interact with the invisible window
 
         // Add the terminal view to the offscreen window
-        let terminalView = surface.terminalView
+        let terminalView = surface
         terminalView.frame = NSRect(origin: .zero, size: windowSize)
         terminalView.autoresizingMask = [.width, .height]
         window.contentView?.addSubview(terminalView)
@@ -314,13 +314,13 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
 
     private func cleanupOffscreenWindow() {
         // Remove terminal view from offscreen window and close it
-        surfaceView?.terminalView.removeFromSuperview()
+        surfaceView?.removeFromSuperview()
         offscreenWindow?.close()
         offscreenWindow = nil
     }
 
     func captureScreenshot() {
-        guard let terminalView = surfaceView?.terminalView else { return }
+        guard let terminalView = surfaceView else { return }
 
         // If terminal view is not in a window, re-add it to the offscreen window
         // This can happen when the full terminal view was displayed then dismissed
@@ -376,7 +376,7 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
         // happens on the main thread for MainActor-isolated classes
         MainActor.assumeIsolated {
             screenshotTimer?.invalidate()
-            surfaceView?.terminalView.removeFromSuperview()
+            surfaceView?.removeFromSuperview()
             offscreenWindow?.close()
         }
     }
@@ -1193,7 +1193,7 @@ struct TerminalFullView: View {
             TerminalEmulator.SurfaceRepresentable(view: surfaceView, size: geo.size)
                 .frame(width: geo.size.width, height: geo.size.height)
                 .onTapGesture {
-                    surfaceView.terminalView.window?.makeFirstResponder(surfaceView.terminalView)
+                surfaceView.window?.makeFirstResponder(surfaceView)
                 }
         }
     }

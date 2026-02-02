@@ -66,7 +66,7 @@ Axel/
 
 Packages/
 ├── AutomergeWrapper/          # CRDT document wrapper
-├── SwiftTermWrapper/          # Terminal integration
+├── GhosttyKit/                # libghostty xcframework
 └── SwiftDiffs/                # Diff visualization library
 
 scripts/
@@ -96,7 +96,7 @@ docs/
 - **SwiftData** for persistence (iOS 17+ / macOS 14+)
 - **Automerge** for CRDT-based sync
 - **Supabase** for auth and cloud storage
-- **SwiftTerm** for terminal emulation
+- **libghostty** for terminal emulation
 - **Sparkle** for macOS auto-updates
 - **SSE** for real-time event streaming
 

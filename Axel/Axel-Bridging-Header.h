@@ -3,7 +3,7 @@
 //  Axel
 //
 //  Bridging header for Objective-C/C interoperability.
-//  Note: Ghostty has been replaced with SwiftTerm (pure Swift).
+//  Note: libghostty is integrated via GhosttyKit (xcframework).
 //
 
-// Currently empty - SwiftTerm is a pure Swift package and doesn't require bridging.
+// Currently empty - GhosttyKit exposes C APIs via module imports.
