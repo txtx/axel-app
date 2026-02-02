@@ -2,12 +2,11 @@
 import os
 import SwiftUI
 import AppKit
-import SwiftTermWrapper
+import GhosttyKit
+import Darwin
 
 // MARK: - TerminalEmulator Namespace
 
-/// SwiftTerm-based terminal emulator wrapper
-/// Provides the same API surface as the previous Ghostty wrapper for easy migration
 enum TerminalEmulator {
     static let logger = Logger(
         subsystem: Bundle.main.bundleIdentifier ?? "md.axel.Axel",
@@ -18,7 +17,6 @@ enum TerminalEmulator {
 // MARK: - Terminal Theme
 
 extension TerminalEmulator {
-    /// Theme configuration for the embedded terminal
     struct TerminalTheme {
         var background: String = "18262F"
         var foreground: String = "e4e4e7"
@@ -27,30 +25,8 @@ extension TerminalEmulator {
         var fontFamily: String = "JetBrains Mono"
         var fontSize: CGFloat = 13
 
-        // ANSI colors (0-15)
-        var palette: [String] = [
-            "27272a", // black
-            "f87171", // red
-            "4ade80", // green
-            "facc15", // yellow
-            "60a5fa", // blue
-            "c084fc", // magenta
-            "22d3ee", // cyan
-            "e4e4e7", // white
-            "52525b", // bright black
-            "fca5a5", // bright red
-            "86efac", // bright green
-            "fde047", // bright yellow
-            "93c5fd", // bright blue
-            "d8b4fe", // bright magenta
-            "67e8f9", // bright cyan
-            "fafafa", // bright white
-        ]
-
-        /// Default dark theme
         static let dark = TerminalTheme()
 
-        /// Convert hex string to NSColor
         static func colorFromHex(_ hex: String) -> NSColor {
             var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
             hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
@@ -69,25 +45,6 @@ extension TerminalEmulator {
                 alpha: 1.0
             )
         }
-
-        /// Convert hex string to SwiftTerm.Color
-        static func swiftTermColorFromHex(_ hex: String) -> SwiftTerm.Color {
-            var hexSanitized = hex.trimmingCharacters(in: .whitespacesAndNewlines)
-            hexSanitized = hexSanitized.replacingOccurrences(of: "#", with: "")
-
-            guard hexSanitized.count == 6 else {
-                return SwiftTerm.Color(red: 255, green: 255, blue: 255)
-            }
-
-            var rgb: UInt64 = 0
-            Scanner(string: hexSanitized).scanHexInt64(&rgb)
-
-            return SwiftTerm.Color(
-                red: UInt16((rgb & 0xFF0000) >> 16) * 257,
-                green: UInt16((rgb & 0x00FF00) >> 8) * 257,
-                blue: UInt16(rgb & 0x0000FF) * 257
-            )
-        }
     }
 }
 
@@ -98,6 +55,8 @@ extension TerminalEmulator {
         var fontSize: CGFloat? = nil
         var workingDirectory: String? = nil
         var command: String? = nil
+        var initialInput: String? = nil
+        var waitAfterCommand: Bool = false
 
         init(workingDirectory: String? = nil, command: String? = nil) {
             self.workingDirectory = workingDirectory
@@ -109,80 +68,297 @@ extension TerminalEmulator {
 // MARK: - App State
 
 extension TerminalEmulator {
-    /// Main app state for managing terminal surfaces - singleton pattern
     @MainActor
     final class App: ObservableObject {
         enum Readiness: String {
             case loading, error, ready
         }
 
-        /// Shared singleton instance
         static let shared = App()
 
-        @Published var readiness: Readiness = .ready  // SwiftTerm is always ready
+        @Published var readiness: Readiness = .loading
 
-        /// Theme to apply to terminals
         static var theme: TerminalTheme = .dark
 
-        /// Shared surface view that persists across task switches
+        private(set) var app: ghostty_app_t?
+        private(set) var config: ghostty_config_t?
+
         private(set) var sharedSurface: SurfaceView?
 
-        private init() {}
+        private init() {
+            initialize()
+        }
 
-        /// Get or create the shared surface view
+        deinit {
+            if let app {
+                ghostty_app_free(app)
+            }
+            if let config {
+                ghostty_config_free(config)
+            }
+        }
+
         func getOrCreateSurface(config: SurfaceConfiguration? = nil) -> SurfaceView? {
             if let existing = sharedSurface {
                 return existing
             }
 
-            let surface = SurfaceView(config: config)
+            guard let app else { return nil }
+            let surface = SurfaceView(app: app, config: config)
             sharedSurface = surface
             return surface
         }
 
-        /// Create a new independent surface (not shared)
         func createSurface(config: SurfaceConfiguration? = nil) -> SurfaceView {
-            return SurfaceView(config: config)
+            guard let app else {
+                return SurfaceView(app: nil, config: config)
+            }
+            return SurfaceView(app: app, config: config)
         }
 
-        /// Reset the shared surface
         func resetSharedSurface() {
             sharedSurface = nil
         }
+
+        private func initialize() {
+            let initResult = ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv)
+            guard initResult == GHOSTTY_SUCCESS else {
+                logger.error("ghostty_init failed")
+                readiness = .error
+                return
+            }
+
+            guard let cfg = ghostty_config_new() else {
+                logger.error("ghostty_config_new failed")
+                readiness = .error
+                return
+            }
+
+            ghostty_config_load_default_files(cfg)
+            ghostty_config_load_recursive_files(cfg)
+            ghostty_config_finalize(cfg)
+            config = cfg
+
+            var runtime = ghostty_runtime_config_s(
+                userdata: Unmanaged.passUnretained(self).toOpaque(),
+                supports_selection_clipboard: true,
+                wakeup_cb: { userdata in App.wakeup(userdata) },
+                action_cb: { app, target, action in App.action(app!, target: target, action: action) },
+                read_clipboard_cb: { userdata, loc, state in App.readClipboard(userdata, location: loc, state: state) },
+                confirm_read_clipboard_cb: { userdata, str, state, request in
+                    App.confirmReadClipboard(userdata, string: str, state: state, request: request)
+                },
+                write_clipboard_cb: { userdata, loc, content, len, confirm in
+                    App.writeClipboard(userdata, location: loc, content: content, len: len, confirm: confirm)
+                },
+                close_surface_cb: { userdata, processAlive in App.closeSurface(userdata, processAlive: processAlive) }
+            )
+
+            guard let app = ghostty_app_new(&runtime, cfg) else {
+                logger.error("ghostty_app_new failed")
+                readiness = .error
+                return
+            }
+
+            self.app = app
+            ghostty_app_set_focus(app, NSApp.isActive)
+            readiness = .ready
+        }
+
+        func appTick() {
+            guard let app else { return }
+            ghostty_app_tick(app)
+        }
+
+        private static func wakeup(_ userdata: UnsafeMutableRawPointer?) {
+            guard let userdata else { return }
+            let state = Unmanaged<App>.fromOpaque(userdata).takeUnretainedValue()
+            DispatchQueue.main.async { state.appTick() }
+        }
+
+        private static func action(
+            _ app: ghostty_app_t,
+            target: ghostty_target_s,
+            action: ghostty_action_s
+        ) -> Bool {
+            _ = app
+            _ = target
+            _ = action
+            return false
+        }
+
+        private static func surfaceView(from userdata: UnsafeMutableRawPointer?) -> SurfaceView? {
+            guard let userdata else { return nil }
+            return Unmanaged<SurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+        }
+
+        private static func readClipboard(
+            _ userdata: UnsafeMutableRawPointer?,
+            location: ghostty_clipboard_e,
+            state: UnsafeMutableRawPointer?
+        ) {
+            guard let surfaceView = surfaceView(from: userdata),
+                  let surface = surfaceView.surface
+            else { return }
+
+            let pasteboard = NSPasteboard.general
+            let text = pasteboard.string(forType: .string) ?? ""
+            completeClipboardRequest(surface, data: text, state: state)
+        }
+
+        private static func confirmReadClipboard(
+            _ userdata: UnsafeMutableRawPointer?,
+            string: UnsafePointer<CChar>?,
+            state: UnsafeMutableRawPointer?,
+            request: ghostty_clipboard_request_e
+        ) {
+            _ = request
+            guard let surfaceView = surfaceView(from: userdata),
+                  let surface = surfaceView.surface,
+                  let string
+            else { return }
+
+            let text = String(cString: string)
+            completeClipboardRequest(surface, data: text, state: state, confirmed: true)
+        }
+
+        private static func writeClipboard(
+            _ userdata: UnsafeMutableRawPointer?,
+            location: ghostty_clipboard_e,
+            content: UnsafePointer<ghostty_clipboard_content_s>?,
+            len: Int,
+            confirm: Bool
+        ) {
+            _ = userdata
+            _ = location
+            _ = confirm
+            guard let content, len > 0 else { return }
+
+            var text: String?
+            for i in 0..<len {
+                let item = content.advanced(by: i).pointee
+                guard let mime = item.mime, let data = item.data else { continue }
+                if String(cString: mime) == "text/plain" {
+                    text = String(cString: data)
+                    break
+                }
+            }
+
+            guard let text else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+        }
+
+        private static func closeSurface(_ userdata: UnsafeMutableRawPointer?, processAlive: Bool) {
+            _ = userdata
+            _ = processAlive
+        }
+
+        private static func completeClipboardRequest(
+            _ surface: ghostty_surface_t,
+            data: String,
+            state: UnsafeMutableRawPointer?,
+            confirmed: Bool = false
+        ) {
+            data.withCString { ptr in
+                ghostty_surface_complete_clipboard_request(surface, ptr, state, confirmed)
+            }
+        }
+    }
+}
+
+// MARK: - Input Helpers
+
+extension TerminalEmulator {
+    static func ghosttyMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+        var mods: UInt32 = GHOSTTY_MODS_NONE.rawValue
+
+        if flags.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
+        if flags.contains(.control) { mods |= GHOSTTY_MODS_CTRL.rawValue }
+        if flags.contains(.option) { mods |= GHOSTTY_MODS_ALT.rawValue }
+        if flags.contains(.command) { mods |= GHOSTTY_MODS_SUPER.rawValue }
+        if flags.contains(.capsLock) { mods |= GHOSTTY_MODS_CAPS.rawValue }
+
+        let rawFlags = flags.rawValue
+        if (rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0) { mods |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue }
+        if (rawFlags & UInt(NX_DEVICERCTLKEYMASK) != 0) { mods |= GHOSTTY_MODS_CTRL_RIGHT.rawValue }
+        if (rawFlags & UInt(NX_DEVICERALTKEYMASK) != 0) { mods |= GHOSTTY_MODS_ALT_RIGHT.rawValue }
+        if (rawFlags & UInt(NX_DEVICERCMDKEYMASK) != 0) { mods |= GHOSTTY_MODS_SUPER_RIGHT.rawValue }
+
+        return ghostty_input_mods_e(mods)
+    }
+}
+
+extension NSEvent {
+    func ghosttyKeyEvent(
+        _ action: ghostty_input_action_e,
+        translationMods: NSEvent.ModifierFlags? = nil
+    ) -> ghostty_input_key_s {
+        var keyEv = ghostty_input_key_s()
+        keyEv.action = action
+        keyEv.keycode = UInt32(keyCode)
+        keyEv.text = nil
+        keyEv.composing = false
+        keyEv.mods = TerminalEmulator.ghosttyMods(modifierFlags)
+        keyEv.consumed_mods = TerminalEmulator.ghosttyMods(
+            (translationMods ?? modifierFlags).subtracting([.control, .command])
+        )
+
+        keyEv.unshifted_codepoint = 0
+        if type == .keyDown || type == .keyUp {
+            if let chars = characters(byApplyingModifiers: []),
+               let codepoint = chars.unicodeScalars.first
+            {
+                keyEv.unshifted_codepoint = codepoint.value
+            }
+        }
+
+        return keyEv
+    }
+
+    var ghosttyCharacters: String? {
+        guard let characters else { return nil }
+
+        if characters.count == 1,
+           let scalar = characters.unicodeScalars.first {
+            if scalar.value < 0x20 {
+                return self.characters(byApplyingModifiers: modifierFlags.subtracting(.control))
+            }
+
+            if scalar.value >= 0xF700 && scalar.value <= 0xF8FF {
+                return nil
+            }
+        }
+
+        return characters
     }
 }
 
 // MARK: - Surface View
 
 extension TerminalEmulator {
-    /// NSView that hosts a SwiftTerm terminal
-    class SurfaceView: NSView, ObservableObject, LocalProcessTerminalViewDelegate {
-        let terminalView: LocalProcessTerminalView
-
+    class SurfaceView: NSView, ObservableObject {
         @Published var title: String = ""
         @Published var healthy: Bool = true
-        @Published var processRunning: Bool = false
+        @Published var processRunning: Bool = true
 
-        private var hasStartedProcess = false
+        fileprivate private(set) var surface: ghostty_surface_t?
+
+        private var workingDirectoryCString: UnsafeMutablePointer<CChar>?
+        private var commandCString: UnsafeMutablePointer<CChar>?
+        private var initialInputCString: UnsafeMutablePointer<CChar>?
 
         override var acceptsFirstResponder: Bool { true }
 
-        private var pendingConfig: SurfaceConfiguration?
-
-        init(config: SurfaceConfiguration? = nil) {
-            terminalView = LocalProcessTerminalView(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
+        init(app: ghostty_app_t?, config: SurfaceConfiguration?) {
             super.init(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
 
-            self.pendingConfig = config
-            setupTerminalView()
-            applyTheme(App.theme)
-            terminalView.processDelegate = self
+            wantsLayer = true
+            layer?.backgroundColor = TerminalEmulator.TerminalTheme.colorFromHex(App.theme.background).cgColor
 
-            // Defer shell start until view is in window hierarchy
-            DispatchQueue.main.async { [weak self] in
-                guard let self = self else { return }
-                self.startShell(config: self.pendingConfig)
-                self.pendingConfig = nil
+            if let app {
+                createSurface(app: app, config: config)
             }
         }
 
@@ -190,362 +366,320 @@ extension TerminalEmulator {
             fatalError("init(coder:) not supported")
         }
 
-        private func setupTerminalView() {
-            // Add terminal view as subview - let theme handle colors
-            terminalView.translatesAutoresizingMaskIntoConstraints = true
-            terminalView.autoresizingMask = [.width, .height]
-            terminalView.frame = bounds
-            addSubview(terminalView)
+        deinit {
+            if let surface {
+                ghostty_surface_free(surface)
+            }
+            if let workingDirectoryCString { free(workingDirectoryCString) }
+            if let commandCString { free(commandCString) }
+            if let initialInputCString { free(initialInputCString) }
         }
 
-        private func applyTheme(_ theme: TerminalTheme) {
-            // Apply colors - terminal will handle its own background
-            terminalView.nativeBackgroundColor = TerminalTheme.colorFromHex(theme.background)
-            terminalView.nativeForegroundColor = TerminalTheme.colorFromHex(theme.foreground)
-            terminalView.caretColor = TerminalTheme.colorFromHex(theme.cursorColor)
-            terminalView.selectedTextBackgroundColor = TerminalTheme.colorFromHex(theme.selectionBackground)
+        private func createSurface(app: ghostty_app_t, config: SurfaceConfiguration?) {
+            var cfg = ghostty_surface_config_new()
+            cfg.platform_tag = GHOSTTY_PLATFORM_MACOS
+            cfg.platform = ghostty_platform_u(macos: ghostty_platform_macos_s(
+                nsview: Unmanaged.passUnretained(self).toOpaque()
+            ))
+            cfg.userdata = Unmanaged.passUnretained(self).toOpaque()
 
-            // Apply font
-            let fontSize = theme.fontSize
-            if let font = NSFont(name: theme.fontFamily, size: fontSize) {
-                terminalView.font = font
-            } else {
-                // Fallback to system monospace font
-                terminalView.font = NSFont.monospacedSystemFont(ofSize: fontSize, weight: .regular)
+            let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 1.0
+            cfg.scale_factor = scale
+
+            let fontSize = config?.fontSize ?? App.theme.fontSize
+            cfg.font_size = Float(fontSize)
+
+            if let workingDirectory = config?.workingDirectory {
+                workingDirectoryCString = strdup(workingDirectory)
+                cfg.working_directory = UnsafePointer(workingDirectoryCString)
             }
 
-            // Build palette with background color as color 0 (default background)
-            var colors: [SwiftTerm.Color] = []
-            // Use our background color as the first color (ANSI black/background)
-            colors.append(TerminalTheme.swiftTermColorFromHex(theme.background))
-            // Rest of the palette (skip index 0)
-            for hex in theme.palette.dropFirst().prefix(15) {
-                colors.append(TerminalTheme.swiftTermColorFromHex(hex))
+            if let command = config?.command {
+                commandCString = strdup(command)
+                cfg.command = UnsafePointer(commandCString)
             }
 
-            // SwiftTerm uses installColors to set the ANSI palette
-            if colors.count == 16 {
-                terminalView.installColors(colors)
+            if let initialInput = config?.initialInput {
+                initialInputCString = strdup(initialInput)
+                cfg.initial_input = UnsafePointer(initialInputCString)
             }
 
-            // Set terminal's default background/foreground colors
-            let terminal = terminalView.getTerminal()
-            terminal.backgroundColor = TerminalTheme.swiftTermColorFromHex(theme.background)
-            terminal.foregroundColor = TerminalTheme.swiftTermColorFromHex(theme.foreground)
+            cfg.wait_after_command = config?.waitAfterCommand ?? false
+            cfg.context = GHOSTTY_SURFACE_CONTEXT_WINDOW
 
-            // Force redraw
-            terminalView.setNeedsDisplay(terminalView.bounds)
+            guard let surface = ghostty_surface_new(app, &cfg) else {
+                TerminalEmulator.logger.error("ghostty_surface_new failed")
+                healthy = false
+                return
+            }
+
+            self.surface = surface
+            updateSurfaceSize()
         }
 
-        private func startShell(config: SurfaceConfiguration?) {
-            guard !hasStartedProcess else { return }
-            hasStartedProcess = true
+        // MARK: - Commands
 
-            // Determine working directory
-            let workingDir = config?.workingDirectory ?? NSHomeDirectory()
-
-            // Get user's default shell
-            let shell = ProcessInfo.processInfo.environment["SHELL"] ?? "/bin/zsh"
-            let shellName = (shell as NSString).lastPathComponent
-
-            // Change to working directory first
-            FileManager.default.changeCurrentDirectoryPath(workingDir)
-
-            // Start the process
-            terminalView.startProcess(
-                executable: shell,
-                args: ["-l"],  // Login shell
-                environment: nil,
-                execName: shellName
-            )
-
-            processRunning = true
-        }
-
-        // MARK: - Send Command
-
-        /// Send a command to the terminal (appends carriage return to execute)
         func sendCommand(_ command: String) {
-            let commandWithReturn = command + "\r"
-            terminalView.send(txt: commandWithReturn)
+            sendText(command + "\n")
         }
 
-        /// Send raw text to the terminal (no newline appended)
         func sendText(_ text: String) {
-            terminalView.send(txt: text)
+            guard let surface else { return }
+            let length = text.lengthOfBytes(using: .utf8)
+            text.withCString { ptr in
+                ghostty_surface_text(surface, ptr, UInt(length))
+            }
+        }
+
+        // MARK: - Selection
+
+        func getSelectedText() -> String? {
+            guard let surface else { return nil }
+            var text = ghostty_text_s()
+            guard ghostty_surface_read_selection(surface, &text) else { return nil }
+            defer { ghostty_surface_free_text(surface, &text) }
+            guard let ptr = text.text else { return nil }
+            return String(bytesNoCopy: UnsafeMutableRawPointer(mutating: ptr), length: Int(text.text_len), encoding: .utf8, freeWhenDone: false)
+        }
+
+        var hasSelection: Bool {
+            guard let surface else { return false }
+            return ghostty_surface_has_selection(surface)
         }
 
         // MARK: - Size Updates
 
+        override func layout() {
+            super.layout()
+            updateSurfaceSize()
+        }
+
+        override func viewDidChangeBackingProperties() {
+            super.viewDidChangeBackingProperties()
+            guard let surface else { return }
+
+            let fbFrame = convertToBacking(bounds)
+            let xScale = bounds.width > 0 ? fbFrame.size.width / bounds.width : 1.0
+            let yScale = bounds.height > 0 ? fbFrame.size.height / bounds.height : 1.0
+            ghostty_surface_set_content_scale(surface, xScale, yScale)
+            updateSurfaceSize()
+        }
+
+        private func updateSurfaceSize() {
+            guard let surface else { return }
+            let fbFrame = convertToBacking(bounds)
+            let width = max(1, UInt32(fbFrame.size.width))
+            let height = max(1, UInt32(fbFrame.size.height))
+            ghostty_surface_set_size(surface, width, height)
+        }
+
         func sizeDidChange(_ size: CGSize) {
-            terminalView.frame = NSRect(origin: .zero, size: size)
+            frame = NSRect(origin: .zero, size: size)
+            updateSurfaceSize()
         }
 
         // MARK: - Focus
 
         override func becomeFirstResponder() -> Bool {
             let result = super.becomeFirstResponder()
-            if result {
-                terminalView.window?.makeFirstResponder(terminalView)
+            if result, let surface {
+                ghostty_surface_set_focus(surface, true)
+            }
+            return result
+        }
+
+        override func resignFirstResponder() -> Bool {
+            let result = super.resignFirstResponder()
+            if result, let surface {
+                ghostty_surface_set_focus(surface, false)
             }
             return result
         }
 
         // MARK: - Copy/Paste Support
 
-        /// Copy selected text to clipboard
         @objc func copy(_ sender: Any?) {
-            terminalView.copy(sender)
+            guard let selection = getSelectedText(), !selection.isEmpty else { return }
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(selection, forType: .string)
         }
 
-        /// Paste from clipboard
         @objc func paste(_ sender: Any?) {
-            terminalView.paste(sender)
+            if let string = NSPasteboard.general.string(forType: .string) {
+                sendText(string)
+            }
         }
 
-        /// Select all text in terminal
         @objc override func selectAll(_ sender: Any?) {
-            terminalView.selectAll(sender)
+            _ = sender
         }
 
-        /// Get the currently selected text
-        func getSelectedText() -> String? {
-            return terminalView.getSelection()
-        }
+        // MARK: - Input
 
-        /// Check if there's a selection
-        var hasSelection: Bool {
-            return terminalView.getSelection() != nil
-        }
+        private func keyAction(_ action: ghostty_input_action_e, event: NSEvent) -> Bool {
+            guard let surface else { return false }
+            var keyEv = event.ghosttyKeyEvent(action)
 
-        // MARK: - LocalProcessTerminalViewDelegate
-
-        func processTerminated(source: TerminalView, exitCode: Int32?) {
-            DispatchQueue.main.async { [weak self] in
-                self?.processRunning = false
-                self?.healthy = exitCode == 0
+            if let text = event.ghosttyCharacters, !text.isEmpty,
+               let codepoint = text.utf8.first, codepoint >= 0x20 {
+                return text.withCString { ptr in
+                    keyEv.text = ptr
+                    return ghostty_surface_key(surface, keyEv)
+                }
             }
+
+            return ghostty_surface_key(surface, keyEv)
         }
 
-        func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {
-            // Terminal size changed
+        override func keyDown(with event: NSEvent) {
+            _ = keyAction(GHOSTTY_ACTION_PRESS, event: event)
         }
 
-        func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-            DispatchQueue.main.async { [weak self] in
-                self?.title = title
+        override func keyUp(with event: NSEvent) {
+            _ = keyAction(GHOSTTY_ACTION_RELEASE, event: event)
+        }
+
+        override func flagsChanged(with event: NSEvent) {
+            let mod: ghostty_input_mods_e?
+            switch event.keyCode {
+            case 0x38, 0x3C:
+                mod = GHOSTTY_MODS_SHIFT
+            case 0x3B, 0x3E:
+                mod = GHOSTTY_MODS_CTRL
+            case 0x3A, 0x3D:
+                mod = GHOSTTY_MODS_ALT
+            case 0x37, 0x36:
+                mod = GHOSTTY_MODS_SUPER
+            case 0x39:
+                mod = GHOSTTY_MODS_CAPS
+            default:
+                mod = nil
             }
+
+            guard let mod else { return }
+            let mods = TerminalEmulator.ghosttyMods(event.modifierFlags)
+            let action: ghostty_input_action_e = (mods.rawValue & mod.rawValue) != 0 ? GHOSTTY_ACTION_PRESS : GHOSTTY_ACTION_RELEASE
+            _ = keyAction(action, event: event)
         }
 
-        func hostCurrentDirectoryUpdate(source: TerminalView, directory: String?) {
-            // Current directory updated
+        override func updateTrackingAreas() {
+            super.updateTrackingAreas()
+            trackingAreas.forEach { removeTrackingArea($0) }
+
+            addTrackingArea(NSTrackingArea(
+                rect: bounds,
+                options: [.mouseMoved, .activeAlways, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            ))
         }
 
-        func scrolled(source: TerminalView, position: Double) {
-            // Scrollback position changed
+        override func mouseMoved(with event: NSEvent) {
+            guard let surface else { return }
+            let loc = convert(event.locationInWindow, from: nil)
+            ghostty_surface_mouse_pos(surface, Double(loc.x), Double(bounds.height - loc.y), TerminalEmulator.ghosttyMods(event.modifierFlags))
+        }
+
+        override func mouseDown(with event: NSEvent) {
+            guard let surface else { return }
+            let mods = TerminalEmulator.ghosttyMods(event.modifierFlags)
+            ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
+        }
+
+        override func mouseUp(with event: NSEvent) {
+            guard let surface else { return }
+            let mods = TerminalEmulator.ghosttyMods(event.modifierFlags)
+            ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_LEFT, mods)
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            guard let surface else { return }
+            let mods = TerminalEmulator.ghosttyMods(event.modifierFlags)
+            ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_RIGHT, mods)
+        }
+
+        override func rightMouseUp(with event: NSEvent) {
+            guard let surface else { return }
+            let mods = TerminalEmulator.ghosttyMods(event.modifierFlags)
+            ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_RIGHT, mods)
+        }
+
+        override func otherMouseDown(with event: NSEvent) {
+            guard let surface else { return }
+            let mods = TerminalEmulator.ghosttyMods(event.modifierFlags)
+            ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_MIDDLE, mods)
+        }
+
+        override func otherMouseUp(with event: NSEvent) {
+            guard let surface else { return }
+            let mods = TerminalEmulator.ghosttyMods(event.modifierFlags)
+            ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_RELEASE, GHOSTTY_MOUSE_MIDDLE, mods)
+        }
+
+        override func scrollWheel(with event: NSEvent) {
+            guard let surface else { return }
+            ghostty_surface_mouse_scroll(
+                surface,
+                Double(event.scrollingDeltaX),
+                Double(event.scrollingDeltaY),
+                ghostty_input_scroll_mods_t(0)
+            )
         }
     }
 }
 
 // MARK: - SwiftUI Integration
 
-/// Container view that hosts the terminal - SwiftUI manages this, we manage the terminal inside
-class TerminalContainerView: NSView {
-    weak var hostedTerminal: LocalProcessTerminalView?
+final class TerminalContainerView: NSView {
+    weak var hostedSurface: TerminalEmulator.SurfaceView?
 
     override var acceptsFirstResponder: Bool { true }
 
-    func hostTerminal(_ terminal: LocalProcessTerminalView) {
-        hostedTerminal?.removeFromSuperview()
-
-        terminal.translatesAutoresizingMaskIntoConstraints = true
-        terminal.autoresizingMask = [.width, .height]
-        terminal.frame = bounds
-        addSubview(terminal)
-        hostedTerminal = terminal
-
-        DispatchQueue.main.async { [weak self] in
-            self?.window?.makeFirstResponder(terminal)
+    func hostSurface(_ view: TerminalEmulator.SurfaceView) {
+        if hostedSurface !== view {
+            hostedSurface?.removeFromSuperview()
+            view.translatesAutoresizingMaskIntoConstraints = true
+            view.autoresizingMask = [.width, .height]
+            view.frame = bounds
+            addSubview(view)
+            hostedSurface = view
         }
     }
 
     override func layout() {
         super.layout()
-        hostedTerminal?.frame = bounds
+        hostedSurface?.frame = bounds
     }
 }
 
-/// View controller that hosts a terminal - adds it in viewDidAppear to avoid blocking
-class TerminalHostViewController: NSViewController, NSMenuItemValidation {
-    let terminalView: LocalProcessTerminalView
-    private var hasAddedTerminal = false
-
-    init(terminalView: LocalProcessTerminalView) {
-        self.terminalView = terminalView
-        super.init(nibName: nil, bundle: nil)
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) not supported")
-    }
-
-    override func loadView() {
-        let container = TerminalContainerViewWithDrop(frame: NSRect(x: 0, y: 0, width: 800, height: 600))
-        container.terminalView = terminalView
-        self.view = container
-    }
-
-    override func viewDidAppear() {
-        super.viewDidAppear()
-
-        if !hasAddedTerminal {
-            hasAddedTerminal = true
-            terminalView.translatesAutoresizingMaskIntoConstraints = true
-            terminalView.autoresizingMask = [.width, .height]
-            terminalView.frame = view.bounds
-
-            view.addSubview(terminalView)
-
-            // Configure scrollback buffer for better scrolling
-            terminalView.getTerminal().options.scrollback = 10000
-        }
-
-        // Always focus terminal when view appears
-        DispatchQueue.main.async { [weak self] in
-            self?.view.window?.makeFirstResponder(self?.terminalView)
-        }
-    }
-
-    override func viewDidLayout() {
-        super.viewDidLayout()
-        if hasAddedTerminal {
-            terminalView.frame = view.bounds
-        }
-    }
-
-    // MARK: - Responder Chain for Copy/Paste/SelectAll
-
-    @IBAction func copy(_ sender: Any?) {
-        if let selection = terminalView.getSelection(), !selection.isEmpty {
-            let pasteboard = NSPasteboard.general
-            pasteboard.clearContents()
-            pasteboard.setString(selection, forType: .string)
-        }
-    }
-
-    @IBAction func paste(_ sender: Any?) {
-        if let string = NSPasteboard.general.string(forType: .string) {
-            terminalView.send(txt: string)
-        }
-    }
-
-    @IBAction override func selectAll(_ sender: Any?) {
-        terminalView.selectAll(sender)
-    }
-
-    // Enable menu items when appropriate (NSMenuItemValidation)
-    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
-        switch menuItem.action {
-        case #selector(copy(_:)):
-            return terminalView.getSelection() != nil
-        case #selector(paste(_:)):
-            return NSPasteboard.general.string(forType: .string) != nil
-        case #selector(selectAll(_:)):
-            return true
-        default:
-            return true
-        }
-    }
-
-    // Make sure we're in the responder chain
-    override var acceptsFirstResponder: Bool { true }
-}
-
-// MARK: - Drag and Drop Container View
-
-/// Container view that handles drag and drop for the terminal
-class TerminalContainerViewWithDrop: NSView {
-    weak var terminalView: LocalProcessTerminalView?
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        registerForDraggedTypes([.fileURL, .URL, .string])
-    }
-
-    required init?(coder: NSCoder) {
-        super.init(coder: coder)
-        registerForDraggedTypes([.fileURL, .URL, .string])
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        return .copy
-    }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        guard let terminalView = terminalView else { return false }
-
-        let pasteboard = sender.draggingPasteboard
-
-        // Handle file URLs
-        if let urls = pasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL], !urls.isEmpty {
-            // Escape paths and join with spaces
-            let paths = urls.map { url -> String in
-                let path = url.path
-                // Escape special characters for shell
-                return path.replacingOccurrences(of: " ", with: "\\ ")
-                          .replacingOccurrences(of: "'", with: "\\'")
-                          .replacingOccurrences(of: "\"", with: "\\\"")
-                          .replacingOccurrences(of: "(", with: "\\(")
-                          .replacingOccurrences(of: ")", with: "\\)")
-            }
-            let text = paths.joined(separator: " ")
-            terminalView.send(txt: text)
-            return true
-        }
-
-        // Handle plain strings
-        if let string = pasteboard.string(forType: .string) {
-            terminalView.send(txt: string)
-            return true
-        }
-
-        return false
-    }
-
-    override func draggingExited(_ sender: NSDraggingInfo?) {
-        // Optional: remove highlight
-    }
-
-    override var acceptsFirstResponder: Bool { true }
-}
-
-/// NSViewControllerRepresentable wrapper for terminal
-struct TerminalSurfaceRepresentable: NSViewControllerRepresentable {
-    typealias NSViewControllerType = TerminalHostViewController
+struct TerminalSurfaceRepresentable: NSViewRepresentable {
+    typealias NSViewType = TerminalContainerView
+    typealias Coordinator = Void
 
     let view: TerminalEmulator.SurfaceView
     let size: CGSize
 
-    func makeNSViewController(context: NSViewControllerRepresentableContext<TerminalSurfaceRepresentable>) -> TerminalHostViewController {
-        return TerminalHostViewController(terminalView: view.terminalView)
+    @MainActor @preconcurrency
+    func makeNSView(context: NSViewRepresentableContext<TerminalSurfaceRepresentable>) -> TerminalContainerView {
+        let container = TerminalContainerView(frame: NSRect(origin: .zero, size: size))
+        container.hostSurface(view)
+        return container
     }
 
-    func updateNSViewController(_ nsViewController: TerminalHostViewController, context: NSViewControllerRepresentableContext<TerminalSurfaceRepresentable>) {
-        // Size is handled by viewDidLayout
+    @MainActor @preconcurrency
+    func updateNSView(_ nsView: TerminalContainerView, context: NSViewRepresentableContext<TerminalSurfaceRepresentable>) {
+        nsView.frame = NSRect(origin: .zero, size: size)
+        nsView.hostSurface(view)
+        view.sizeDidChange(size)
     }
 
-    static func dismantleNSViewController(_ nsViewController: TerminalHostViewController, coordinator: ()) {
-        // Remove terminal view from the container when SwiftUI tears down this representable.
-        // This prevents the terminal NSView from being stranded in a SwiftUI hosting window
-        // that can appear as a chromeless, detached window. The offscreen screenshot timer
-        // will reclaim the terminal view on its next tick.
-        nsViewController.terminalView.removeFromSuperview()
+    @MainActor @preconcurrency
+    static func dismantleNSView(_ nsView: TerminalContainerView, coordinator: ()) {
+        nsView.hostedSurface?.removeFromSuperview()
     }
 }
 
-// MARK: - Focusable Terminal View for SwiftUI
-
-/// A SwiftUI wrapper that ensures the terminal can receive keyboard focus and copy/paste commands
 struct FocusableTerminalView: View {
     @ObservedObject var surfaceView: TerminalEmulator.SurfaceView
     let size: CGSize
@@ -554,14 +688,12 @@ struct FocusableTerminalView: View {
         TerminalSurfaceRepresentable(view: surfaceView, size: size)
             .focusable()
             .onTapGesture {
-                // Ensure terminal gets focus when tapped
-                surfaceView.terminalView.window?.makeFirstResponder(surfaceView.terminalView)
+                surfaceView.window?.makeFirstResponder(surfaceView)
             }
     }
 }
 
 extension TerminalEmulator {
-    /// Convenience typealias for the surface representable
     typealias SurfaceRepresentable = TerminalSurfaceRepresentable
 }
 

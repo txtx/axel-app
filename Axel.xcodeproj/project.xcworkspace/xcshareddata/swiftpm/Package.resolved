@@ -1,5 +1,5 @@
 {
-  "originHash" : "638a179177193cd32da80e90b860ea4e381fc4bff499bd7ee871eb762fcb1387",
+  "originHash" : "b941cf61f395032d991b49d072d9a56e8923c13687c645278b4a0efbb7a8a576",
   "pins" : [
     {
       "identity" : "automerge-swift",
@@ -26,15 +26,6 @@
       "state" : {
         "revision" : "7a6f6554ce030d8733b3ba32d4255278450e5328",
         "version" : "2.40.0"
-      }
-    },
-    {
-      "identity" : "swift-argument-parser",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/apple/swift-argument-parser",
-      "state" : {
-        "revision" : "c5d11a805e765f52ba34ec7284bd4fcd6ba68615",
-        "version" : "1.7.0"
       }
     },
     {
@@ -79,15 +70,6 @@
       "location" : "https://github.com/apple/swift-http-types.git",
       "state" : {
         "revision" : "45eb0224913ea070ec4fba17291b9e7ecf4749ca",
-        "version" : "1.5.1"
-      }
-    },
-    {
-      "identity" : "swiftterm",
-      "kind" : "remoteSourceControl",
-      "location" : "https://github.com/migueldeicaza/SwiftTerm",
-      "state" : {
-        "revision" : "0b8d99bd19b694df44e1ccaa3891309719d34330",
         "version" : "1.5.1"
       }
     },

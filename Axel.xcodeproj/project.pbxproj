@@ -16,7 +16,7 @@
 		43AFE93D2F2C12CE00513889 /* Axel.icon in Resources */ = {isa = PBXBuildFile; fileRef = 43AFE93C2F2C12CE00513889 /* Axel.icon */; };
 		43BD82722F1D63F40092A96C /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82712F1D63F40092A96C /* Supabase */; };
 		43BD82732F1D63F40092A96C /* AutomergeWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82742F1D63F40092A96C /* AutomergeWrapper */; };
-		43BD82752F1D63F50092A96C /* SwiftTermWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82772F1D63F50092A96C /* SwiftTermWrapper */; };
+		43BD82832F1D90000092A96C /* GhosttyKit in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82822F1D90000092A96C /* GhosttyKit */; };
 		43BD82802F1D70000092A96C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD827F2F1D70000092A96C /* Sparkle */; };
 		A1000001201A0001 /* AxelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0001 /* AxelApp.swift */; };
 		A1000001201A0002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0002 /* ContentView.swift */; };
@@ -241,7 +241,7 @@
 			files = (
 				43BD82732F1D63F40092A96C /* AutomergeWrapper in Frameworks */,
 				43BD82722F1D63F40092A96C /* Supabase in Frameworks */,
-				43BD82752F1D63F50092A96C /* SwiftTermWrapper in Frameworks */,
+				43BD82832F1D90000092A96C /* GhosttyKit in Frameworks */,
 				43BD82802F1D70000092A96C /* Sparkle in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -593,7 +593,7 @@
 			packageReferences = (
 				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */,
 				43BD82702F1D5F650092A96C /* XCRemoteSwiftPackageReference "supabase-swift" */,
-				43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */,
+				43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */,
 				43BD827E2F1D70000092A96C /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = A1000001401A0003 /* Products */;
@@ -1017,6 +1017,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
 				XROS_DEPLOYMENT_TARGET = 2.0;
+				"OTHER_LDFLAGS[sdk=macosx*]" = "-framework Carbon";
 			};
 			name = Debug;
 		};
@@ -1070,6 +1071,7 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
 				XROS_DEPLOYMENT_TARGET = 2.0;
+				"OTHER_LDFLAGS[sdk=macosx*]" = "-framework Carbon";
 			};
 			name = Release;
 		};
@@ -1119,9 +1121,9 @@
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AutomergeWrapper;
 		};
-		43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */ = {
+		43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */ = {
 			isa = XCLocalSwiftPackageReference;
-			relativePath = Packages/SwiftTermWrapper;
+			relativePath = Packages/GhosttyKit;
 		};
 /* End XCLocalSwiftPackageReference section */
 
@@ -1155,10 +1157,10 @@
 			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */;
 			productName = AutomergeWrapper;
 		};
-		43BD82772F1D63F50092A96C /* SwiftTermWrapper */ = {
+		43BD82822F1D90000092A96C /* GhosttyKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82792F1D63F60092A96C /* XCLocalSwiftPackageReference "Packages/SwiftTermWrapper" */;
-			productName = SwiftTermWrapper;
+			package = 43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */;
+			productName = GhosttyKit;
 		};
 		43BD827F2F1D70000092A96C /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
