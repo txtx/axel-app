@@ -1335,12 +1335,22 @@ struct WorkerPickerPanel: View {
     @State private var newWorktreeBranch: String = ""
     @State private var availableWorktrees: [WorktreeInfo] = []
     @State private var selectedWorktreeIndex: Int = 0  // 0 = main, then existing worktrees
-    @State private var selectedProvider: AIProvider = .claude
+    @State private var panes: [PaneInfo] = []
+    @State private var selectedPaneIndex: Int = 0
     @FocusState private var isFocused: Bool
     @FocusState private var isWorktreeFieldFocused: Bool
 
     // Use centralized status service
     private let statusService = SessionStatusService.shared
+
+    private var selectedPane: PaneInfo? {
+        guard selectedPaneIndex < panes.count else { return nil }
+        return panes[selectedPaneIndex]
+    }
+
+    private var selectedProvider: AIProvider {
+        selectedPane?.provider ?? .claude
+    }
 
     /// All sessions for this workspace (sorted by start time, newest first)
     private var allSessions: [TerminalSession] {
@@ -1410,10 +1420,13 @@ struct WorkerPickerPanel: View {
         .focusEffectDisabled()
         .onAppear {
             isFocused = true
-            // Load available worktrees
+            // Load available worktrees and panes
             if let path = workspacePath {
                 Task {
-                    availableWorktrees = await WorktreeService.shared.listWorktrees(in: path)
+                    async let worktreesTask = WorktreeService.shared.listWorktrees(in: path)
+                    async let panesTask = LayoutService.shared.listPanes(in: path)
+                    availableWorktrees = await worktreesTask
+                    panes = await panesTask
                 }
             }
         }
@@ -1585,20 +1598,30 @@ struct WorkerPickerPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Provider selection
+                    // Pane selection
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Provider")
+                        Text("Pane")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.secondary)
 
-                        Picker("Provider", selection: $selectedProvider) {
-                            ForEach(AIProvider.allCases, id: \.self) { provider in
-                                Label(provider.displayName, systemImage: provider.systemImage)
-                                    .tag(provider)
+                        if panes.isEmpty {
+                            Text("Loading panes...")
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        } else {
+                            HStack(spacing: 8) {
+                                ForEach(Array(panes.enumerated()), id: \.element.id) { index, pane in
+                                    CompactPaneChip(
+                                        pane: pane,
+                                        isSelected: index == selectedPaneIndex,
+                                        isFocused: true
+                                    )
+                                    .onTapGesture {
+                                        selectedPaneIndex = index
+                                    }
+                                }
                             }
                         }
-                        .pickerStyle(.segmented)
-                        .fixedSize()
                     }
 
                     Divider()
@@ -2177,6 +2200,359 @@ struct FloatingTerminalMiniature: View {
                 }
             }
         }
+    }
+}
+
+// MARK: - Pane Info (from axel CLI)
+
+/// Pane configuration from AXEL.md via axel CLI
+struct PaneInfo: Codable, Identifiable, Equatable {
+    let type: String
+    let name: String
+    let color: String?
+    let isAi: Bool
+
+    var id: String { type }
+
+    enum CodingKeys: String, CodingKey {
+        case type, name, color
+        case isAi = "is_ai"
+    }
+
+    /// Convert to AIProvider for compatibility
+    var provider: AIProvider {
+        AIProvider(shellType: type)
+    }
+
+    /// Get SwiftUI color from pane color name
+    var swiftUIColor: Color {
+        guard let colorName = color else { return .gray }
+        switch colorName {
+        case "orange": return .orange
+        case "green": return .green
+        case "blue": return .blue
+        case "purple": return .purple
+        case "yellow": return .yellow
+        case "red": return .red
+        case "gray", "grey": return .gray
+        default: return .gray
+        }
+    }
+}
+
+// MARK: - Layout Service
+
+/// Service to fetch layout configurations from axel CLI
+@MainActor
+final class LayoutService {
+    static let shared = LayoutService()
+    private init() {}
+
+    /// Fetch panes from AXEL.md via axel CLI
+    func listPanes(in workspacePath: String) async -> [PaneInfo] {
+        let axelPath = AxelSetupService.shared.executablePath
+        let manifestPath = (workspacePath as NSString).appendingPathComponent("AXEL.md")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [axelPath, "layout", "ls", "--json", "-m", manifestPath]
+        process.currentDirectoryURL = URL(fileURLWithPath: workspacePath)
+
+        let pipe = Pipe()
+        process.standardOutput = pipe
+        process.standardError = FileHandle.nullDevice
+
+        do {
+            try process.run()
+            process.waitUntilExit()
+
+            let data = pipe.fileHandleForReading.readDataToEndOfFile()
+            let panes = try JSONDecoder().decode([PaneInfo].self, from: data)
+            return panes
+        } catch {
+            print("[LayoutService] Failed to list panes: \(error)")
+            // Return default panes as fallback
+            return [
+                PaneInfo(type: "claude", name: "Claude", color: "orange", isAi: true),
+                PaneInfo(type: "codex", name: "Codex", color: "green", isAi: true),
+                PaneInfo(type: "shell", name: "Shell", color: "gray", isAi: false)
+            ]
+        }
+    }
+}
+
+// MARK: - New Terminal Sheet
+
+/// Sheet for creating a new terminal with worktree and shell selection
+/// Supports keyboard navigation: arrow keys to move, Enter to confirm, Escape to cancel
+struct NewTerminalSheet: View {
+    let workspacePath: String
+    let onCreateTerminal: (WorktreeInfo?, AIProvider) -> Void
+    @Environment(\.dismiss) private var dismiss
+
+    @State private var worktrees: [WorktreeInfo] = []
+    @State private var panes: [PaneInfo] = []
+    @State private var selectedWorktreeIndex: Int = 0
+    @State private var selectedPaneIndex: Int = 0
+    @State private var focusedRow: Int = 0  // 0 = worktrees, 1 = panes
+    @State private var isLoading = true
+
+    private var selectedWorktree: WorktreeInfo? {
+        guard selectedWorktreeIndex < worktrees.count else { return nil }
+        return worktrees[selectedWorktreeIndex]
+    }
+
+    private var selectedPane: PaneInfo? {
+        guard selectedPaneIndex < panes.count else { return nil }
+        return panes[selectedPaneIndex]
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if isLoading {
+                Spacer()
+                ProgressView()
+                Spacer()
+            } else {
+                VStack(spacing: 24) {
+                    // Worktree selection
+                    VStack(spacing: 8) {
+                        Label("Worktree", systemImage: "arrow.triangle.branch")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            ForEach(Array(worktrees.enumerated()), id: \.element.id) { index, worktree in
+                                CompactWorktreeChip(
+                                    worktree: worktree,
+                                    isSelected: index == selectedWorktreeIndex,
+                                    isFocused: focusedRow == 0
+                                )
+                                .onTapGesture {
+                                    selectedWorktreeIndex = index
+                                    focusedRow = 0
+                                }
+                            }
+                        }
+                    }
+
+                    // Pane selection
+                    VStack(spacing: 8) {
+                        Label("Pane", systemImage: "terminal")
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(.secondary)
+
+                        HStack(spacing: 8) {
+                            ForEach(Array(panes.enumerated()), id: \.element.id) { index, pane in
+                                CompactPaneChip(
+                                    pane: pane,
+                                    isSelected: index == selectedPaneIndex,
+                                    isFocused: focusedRow == 1
+                                )
+                                .onTapGesture {
+                                    selectedPaneIndex = index
+                                    focusedRow = 1
+                                }
+                            }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 24)
+            }
+
+            Divider()
+
+            // Action buttons
+            HStack {
+                Text("↑↓ row  ←→ select  ⏎ create  esc cancel")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+
+                Spacer()
+
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button {
+                    confirmSelection()
+                } label: {
+                    Text("Create")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(selectedPane == nil)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 16)
+            .frame(height: 56)
+        }
+        .frame(width: 1000, height: 380)
+        .background(.background)
+        .focusable()
+        .focusEffectDisabled()
+        .keyboardNavigation(
+            onUp: { moveRow(-1) },
+            onDown: { moveRow(1) },
+            onLeft: { moveSelection(-1) },
+            onRight: { moveSelection(1) },
+            onEnter: { confirmSelection() },
+            onEscape: { dismiss() }
+        )
+        .task {
+            async let worktreesTask = WorktreeService.shared.listWorktrees(in: workspacePath)
+            async let panesTask = LayoutService.shared.listPanes(in: workspacePath)
+
+            worktrees = await worktreesTask
+            panes = await panesTask
+            isLoading = false
+        }
+    }
+
+    private func moveRow(_ delta: Int) {
+        focusedRow = max(0, min(1, focusedRow + delta))
+    }
+
+    private func moveSelection(_ delta: Int) {
+        if focusedRow == 0 {
+            selectedWorktreeIndex = max(0, min(worktrees.count - 1, selectedWorktreeIndex + delta))
+        } else {
+            selectedPaneIndex = max(0, min(panes.count - 1, selectedPaneIndex + delta))
+        }
+    }
+
+    private func confirmSelection() {
+        guard let pane = selectedPane else { return }
+        onCreateTerminal(selectedWorktree, pane.provider)
+        dismiss()
+    }
+}
+
+// MARK: - Keyboard Navigation Modifier
+
+/// View modifier that adds keyboard navigation support
+struct KeyboardNavigationModifier: ViewModifier {
+    let onUp: () -> Void
+    let onDown: () -> Void
+    let onLeft: () -> Void
+    let onRight: () -> Void
+    let onEnter: () -> Void
+    let onEscape: () -> Void
+
+    func body(content: Content) -> some View {
+        content
+            .onKeyPress(.upArrow) { onUp(); return .handled }
+            .onKeyPress(.downArrow) { onDown(); return .handled }
+            .onKeyPress(.leftArrow) { onLeft(); return .handled }
+            .onKeyPress(.rightArrow) { onRight(); return .handled }
+            .onKeyPress(.return) { onEnter(); return .handled }
+            .onKeyPress(.escape) { onEscape(); return .handled }
+    }
+}
+
+extension View {
+    func keyboardNavigation(
+        onUp: @escaping () -> Void,
+        onDown: @escaping () -> Void,
+        onLeft: @escaping () -> Void,
+        onRight: @escaping () -> Void,
+        onEnter: @escaping () -> Void,
+        onEscape: @escaping () -> Void
+    ) -> some View {
+        modifier(KeyboardNavigationModifier(
+            onUp: onUp,
+            onDown: onDown,
+            onLeft: onLeft,
+            onRight: onRight,
+            onEnter: onEnter,
+            onEscape: onEscape
+        ))
+    }
+}
+
+// MARK: - Compact Worktree Chip
+
+/// Compact chip with icon on top and small label beneath
+struct CompactWorktreeChip: View {
+    let worktree: WorktreeInfo
+    let isSelected: Bool
+    let isFocused: Bool
+
+    private var borderColor: Color {
+        if isSelected && isFocused {
+            return .accentColor
+        } else if isSelected {
+            return .accentColor.opacity(0.5)
+        }
+        return Color.primary.opacity(0.1)
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: worktree.isMain ? "folder.fill" : "arrow.triangle.branch")
+                .font(.system(size: 36))
+                .foregroundStyle(worktree.isMain ? .orange : .purple)
+
+            Text(worktree.displayName)
+                .font(.callout)
+                .lineLimit(1)
+                .foregroundStyle(isSelected ? .primary : .secondary)
+        }
+        .frame(width: 112, height: 104)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(borderColor, lineWidth: isSelected && isFocused ? 2 : 1)
+        )
+    }
+}
+
+// MARK: - Compact Pane Chip
+
+/// Compact chip with icon on top and small label beneath
+struct CompactPaneChip: View {
+    let pane: PaneInfo
+    let isSelected: Bool
+    let isFocused: Bool
+
+    private var borderColor: Color {
+        if isSelected && isFocused {
+            return pane.swiftUIColor
+        } else if isSelected {
+            return pane.swiftUIColor.opacity(0.5)
+        }
+        return Color.primary.opacity(0.1)
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            if pane.isAi {
+                AIProviderIcon(provider: pane.provider, size: 36)
+            } else {
+                Image(systemName: "terminal.fill")
+                    .font(.system(size: 36))
+                    .foregroundStyle(pane.swiftUIColor)
+            }
+
+            Text(pane.name)
+                .font(.callout)
+                .lineLimit(1)
+                .foregroundStyle(isSelected ? .primary : .secondary)
+        }
+        .frame(width: 112, height: 104)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(isSelected ? pane.swiftUIColor.opacity(0.15) : Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(borderColor, lineWidth: isSelected && isFocused ? 2 : 1)
+        )
     }
 }
 #endif

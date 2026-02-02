@@ -38,6 +38,7 @@ struct WorkspaceContentView: View {
     @State private var selectedMember: OrganizationMember?
     @State private var showCloseTerminalConfirmation = false
     @State private var showTerminalInspector = false
+    @State private var showNewTerminalSheet = false
     @State private var pendingTaskForPicker: WorkTask?
     @State private var floatingSession: TerminalSession?
     @State private var skillsColumnWidth: CGFloat = 280
@@ -54,20 +55,20 @@ struct WorkspaceContentView: View {
     }
 
     /// Start a terminal session, optionally linked to a task
-    /// - If task is provided, always show picker to choose agent/provider
-    /// - If no task, create a new terminal immediately
+    /// - If task is provided, show worker picker to choose agent/provider/session
+    /// - If no task, show new terminal sheet to choose worktree/provider
     private func startTerminal(for task: WorkTask? = nil, provider: AIProvider = .claude) {
         let hasExistingSessions = !sessionManager.sessions(for: workspace.id).isEmpty
         print("[WorkspaceContentView] startTerminal: task='\(task?.title ?? "nil")', hasExistingSessions=\(hasExistingSessions), provider=\(provider.displayName)")
 
         if task != nil {
-            // Always show picker to allow provider + session selection
+            // Task provided - show worker picker to allow provider + session selection
             pendingTaskForPicker = task
             print("[WorkspaceContentView] → Set pendingTaskForPicker to trigger sheet")
         } else {
-            // No task - create new terminal
-            print("[WorkspaceContentView] → Creating new terminal")
-            createNewTerminal(for: task, provider: provider)
+            // No task - show new terminal sheet for worktree/provider selection
+            showNewTerminalSheet = true
+            print("[WorkspaceContentView] → Showing new terminal sheet")
         }
     }
 
@@ -378,7 +379,7 @@ struct WorkspaceContentView: View {
                     width: currentListColumnWidthBinding,
                     minWidth: 220,
                     maxWidth: 800,
-                    style: sidebarSelection == .terminals ? .terminal : .standard
+                    style: sidebarSelection == .terminals && sessionManager.runningCount(for: workspace.id) > 0 ? .terminal : .standard
                 )
 
                 detailColumnView
@@ -549,6 +550,7 @@ struct WorkspaceContentView: View {
                 workspace: workspace,
                 appState: appState,
                 pendingTaskForPicker: $pendingTaskForPicker,
+                showNewTerminalSheet: $showNewTerminalSheet,
                 onStartTerminal: { task in startTerminal(for: task) },
                 onAssignTask: assignTaskToWorker,
                 onCreateNewTerminal: { task, provider in createNewTerminal(for: task, provider: provider) },
@@ -821,6 +823,7 @@ private struct WorkspaceSheetModifier: ViewModifier {
     let workspace: Workspace
     @Bindable var appState: AppState
     @Binding var pendingTaskForPicker: WorkTask?
+    @Binding var showNewTerminalSheet: Bool
     let onStartTerminal: (WorkTask) -> Void
     let onAssignTask: (WorkTask, TerminalSession) -> Void
     let onCreateNewTerminal: (WorkTask?, AIProvider) -> Void
@@ -831,6 +834,15 @@ private struct WorkspaceSheetModifier: ViewModifier {
             .sheet(isPresented: $appState.isNewTaskPresented) {
                 WorkspaceCreateTaskView(workspace: workspace, isPresented: $appState.isNewTaskPresented) { task in
                     onStartTerminal(task)
+                }
+            }
+            .sheet(isPresented: $showNewTerminalSheet) {
+                NewTerminalSheet(workspacePath: workspace.path ?? "") { worktree, provider in
+                    if let worktree, !worktree.isMain {
+                        onCreateWorktreeTerminal(nil, worktree.displayName, provider)
+                    } else {
+                        onCreateNewTerminal(nil, provider)
+                    }
                 }
             }
             .sheet(item: $pendingTaskForPicker) { task in
@@ -1225,19 +1237,6 @@ struct WorkspaceSidebarView: View {
                 }
                 .tag(SidebarSection.inbox(.pending))
 
-                // Resolved
-                Label {
-                    HStack {
-                        Text("Resolved")
-                        Spacer()
-                    }
-                } icon: {
-                    Image(systemName: "checkmark.circle")
-                        .foregroundStyle(.secondary)
-                }
-                .tag(SidebarSection.inbox(.answered))
-                .padding(.leading, 16)
-
                 Divider()
                     .padding(.vertical, 8)
 
@@ -1273,9 +1272,21 @@ struct WorkspaceSidebarView: View {
                 Divider()
                     .padding(.vertical, 8)
 
-                // Team
-                Label("Team", systemImage: "person.2")
-                    .tag(SidebarSection.team)
+                // Team (coming soon)
+                Label {
+                    HStack {
+                        Text("Team")
+                        Spacer()
+                        Text("Soon")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
+                } icon: {
+                    Image(systemName: "person.2")
+                        .foregroundStyle(.tertiary)
+                }
+                .foregroundStyle(.tertiary)
+                .allowsHitTesting(false)
             }
             .listStyle(.sidebar)
 

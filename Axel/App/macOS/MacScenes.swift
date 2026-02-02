@@ -262,6 +262,7 @@ struct MacScenes: Scene {
         .modelContainer(sharedContainer)
         .defaultSize(width: 800, height: 460)
         .windowResizability(.contentSize)
+        .windowStyle(.hiddenTitleBar)
 
         // Workspace Windows (one per workspace) - each gets its own container
         WindowGroup("Workspace", for: UUID.self) { $workspaceId in

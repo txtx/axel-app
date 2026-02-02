@@ -18,19 +18,93 @@ struct WorkspacePickerView: View {
         Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "1.0"
     }
 
-    var body: some View {
-        HStack(spacing: 0) {
-            // Left side - Branding and Actions
-            brandingPanel
+    private var selectedIndex: Int? {
+        guard let selectedId = selectedWorkspaceId else { return nil }
+        return workspaces.firstIndex { $0.id == selectedId }
+    }
 
-            // Right side - Recent Workspaces
-            recentWorkspacesPanel
+    var body: some View {
+        ZStack(alignment: .topLeading) {
+            HStack(spacing: 0) {
+                // Left side - Branding and Actions
+                brandingPanel
+
+                // Right side - Recent Workspaces
+                recentWorkspacesPanel
+            }
+
+            // Close button
+            Button {
+                dismissWindow(id: "workspace-picker")
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .font(.system(size: 14))
+                    .foregroundStyle(Color.white.opacity(0.4))
+            }
+            .buttonStyle(.plain)
+            .padding(12)
+            .onHover { isHovered in
+                if isHovered {
+                    NSCursor.pointingHand.push()
+                } else {
+                    NSCursor.pop()
+                }
+            }
         }
         .frame(width: 760, height: 420)
         .clipShape(RoundedRectangle(cornerRadius: 12))
+        .focusable()
+        .focusEffectDisabled()
+        .onKeyPress(.upArrow) { moveSelection(-1); return .handled }
+        .onKeyPress(.downArrow) { moveSelection(1); return .handled }
+        .onKeyPress(.return) { openSelectedWorkspace(); return .handled }
+        .onKeyPress(.escape) { dismissWindow(id: "workspace-picker"); return .handled }
         .onDrop(of: [.fileURL], isTargeted: $isTargeted) { providers in
             handleDrop(providers: providers)
         }
+        .onAppear {
+            // Select first workspace by default
+            if selectedWorkspaceId == nil, let first = workspaces.first {
+                selectedWorkspaceId = first.id
+            }
+
+            // Hide traffic light buttons
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                for window in NSApplication.shared.windows {
+                    if window.identifier?.rawValue == "workspace-picker" ||
+                       window.title == "Axel" {
+                        // Hide each button and their container
+                        for buttonType: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+                            if let button = window.standardWindowButton(buttonType) {
+                                button.isHidden = true
+                            }
+                        }
+                        // Hide the titlebar container
+                        if let titlebarContainer = window.standardWindowButton(.closeButton)?.superview?.superview {
+                            titlebarContainer.isHidden = true
+                        }
+                        break
+                    }
+                }
+            }
+        }
+    }
+
+    private func moveSelection(_ delta: Int) {
+        guard !workspaces.isEmpty else { return }
+
+        if let currentIndex = selectedIndex {
+            let newIndex = max(0, min(workspaces.count - 1, currentIndex + delta))
+            selectedWorkspaceId = workspaces[newIndex].id
+        } else {
+            selectedWorkspaceId = workspaces.first?.id
+        }
+    }
+
+    private func openSelectedWorkspace() {
+        guard let selectedId = selectedWorkspaceId,
+              let workspace = workspaces.first(where: { $0.id == selectedId }) else { return }
+        openWorkspace(workspace)
     }
 
     // MARK: - Branding Panel (Left)
@@ -367,4 +441,5 @@ struct RecentWorkspaceRow: View {
         return path
     }
 }
+
 #endif

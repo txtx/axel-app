@@ -2,81 +2,85 @@
 workspace: axel-apple
 
 # =============================================================================
-# Agent directories
+# Skill directories
 # =============================================================================
-# Search paths for agent files (first match wins for duplicate names)
+# Search paths for skill files (first match wins for duplicate names)
 # Supports: ./relative, ~/home, /absolute paths
 
-agents:
+skills:
   - path: ./skills
   - path: ~/.config/axel/skills
 
 # =============================================================================
-# Shell definitions
+# Layouts
 # =============================================================================
-# Define shells that can be used in terminal profiles
-#
-# Built-in types: claude, codex, opencode, antigravity, shell
-# Custom types use the 'command' field
 
-shells:
-  # Claude Code - AI coding assistant
-  - type: claude
-    color: gray
-    agents:
-      - "*"                    # Load all agents, or list specific: ["agent1", "agent2"]
-    # model: sonnet            # Model: sonnet, opus, haiku
-    # prompt: "Your task..."   # Initial prompt
-    # allowed_tools: []        # Restrict to specific tools
-    # disallowed_tools: []     # Block specific tools
-    # args: []                 # Additional CLI arguments
+layouts:
+  # ---------------------------------------------------------------------------
+  # Pane definitions
+  # ---------------------------------------------------------------------------
+  # Define panes that can be used in grid layouts
+  #
+  # Built-in types: claude, codex, opencode, antigravity, shell
+  # Custom types use the 'command' field
 
-  # Codex - OpenAI coding assistant
-  - type: codex
-    color: green
-  
-  # OpenCode - Open-source coding assistant
-  # - type: opencode
-  #   color: blue
-  #   agents: ["*"]
+  panes:
+    # Claude Code - AI coding assistant
+    - type: claude
+      color: gray
+      skills:
+        - "*"                    # Load all skills, or list specific: ["skill1", "skill2"]
+      # model: sonnet            # Model: sonnet, opus, haiku
+      # prompt: "Your task..."   # Initial prompt
+      # allowed_tools: []        # Restrict to specific tools
+      # disallowed_tools: []     # Block specific tools
+      # args: []                 # Additional CLI arguments
 
-  # Antigravity - Google coding assistant
-  # - type: antigravity
-  #   color: orange
-  #   agents: ["*"]
-  #   # model: gemini-3-pro    # Model to use
+    # Codex - OpenAI coding assistant
+    - type: codex
+      color: green
 
-  # Regular shell with notes displayed on startup
-  - type: shell
-    notes:
-      - "$ axel -k axel-apple"
+    # OpenCode - Open-source coding assistant
+    # - type: opencode
+    #   color: blue
+    #   skills: ["*"]
 
-  # Custom command example
-  # - type: logs
-  #   command: "tail -f /var/log/app.log"
-  #   color: red
+    # Antigravity - Google coding assistant
+    # - type: antigravity
+    #   color: orange
+    #   skills: ["*"]
+    #   # model: gemini-3-pro    # Model to use
 
-# =============================================================================
-# Terminal profiles
-# =============================================================================
-# Layout configurations for tmux sessions
-#
-# Profile types:
-#   tmux    - Standard tmux session (default)
-#   tmux_cc - iTerm2 tmux integration mode
-#   shell   - No tmux, run first pane directly
-#
-# Pane positioning:
-#   col: 0, 1, 2...  - Column position (left to right)
-#   row: 0, 1, 2...  - Row position within column (top to bottom)
-#   width: 50        - Column width percentage
-#   height: 30       - Row height percentage
-#
-# Colors: purple, yellow, red, green, blue, gray, orange
+    # Regular shell with notes displayed on startup
+    - type: shell
+      notes:
+        - "$ axel -k axel-apple"
 
-terminal:
-  profiles:
-    # Default profile - two columns
+    # Custom command example
+    # - type: logs
+    #   command: "tail -f /var/log/app.log"
+    #   color: red
+
+  # ---------------------------------------------------------------------------
+  # Grid layouts
+  # ---------------------------------------------------------------------------
+  # Layout configurations for tmux sessions
+  #
+  # Grid types:
+  #   tmux    - Standard tmux session (default)
+  #   tmux_cc - iTerm2 tmux integration mode
+  #   shell   - No tmux, run first pane directly
+  #
+  # Cell positioning:
+  #   col: 0, 1, 2...  - Column position (left to right)
+  #   row: 0, 1, 2...  - Row position within column (top to bottom)
+  #   width: 50        - Column width percentage
+  #   height: 30       - Row height percentage
+  #
+  # Colors: purple, yellow, red, green, blue, gray, orange
+
+  grids:
+    # Default grid - two columns
     default:
       type: tmux
       claude:

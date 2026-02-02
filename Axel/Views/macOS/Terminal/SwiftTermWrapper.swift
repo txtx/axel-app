@@ -657,6 +657,19 @@ final class TerminalContainerView: NSView {
         super.layout()
         hostedSurface?.frame = bounds
     }
+
+    override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        // Forward to hosted surface so it can update scale factor when moving between monitors
+        hostedSurface?.viewDidChangeBackingProperties()
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        // Update size when window changes (e.g., moved to different monitor)
+        hostedSurface?.viewDidChangeBackingProperties()
+        hostedSurface?.frame = bounds
+    }
 }
 
 struct TerminalSurfaceRepresentable: NSViewRepresentable {

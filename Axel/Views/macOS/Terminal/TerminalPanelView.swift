@@ -90,6 +90,13 @@ struct SimpleSurfaceWrapper: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(Color.primary.opacity(0.2), lineWidth: 1)
         )
+        .onAppear {
+            // Auto-focus the terminal when it appears
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                surfaceView.window?.makeFirstResponder(surfaceView)
+                surfaceView.focus()
+            }
+        }
     }
 }
 
