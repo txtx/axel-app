@@ -1998,8 +1998,8 @@ struct ResizableDivider: View {
 
     var body: some View {
         Rectangle()
-            .fill(Color.primary.opacity(isDragging ? 0.2 : 0.08))
-            .frame(width: 1)
+            .fill(Color(hex: "141414")!)
+            .frame(width: 5)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle().inset(by: -4))
             .onHover { hovering in

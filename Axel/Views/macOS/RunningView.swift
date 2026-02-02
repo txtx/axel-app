@@ -235,9 +235,14 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
         DispatchQueue.main.async { [weak self] in
             guard let self = self else { return }
 
-            let surface = TerminalEmulator.App.shared.createSurface(
-                config: TerminalEmulator.SurfaceConfiguration(workingDirectory: workingDirectory)
-            )
+            // Build surface configuration with working directory and initial command
+            var config = TerminalEmulator.SurfaceConfiguration(workingDirectory: workingDirectory)
+            // Use initialInput to send command at shell startup - Ghostty handles timing
+            if let command = command {
+                config.initialInput = command + "\n"
+            }
+
+            let surface = TerminalEmulator.App.shared.createSurface(config: config)
             self.surfaceView = surface
 
             // Create offscreen window to host terminal view for screenshot capture
@@ -248,13 +253,6 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
             // Mark as ready after shell has time to initialize
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.isReady = true
-
-                // Run initial command after shell is ready
-                if let command = command {
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                        self?.surfaceView?.sendCommand(command)
-                    }
-                }
             }
         }
     }

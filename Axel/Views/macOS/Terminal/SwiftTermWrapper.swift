@@ -480,6 +480,12 @@ extension TerminalEmulator {
 
         // MARK: - Focus
 
+        /// Programmatically set focus on the Ghostty surface without requiring the view to be first responder
+        func focus() {
+            guard let surface else { return }
+            ghostty_surface_set_focus(surface, true)
+        }
+
         override func becomeFirstResponder() -> Bool {
             let result = super.becomeFirstResponder()
             if result, let surface {

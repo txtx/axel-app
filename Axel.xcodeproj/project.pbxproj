@@ -16,8 +16,8 @@
 		43AFE93D2F2C12CE00513889 /* Axel.icon in Resources */ = {isa = PBXBuildFile; fileRef = 43AFE93C2F2C12CE00513889 /* Axel.icon */; };
 		43BD82722F1D63F40092A96C /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82712F1D63F40092A96C /* Supabase */; };
 		43BD82732F1D63F40092A96C /* AutomergeWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82742F1D63F40092A96C /* AutomergeWrapper */; };
-		43BD82832F1D90000092A96C /* GhosttyKit in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82822F1D90000092A96C /* GhosttyKit */; };
 		43BD82802F1D70000092A96C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD827F2F1D70000092A96C /* Sparkle */; };
+		43BD82832F1D90000092A96C /* GhosttyKit in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82822F1D90000092A96C /* GhosttyKit */; };
 		A1000001201A0001 /* AxelApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0001 /* AxelApp.swift */; };
 		A1000001201A0002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0002 /* ContentView.swift */; };
 		A1000001201A0003 /* Task.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0003 /* Task.swift */; };
@@ -758,7 +758,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -780,7 +780,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -810,7 +810,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -836,7 +836,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.1.5;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1006,7 +1006,11 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.1.5;
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"-framework",
+					Carbon,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
@@ -1017,7 +1021,6 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
 				XROS_DEPLOYMENT_TARGET = 2.0;
-				"OTHER_LDFLAGS[sdk=macosx*]" = "-framework Carbon";
 			};
 			name = Debug;
 		};
@@ -1060,7 +1063,11 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.4;
+				MARKETING_VERSION = 0.1.5;
+				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"-framework",
+					Carbon,
+				);
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.Axel;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = auto;
@@ -1071,7 +1078,6 @@
 				SWIFT_VERSION = 5.0;
 				TARGETED_DEVICE_FAMILY = "1,2,7";
 				XROS_DEPLOYMENT_TARGET = 2.0;
-				"OTHER_LDFLAGS[sdk=macosx*]" = "-framework Carbon";
 			};
 			name = Release;
 		};
@@ -1157,15 +1163,15 @@
 			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */;
 			productName = AutomergeWrapper;
 		};
-		43BD82822F1D90000092A96C /* GhosttyKit */ = {
-			isa = XCSwiftPackageProductDependency;
-			package = 43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */;
-			productName = GhosttyKit;
-		};
 		43BD827F2F1D70000092A96C /* Sparkle */ = {
 			isa = XCSwiftPackageProductDependency;
 			package = 43BD827E2F1D70000092A96C /* XCRemoteSwiftPackageReference "Sparkle" */;
 			productName = Sparkle;
+		};
+		43BD82822F1D90000092A96C /* GhosttyKit */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */;
+			productName = GhosttyKit;
 		};
 /* End XCSwiftPackageProductDependency section */
 	};
