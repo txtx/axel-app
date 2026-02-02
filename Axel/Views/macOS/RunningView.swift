@@ -51,7 +51,7 @@ protocol TerminalSessionManaging: AnyObject {
 // MARK: - Terminal Session Manager Environment Key
 
 private struct TerminalSessionManagerKey: EnvironmentKey {
-    static let defaultValue = TerminalSessionManager.shared
+    @MainActor static let defaultValue = TerminalSessionManager.shared
 }
 
 extension EnvironmentValues {

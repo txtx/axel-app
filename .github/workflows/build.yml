@@ -44,6 +44,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
+          lfs: true
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app
@@ -84,6 +85,7 @@ jobs:
         with:
           submodules: recursive
           fetch-depth: 0
+          lfs: true
 
       - name: Select Xcode
         run: sudo xcode-select -s /Applications/Xcode_${{ env.XCODE_VERSION }}.app

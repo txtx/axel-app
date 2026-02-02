@@ -1007,7 +1007,9 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 0.1.5;
+				"EXCLUDED_ARCHS[sdk=macosx*]" = x86_64;
 				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"-lc++",
 					"-framework",
 					Carbon,
 				);
@@ -1064,7 +1066,9 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 0.1.5;
+				"EXCLUDED_ARCHS[sdk=macosx*]" = x86_64;
 				"OTHER_LDFLAGS[sdk=macosx*]" = (
+					"-lc++",
 					"-framework",
 					Carbon,
 				);

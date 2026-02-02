@@ -441,7 +441,7 @@ struct SyncOrganizationInvitation: Codable, Identifiable, Sendable {
 
 // MARK: - Helper for JSON fields
 
-struct AnyCodable: Codable, Sendable {
+struct AnyCodable: Codable, @unchecked Sendable {
     let value: Any
 
     init(_ value: Any) {

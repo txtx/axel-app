@@ -312,7 +312,7 @@ final class SessionStatusService {
 // ============================================================================
 
 /// Protocol for types that can be identified for status computation
-protocol SessionIdentifiable {
+@MainActor protocol SessionIdentifiable {
     /// The pane ID used for status tracking (may be nil if not yet assigned)
     var paneId: String? { get }
 
