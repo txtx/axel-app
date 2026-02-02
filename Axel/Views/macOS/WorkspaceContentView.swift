@@ -374,7 +374,12 @@ struct WorkspaceContentView: View {
                 listColumnView
                     .frame(width: currentListColumnWidth)
 
-                ResizableDivider(width: currentListColumnWidthBinding, minWidth: 220, maxWidth: 800)
+                ResizableDivider(
+                    width: currentListColumnWidthBinding,
+                    minWidth: 220,
+                    maxWidth: 800,
+                    style: sidebarSelection == .terminals ? .terminal : .standard
+                )
 
                 detailColumnView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -1989,17 +1994,36 @@ struct GrowingTextView: NSViewRepresentable {
 // MARK: - Resizable Divider
 
 struct ResizableDivider: View {
+    enum Style {
+        case standard
+        case terminal  // Dark style for terminal/agents view
+    }
+
     @Binding var width: CGFloat
     let minWidth: CGFloat
     let maxWidth: CGFloat
+    var style: Style = .standard
 
     @State private var isDragging = false
     @State private var dragStartWidth: CGFloat = 0
 
+    private var dividerWidth: CGFloat {
+        style == .terminal ? 5 : 1
+    }
+
+    private var dividerColor: Color {
+        switch style {
+        case .terminal:
+            return Color(hex: "141414")!
+        case .standard:
+            return Color.primary.opacity(isDragging ? 0.2 : 0.08)
+        }
+    }
+
     var body: some View {
         Rectangle()
-            .fill(Color(hex: "141414")!)
-            .frame(width: 5)
+            .fill(dividerColor)
+            .frame(width: dividerWidth)
             .frame(maxHeight: .infinity)
             .contentShape(Rectangle().inset(by: -4))
             .onHover { hovering in
