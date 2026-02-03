@@ -27,6 +27,10 @@ final class AuthService {
     // MARK: - Check Existing Session
 
     func checkSession() async {
+        guard let supabase else {
+            self.currentUser = nil
+            return
+        }
         let user = await Task.detached { [supabase] in
             try? await supabase.auth.session.user
         }.value
@@ -37,6 +41,10 @@ final class AuthService {
 
     func signInWithGitHub() async {
         print("[AuthService] signInWithGitHub called")
+        guard let supabase else {
+            print("[AuthService] Supabase disabled (missing config)")
+            return
+        }
         isLoading = true
         authError = nil
 
@@ -80,6 +88,10 @@ final class AuthService {
     // MARK: - Handle OAuth Callback
 
     func handleOAuthCallback(url: URL) async {
+        guard let supabase else {
+            print("[AuthService] Supabase disabled (missing config)")
+            return
+        }
         isLoading = true
         authError = nil
 
@@ -101,6 +113,13 @@ final class AuthService {
     // MARK: - Sign Out
 
     func signOut(clearingLocalData context: ModelContext? = nil) async {
+        guard let supabase else {
+            if let context = context {
+                clearLocalData(context: context)
+            }
+            currentUser = nil
+            return
+        }
         isLoading = true
 
         do {

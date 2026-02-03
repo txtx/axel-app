@@ -276,6 +276,22 @@ final class InboxService {
         return port
     }
 
+    // MARK: - Scripting Support
+
+    /// Get scriptable agents for AppleScript support
+    func getScriptableAgents(for workspaceId: UUID) -> [ScriptableAgent] {
+        TerminalSessionManager.shared.sessions(for: workspaceId).map { session in
+            ScriptableAgent(
+                paneId: session.paneId ?? "",
+                displayName: session.taskTitle.isEmpty ? session.provider.displayName : session.taskTitle,
+                provider: session.provider.rawValue,
+                worktree: session.worktreeBranch,
+                hasTask: session.hasTask,
+                workspaceId: session.workspaceId
+            )
+        }
+    }
+
     // MARK: - Public API
 
     /// Connect to a terminal's SSE endpoint

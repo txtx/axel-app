@@ -1,0 +1,156 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE dictionary SYSTEM "file://localhost/System/Library/DTDs/sdef.dtd">
+<dictionary title="Axel Terminology">
+
+    <!-- Standard Suite (required for basic AppleScript support) -->
+    <suite name="Standard Suite" code="????" description="Common classes and commands for all applications.">
+        <command name="open" code="aevtodoc" description="Open a document.">
+            <direct-parameter description="The file(s) to be opened.">
+                <type type="file"/>
+                <type type="file" list="yes"/>
+            </direct-parameter>
+        </command>
+
+        <command name="quit" code="aevtquit" description="Quit the application.">
+            <cocoa class="NSQuitCommand"/>
+        </command>
+
+        <class name="application" code="capp" description="The application's top-level scripting object.">
+            <cocoa class="NSApplication"/>
+            <property name="name" code="pnam" type="text" access="r" description="The name of the application."/>
+            <property name="frontmost" code="pisf" type="boolean" access="r" description="Is this the active application?">
+                <cocoa key="isActive"/>
+            </property>
+            <property name="version" code="vers" type="text" access="r" description="The version number of the application."/>
+            <element type="workspace" access="r">
+                <cocoa key="scriptingWorkspaces"/>
+            </element>
+        </class>
+    </suite>
+
+    <!-- Axel Suite -->
+    <suite name="Axel Suite" code="AXEL" description="Axel-specific classes and commands.">
+
+        <!-- Workspace class -->
+        <class name="workspace" code="AWsp" description="A workspace containing tasks and agents." plural="workspaces">
+            <cocoa class="ScriptableWorkspace"/>
+            <property name="id" code="ID  " type="text" access="r" description="The unique identifier of the workspace.">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="The name of the workspace."/>
+            <property name="path" code="ppth" type="text" access="r" description="The file path of the workspace."/>
+            <element type="task" access="r">
+                <cocoa key="scriptingTasks"/>
+            </element>
+            <element type="agent" access="r">
+                <cocoa key="scriptingAgents"/>
+            </element>
+        </class>
+
+        <!-- Task class -->
+        <class name="task" code="ATsk" description="A task in the workspace." plural="tasks">
+            <cocoa class="ScriptableTask"/>
+            <property name="id" code="ID  " type="text" access="r" description="The unique identifier of the task.">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" description="The title of the task."/>
+            <property name="taskDescription" code="Tdsc" type="text" description="The description of the task."/>
+            <property name="status" code="Tsts" type="task status" description="The current status of the task."/>
+            <property name="priority" code="Tpri" type="integer" description="The priority of the task (lower is higher priority)."/>
+        </class>
+
+        <!-- Agent (terminal session) class -->
+        <class name="agent" code="AAgt" description="A running agent/terminal session." plural="agents">
+            <cocoa class="ScriptableAgent"/>
+            <property name="id" code="ID  " type="text" access="r" description="The unique identifier of the agent.">
+                <cocoa key="uniqueID"/>
+            </property>
+            <property name="name" code="pnam" type="text" access="r" description="The display name of the agent."/>
+            <property name="provider" code="Aprv" type="text" access="r" description="The AI provider (claude, codex, shell)."/>
+            <property name="worktree" code="Awkt" type="text" access="r" description="The git worktree branch, if any."/>
+            <property name="busy" code="Absy" type="boolean" access="r" description="Whether the agent is currently working on a task.">
+                <cocoa key="isBusy"/>
+            </property>
+        </class>
+
+        <!-- Task status enumeration -->
+        <enumeration name="task status" code="Tste">
+            <enumerator name="backlog" code="Tbkl" description="Task is in the backlog."/>
+            <enumerator name="queued" code="Tque" description="Task is queued for execution."/>
+            <enumerator name="running" code="Trun" description="Task is currently running."/>
+            <enumerator name="completed" code="Tcmp" description="Task has been completed."/>
+            <enumerator name="in review" code="Trev" description="Task is in review."/>
+            <enumerator name="aborted" code="Tabt" description="Task has been aborted."/>
+        </enumeration>
+
+        <!-- AI Provider enumeration -->
+        <enumeration name="AI provider" code="Aprv">
+            <enumerator name="claude" code="Pcld" description="Claude AI (Anthropic)."/>
+            <enumerator name="codex" code="Pcdx" description="Codex AI (OpenAI)."/>
+            <enumerator name="shell" code="Pshl" description="Plain shell terminal."/>
+        </enumeration>
+
+        <!-- Create Task command -->
+        <command name="create task" code="AXELCrtk" description="Create a new task in a workspace.">
+            <cocoa class="CreateTaskCommand"/>
+            <direct-parameter type="text" description="The title of the new task."/>
+            <parameter name="in" code="inWs" type="workspace" optional="no" description="The workspace to create the task in.">
+                <cocoa key="inWorkspace"/>
+            </parameter>
+            <parameter name="with description" code="wDsc" type="text" optional="yes" description="The description of the task.">
+                <cocoa key="withDescription"/>
+            </parameter>
+            <parameter name="priority" code="prio" type="integer" optional="yes" description="The priority of the task.">
+                <cocoa key="priority"/>
+            </parameter>
+            <result type="task" description="The newly created task."/>
+        </command>
+
+        <!-- Run Task command -->
+        <command name="run task" code="AXELRntk" description="Run a task with an agent.">
+            <cocoa class="RunTaskCommand"/>
+            <direct-parameter type="task" description="The task to run."/>
+            <parameter name="with" code="wAgt" type="agent" optional="yes" description="An existing agent to assign the task to.">
+                <cocoa key="withAgent"/>
+            </parameter>
+            <parameter name="provider" code="prvd" type="AI provider" optional="yes" description="The AI provider to use (if creating new agent).">
+                <cocoa key="provider"/>
+            </parameter>
+            <parameter name="worktree" code="wktr" type="text" optional="yes" description="The git worktree branch to use.">
+                <cocoa key="worktree"/>
+            </parameter>
+            <result type="agent" description="The agent running the task."/>
+        </command>
+
+        <!-- Start Agent command -->
+        <command name="start agent" code="AXELSagt" description="Start a new agent without a task.">
+            <cocoa class="StartAgentCommand"/>
+            <parameter name="in" code="inWs" type="workspace" optional="no" description="The workspace to start the agent in.">
+                <cocoa key="inWorkspace"/>
+            </parameter>
+            <parameter name="provider" code="prvd" type="AI provider" optional="yes" description="The AI provider to use.">
+                <cocoa key="provider"/>
+            </parameter>
+            <parameter name="worktree" code="wktr" type="text" optional="yes" description="The git worktree branch to use.">
+                <cocoa key="worktree"/>
+            </parameter>
+            <result type="agent" description="The newly started agent."/>
+        </command>
+
+        <!-- Complete Task command -->
+        <command name="complete task" code="AXELCmtk" description="Mark a task as completed.">
+            <cocoa class="CompleteTaskCommand"/>
+            <direct-parameter type="task" description="The task to complete."/>
+        </command>
+
+        <!-- List Worktrees command -->
+        <command name="list worktrees" code="AXELLswt" description="List available git worktrees in a workspace.">
+            <cocoa class="ListWorktreesCommand"/>
+            <direct-parameter type="workspace" description="The workspace to list worktrees for."/>
+            <result description="List of worktree branch names.">
+                <type type="text" list="yes"/>
+            </result>
+        </command>
+
+    </suite>
+</dictionary>

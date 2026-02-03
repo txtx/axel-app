@@ -75,6 +75,9 @@ struct AxelApp: App {
 
                 sharedContainer = try ModelContainer(for: schema, configurations: [config])
             }
+
+            // Configure AppleScript support
+            ScriptingBridge.shared.configure(modelContainer: sharedContainer)
         } catch {
             fatalError("Failed to initialize shared ModelContainer: \(error)")
         }

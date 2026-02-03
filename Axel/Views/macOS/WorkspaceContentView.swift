@@ -551,6 +551,7 @@ struct WorkspaceContentView: View {
                 appState: appState,
                 pendingTaskForPicker: $pendingTaskForPicker,
                 showNewTerminalSheet: $showNewTerminalSheet,
+                selectedTask: $selectedTask,
                 onStartTerminal: { task in startTerminal(for: task) },
                 onAssignTask: assignTaskToWorker,
                 onCreateNewTerminal: { task, provider in createNewTerminal(for: task, provider: provider) },
@@ -577,7 +578,10 @@ struct WorkspaceContentView: View {
                 workspace: workspace,
                 sessionManager: sessionManager,
                 modelContext: modelContext,
-                onConsumeNextTask: consumeNextQueuedTask
+                onConsumeNextTask: consumeNextQueuedTask,
+                onCreateTerminal: { task, worktree, provider in
+                    createNewTerminal(for: task, worktreeBranch: worktree, provider: provider)
+                }
             ))
     }
 
@@ -824,6 +828,7 @@ private struct WorkspaceSheetModifier: ViewModifier {
     @Bindable var appState: AppState
     @Binding var pendingTaskForPicker: WorkTask?
     @Binding var showNewTerminalSheet: Bool
+    @Binding var selectedTask: WorkTask?
     let onStartTerminal: (WorkTask) -> Void
     let onAssignTask: (WorkTask, TerminalSession) -> Void
     let onCreateNewTerminal: (WorkTask?, AIProvider) -> Void
@@ -832,14 +837,17 @@ private struct WorkspaceSheetModifier: ViewModifier {
     func body(content: Content) -> some View {
         content
             .sheet(isPresented: $appState.isNewTaskPresented) {
-                WorkspaceCreateTaskView(workspace: workspace, isPresented: $appState.isNewTaskPresented) { task in
-                    onStartTerminal(task)
-                }
+                WorkspaceCreateTaskView(
+                    workspace: workspace,
+                    isPresented: $appState.isNewTaskPresented,
+                    onRun: { task in onStartTerminal(task) },
+                    onSelect: { task in selectedTask = task }
+                )
             }
             .sheet(isPresented: $showNewTerminalSheet) {
-                NewTerminalSheet(workspacePath: workspace.path ?? "") { worktree, provider in
-                    if let worktree, !worktree.isMain {
-                        onCreateWorktreeTerminal(nil, worktree.displayName, provider)
+                NewTerminalSheet(workspacePath: workspace.path ?? "") { branchName, provider in
+                    if let branchName {
+                        onCreateWorktreeTerminal(nil, branchName, provider)
                     } else {
                         onCreateNewTerminal(nil, provider)
                     }
@@ -943,6 +951,7 @@ private struct WorkspaceNotificationModifier: ViewModifier {
     let sessionManager: TerminalSessionManager
     let modelContext: ModelContext
     let onConsumeNextTask: (String) -> Void
+    let onCreateTerminal: (WorkTask?, String?, AIProvider) -> Void
 
     func body(content: Content) -> some View {
         content
@@ -957,6 +966,25 @@ private struct WorkspaceNotificationModifier: ViewModifier {
             }
             .onReceive(NotificationCenter.default.publisher(for: .showSkills)) { _ in
                 sidebarSelection = .optimizations(.skills)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .scriptingStartAgent)) { notification in
+                // Handle AppleScript agent start requests
+                guard let userInfo = notification.userInfo,
+                      let targetWorkspaceId = userInfo["workspaceId"] as? UUID,
+                      targetWorkspaceId == workspace.id else { return }
+
+                let worktree = userInfo["worktree"] as? String
+                let provider = userInfo["provider"] as? AIProvider ?? .claude
+                let taskId = userInfo["taskId"] as? UUID
+
+                // Find task if taskId provided
+                var task: WorkTask? = nil
+                if let taskId = taskId {
+                    let descriptor = FetchDescriptor<WorkTask>(predicate: #Predicate { $0.id == taskId })
+                    task = try? modelContext.fetch(descriptor).first
+                }
+
+                onCreateTerminal(task, worktree, provider)
             }
             .onReceive(NotificationCenter.default.publisher(for: .taskCompletedOnTerminal)) { notification in
                 // When a task completes on a terminal (via inbox confirmation), consume the next queued task
@@ -1162,7 +1190,7 @@ struct WorkspaceSidebarView: View {
                     }
                 } icon: {
                     Image(systemName: "rectangle.stack")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(.purple)
                 }
                 .tag(SidebarSection.queue(.backlog))
 
@@ -1245,7 +1273,7 @@ struct WorkspaceSidebarView: View {
                     Text("Optimizations")
                 } icon: {
                     Image(systemName: "gauge.with.dots.needle.50percent")
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(.blue)
                 }
                 .tag(SidebarSection.optimizations(.overview))
 
@@ -1436,6 +1464,7 @@ struct WorkspaceCreateTaskView: View {
     @Bindable var workspace: Workspace
     @Binding var isPresented: Bool
     var onRun: ((WorkTask) -> Void)?
+    var onSelect: ((WorkTask) -> Void)?
     @Environment(\.modelContext) private var modelContext
     @State private var title = ""
     @FocusState private var isFocused: Bool
@@ -1536,6 +1565,9 @@ struct WorkspaceCreateTaskView: View {
         workspace.tasks.append(task)
         try? modelContext.save()
 
+        // Select the newly created task
+        onSelect?(task)
+
         // Sync to push the new task to Supabase (detached to avoid main actor contention)
         let workspaceId = workspace.syncId ?? workspace.id
         Task.detached {
@@ -1563,6 +1595,9 @@ struct WorkspaceCreateTaskView: View {
         // Explicitly add to relationship and save to trigger SwiftUI observation
         workspace.tasks.append(task)
         try? modelContext.save()
+
+        // Select the newly created task
+        onSelect?(task)
 
         // Start the terminal for this task immediately
         onRun?(task)
@@ -1945,7 +1980,7 @@ struct GrowingTextView: NSViewRepresentable {
         textView.isRichText = false
         textView.allowsUndo = true
         textView.font = font
-        textView.textColor = .labelColor
+        textView.textColor = .secondaryLabelColor
         textView.backgroundColor = .clear
         textView.drawsBackground = false
         textView.isEditable = true

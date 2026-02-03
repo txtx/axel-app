@@ -48,6 +48,98 @@ extension TerminalEmulator {
     }
 }
 
+// MARK: - Scroll Tuning
+
+extension TerminalEmulator {
+    enum ScrollTuning {
+        private static let defaultMultiplier: Double = 1.0
+        private static let defaultPreciseMultiplier: Double = 0.5
+
+        static var multiplier: Double {
+            readMultiplier(from: "AXEL_GHOSTTY_SCROLL_MULTIPLIER") ?? defaultMultiplier
+        }
+
+        static var preciseMultiplier: Double {
+            readMultiplier(from: "AXEL_GHOSTTY_PRECISE_SCROLL_MULTIPLIER") ?? defaultPreciseMultiplier
+        }
+
+        private static func readMultiplier(from key: String) -> Double? {
+            guard let raw = ProcessInfo.processInfo.environment[key],
+                  let value = Double(raw.trimmingCharacters(in: .whitespacesAndNewlines))
+            else { return nil }
+            return max(0.01, min(10.0, value))
+        }
+    }
+}
+
+// MARK: - Notifications
+
+extension TerminalEmulator {
+    enum Notification {
+        static let didUpdateScrollbar = Foundation.Notification.Name("com.axel.ghostty.didUpdateScrollbar")
+        static let scrollbarKey = "com.axel.ghostty.didUpdateScrollbar.scrollbar"
+    }
+}
+
+// MARK: - Scrollbar
+
+extension TerminalEmulator {
+    struct Scrollbar {
+        let total: UInt64
+        let offset: UInt64
+        let len: UInt64
+
+        init(c: ghostty_action_scrollbar_s) {
+            total = c.total
+            offset = c.offset
+            len = c.len
+        }
+    }
+}
+
+// MARK: - Input Helpers
+
+extension TerminalEmulator {
+    enum Input {
+        struct ScrollMods {
+            let rawValue: Int32
+
+            init(precision: Bool = false, momentum: ghostty_input_mouse_momentum_e = GHOSTTY_MOUSE_MOMENTUM_NONE) {
+                var value: Int32 = 0
+                if precision {
+                    value |= 0b0000_0001
+                }
+                value |= Int32(momentum.rawValue) << 1
+                self.rawValue = value
+            }
+
+            init(from event: NSEvent) {
+                var momentum: ghostty_input_mouse_momentum_e = GHOSTTY_MOUSE_MOMENTUM_NONE
+                switch event.momentumPhase {
+                case .began:
+                    momentum = GHOSTTY_MOUSE_MOMENTUM_BEGAN
+                case .stationary:
+                    momentum = GHOSTTY_MOUSE_MOMENTUM_STATIONARY
+                case .changed:
+                    momentum = GHOSTTY_MOUSE_MOMENTUM_CHANGED
+                case .ended:
+                    momentum = GHOSTTY_MOUSE_MOMENTUM_ENDED
+                case .cancelled:
+                    momentum = GHOSTTY_MOUSE_MOMENTUM_CANCELLED
+                case .mayBegin:
+                    momentum = GHOSTTY_MOUSE_MOMENTUM_MAY_BEGIN
+                default:
+                    momentum = GHOSTTY_MOUSE_MOMENTUM_NONE
+                }
+
+                self.init(precision: event.hasPreciseScrollingDeltas, momentum: momentum)
+            }
+
+            var cScrollMods: ghostty_input_scroll_mods_t { rawValue }
+        }
+    }
+}
+
 // MARK: - Surface Configuration
 
 extension TerminalEmulator {
@@ -182,14 +274,40 @@ extension TerminalEmulator {
             action: ghostty_action_s
         ) -> Bool {
             _ = app
-            _ = target
-            _ = action
-            return false
+            switch target.tag {
+            case GHOSTTY_TARGET_APP, GHOSTTY_TARGET_SURFACE:
+                break
+            default:
+                return false
+            }
+
+            switch action.tag {
+            case GHOSTTY_ACTION_SCROLLBAR:
+                guard target.tag == GHOSTTY_TARGET_SURFACE,
+                      let surface = target.target.surface,
+                      let surfaceView = surfaceView(from: surface)
+                else { return false }
+
+                let scrollbar = TerminalEmulator.Scrollbar(c: action.action.scrollbar)
+                NotificationCenter.default.post(
+                    name: TerminalEmulator.Notification.didUpdateScrollbar,
+                    object: surfaceView,
+                    userInfo: [TerminalEmulator.Notification.scrollbarKey: scrollbar]
+                )
+                return true
+            default:
+                return false
+            }
         }
 
         private static func surfaceView(from userdata: UnsafeMutableRawPointer?) -> SurfaceView? {
             guard let userdata else { return nil }
             return Unmanaged<SurfaceView>.fromOpaque(userdata).takeUnretainedValue()
+        }
+
+        private static func surfaceView(from surface: ghostty_surface_t) -> SurfaceView? {
+            guard let surfaceUd = ghostty_surface_userdata(surface) else { return nil }
+            return Unmanaged<SurfaceView>.fromOpaque(surfaceUd).takeUnretainedValue()
         }
 
         private static func readClipboard(
@@ -318,6 +436,9 @@ extension NSEvent {
     }
 
     var ghosttyCharacters: String? {
+        if type == .flagsChanged {
+            return nil
+        }
         guard let characters else { return nil }
 
         if characters.count == 1,
@@ -342,8 +463,10 @@ extension TerminalEmulator {
         @Published var title: String = ""
         @Published var healthy: Bool = true
         @Published var processRunning: Bool = true
+        @Published var scrollbar: TerminalEmulator.Scrollbar?
 
         fileprivate private(set) var surface: ghostty_surface_t?
+        private(set) var cellSize: CGSize = .zero
 
         private var workingDirectoryCString: UnsafeMutablePointer<CChar>?
         private var commandCString: UnsafeMutablePointer<CChar>?
@@ -415,6 +538,7 @@ extension TerminalEmulator {
 
             self.surface = surface
             updateSurfaceSize()
+            updateCellSize()
         }
 
         // MARK: - Commands
@@ -471,11 +595,18 @@ extension TerminalEmulator {
             let width = max(1, UInt32(fbFrame.size.width))
             let height = max(1, UInt32(fbFrame.size.height))
             ghostty_surface_set_size(surface, width, height)
+            updateCellSize()
         }
 
         func sizeDidChange(_ size: CGSize) {
             frame = NSRect(origin: .zero, size: size)
             updateSurfaceSize()
+        }
+
+        private func updateCellSize() {
+            guard let surface else { return }
+            let size = ghostty_surface_size(surface)
+            cellSize = CGSize(width: CGFloat(size.cell_width_px), height: CGFloat(size.cell_height_px))
         }
 
         // MARK: - Focus
@@ -519,6 +650,15 @@ extension TerminalEmulator {
 
         @objc override func selectAll(_ sender: Any?) {
             _ = sender
+        }
+
+        // MARK: - Actions
+
+        func performAction(_ action: String) -> Bool {
+            guard let surface else { return false }
+            return action.withCString { ptr in
+                ghostty_surface_binding_action(surface, ptr, UInt(action.utf8.count))
+            }
         }
 
         // MARK: - Input
@@ -589,8 +729,16 @@ extension TerminalEmulator {
 
         override func mouseDown(with event: NSEvent) {
             guard let surface else { return }
+            let loc = convert(event.locationInWindow, from: nil)
+            ghostty_surface_mouse_pos(surface, Double(loc.x), Double(bounds.height - loc.y), TerminalEmulator.ghosttyMods(event.modifierFlags))
             let mods = TerminalEmulator.ghosttyMods(event.modifierFlags)
             ghostty_surface_mouse_button(surface, GHOSTTY_MOUSE_PRESS, GHOSTTY_MOUSE_LEFT, mods)
+        }
+
+        override func mouseDragged(with event: NSEvent) {
+            guard let surface else { return }
+            let loc = convert(event.locationInWindow, from: nil)
+            ghostty_surface_mouse_pos(surface, Double(loc.x), Double(bounds.height - loc.y), TerminalEmulator.ghosttyMods(event.modifierFlags))
         }
 
         override func mouseUp(with event: NSEvent) {
@@ -625,17 +773,30 @@ extension TerminalEmulator {
 
         override func scrollWheel(with event: NSEvent) {
             guard let surface else { return }
+            let multiplier = event.hasPreciseScrollingDeltas
+                ? TerminalEmulator.ScrollTuning.preciseMultiplier
+                : TerminalEmulator.ScrollTuning.multiplier
+            let mods = TerminalEmulator.Input.ScrollMods(from: event).cScrollMods
             ghostty_surface_mouse_scroll(
                 surface,
-                Double(event.scrollingDeltaX),
-                Double(event.scrollingDeltaY),
-                ghostty_input_scroll_mods_t(0)
+                Double(event.scrollingDeltaX) * multiplier,
+                Double(event.scrollingDeltaY) * multiplier,
+                mods
             )
         }
     }
 }
 
 // MARK: - SwiftUI Integration
+
+/// NSScrollView that ignores scroll wheel events so Ghostty core remains the
+/// single source of truth for scrollback positioning.
+final class PassiveScrollView: NSScrollView {
+    override func scrollWheel(with event: NSEvent) {
+        _ = event
+        // Intentionally ignore to avoid fighting Ghostty's own scrollback handling.
+    }
+}
 
 final class TerminalContainerView: NSView {
     weak var hostedSurface: TerminalEmulator.SurfaceView?

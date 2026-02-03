@@ -141,6 +141,11 @@ struct TaskTableView: NSViewRepresentable {
 
         let newRowItems = context.coordinator.rowItems
 
+        if TaskTableView.hasStructuralChange(old: oldRowItems, new: newRowItems) {
+            tableView.reloadData()
+            return
+        }
+
         // Get old and new task IDs for comparison
         let oldTaskIds = oldRowItems.compactMap { row -> UUID? in
             if case .task(let id, _, _) = row { return id }
@@ -277,6 +282,25 @@ struct TaskTableView: NSViewRepresentable {
         // If structure changed (headers, drop zones, etc.) do a full reload
         if oldRowItems.count != newRowItems.count || oldRowItems != newRowItems {
             tableView.reloadData()
+        }
+    }
+
+    static func hasStructuralChange(old: [TaskTableRow], new: [TaskTableRow]) -> Bool {
+        structuralSignature(old) != structuralSignature(new)
+    }
+
+    static func structuralSignature(_ rows: [TaskTableRow]) -> [String] {
+        rows.compactMap { row in
+            switch row {
+            case .header(let title, let count, _, let status):
+                return "header:\(title):\(count):\(status.rawValue)"
+            case .placeholder(let text, let status):
+                return "placeholder:\(text):\(status.rawValue)"
+            case .dropZone(let status):
+                return "dropZone:\(status.rawValue)"
+            case .task:
+                return nil
+            }
         }
     }
 

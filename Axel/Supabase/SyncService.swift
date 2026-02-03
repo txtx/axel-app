@@ -139,7 +139,11 @@ private actor BackgroundSyncWorker {
         let context = ModelContext(container)
         context.autosaveEnabled = false // We'll save manually
 
-        let supabase = await SupabaseManager.shared.client
+        guard let supabase = await SupabaseManager.shared.client else {
+            print("[BackgroundSync] Supabase disabled (missing config)")
+            await MainActor.run { syncService.isSyncing = false }
+            return
+        }
 
         do {
             // Pull all data
@@ -433,6 +437,15 @@ final class SyncService {
         print("[SyncService] Initializing SyncService")
     }
 
+    enum SyncError: Error {
+        case supabaseDisabled
+    }
+
+    private func requireSupabase() throws -> SupabaseClient {
+        guard let supabase else { throw SyncError.supabaseDisabled }
+        return supabase
+    }
+
     /// Attempt to acquire sync lock. Returns true if acquired, false if already locked.
     /// Thread-safe - can be called from any thread/actor.
     nonisolated func tryAcquireSyncLock() -> Bool {
@@ -524,6 +537,10 @@ final class SyncService {
     ///   - context: The model context
     ///   - pullOnly: If true, only pull remote changes without pushing local changes.
     func performWorkspaceSync(workspaceId: UUID, context: ModelContext, pullOnly: Bool = false) async {
+        guard supabase != nil else {
+            print("[SyncService] Supabase disabled (missing config)")
+            return
+        }
         // Use lock to prevent concurrent sync operations that could create duplicate records
         guard tryAcquireSyncLock() else {
             print("[SyncService] Skipping workspace sync: another sync in progress")
@@ -643,6 +660,10 @@ final class SyncService {
     ///   - pullOnly: If true, only pull remote changes without pushing local changes.
     ///               Use this when responding to realtime notifications to avoid overwriting remote changes.
     func performFullSync(context: ModelContext, pullOnly: Bool = false) async {
+        guard supabase != nil else {
+            print("[SyncService] Supabase disabled (missing config)")
+            return
+        }
         // Use lock to prevent concurrent sync operations that could create duplicate records
         guard tryAcquireSyncLock() else {
             print("[SyncService] Skipping full sync: another sync in progress")
@@ -724,7 +745,8 @@ final class SyncService {
     // MARK: - Network Helpers (run on background)
 
     private func fetchFromSupabase<T: Decodable & Sendable>(_ table: SupabaseTable) async throws -> [T] {
-        try await Task.detached { [supabase] in
+        let supabase = try requireSupabase()
+        return try await Task.detached { [supabase] in
             try await supabase
                 .from(table.rawValue)
                 .select()
@@ -735,7 +757,8 @@ final class SyncService {
 
     /// Fetch from Supabase with workspace_id filter
     private func fetchFromSupabaseForWorkspace<T: Decodable & Sendable>(_ table: SupabaseTable, workspaceId: UUID) async throws -> [T] {
-        try await Task.detached { [supabase] in
+        let supabase = try requireSupabase()
+        return try await Task.detached { [supabase] in
             try await supabase
                 .from(table.rawValue)
                 .select()
@@ -746,6 +769,7 @@ final class SyncService {
     }
 
     private func insertToSupabase<T: Encodable & Sendable>(_ table: SupabaseTable, data: T) async throws {
+        let supabase = try requireSupabase()
         try await Task.detached { [supabase] in
             try await supabase
                 .from(table.rawValue)
@@ -755,6 +779,7 @@ final class SyncService {
     }
 
     private func updateInSupabase<T: Encodable & Sendable>(_ table: SupabaseTable, id: UUID, data: T) async throws {
+        let supabase = try requireSupabase()
         try await Task.detached { [supabase] in
             try await supabase
                 .from(table.rawValue)
@@ -765,6 +790,7 @@ final class SyncService {
     }
 
     private func deleteFromSupabase(_ table: SupabaseTable, id: UUID) async throws {
+        let supabase = try requireSupabase()
         try await Task.detached { [supabase] in
             try await supabase
                 .from(table.rawValue)
@@ -1166,6 +1192,7 @@ final class SyncService {
         print("[SyncService] Fetching organizations from Supabase...")
 
         // Debug session on background
+        let supabase = try requireSupabase()
         await Task.detached { [supabase] in
             do {
                 let session = try await supabase.auth.session
@@ -1867,6 +1894,10 @@ final class SyncService {
         print("[SyncService] Starting real-time sync for workspace: \(wsId)")
 
         // Create a channel for this workspace
+        guard let supabase = SupabaseManager.shared.client else {
+            print("[SyncService] Supabase disabled (missing config)")
+            return
+        }
         let channel = supabase.realtimeV2.channel(channelName)
         realtimeChannels.append(channel)
         if realtimeChannel == nil {

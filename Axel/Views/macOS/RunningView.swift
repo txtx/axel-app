@@ -755,9 +755,11 @@ struct TerminalMiniatureView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
-                // Token histogram overlay (bottom-right)
-                TokenHistogramOverlay(paneId: session.paneId)
-                    .padding(8)
+                // Token histogram overlay (bottom-right) - hide for shell panes
+                if session.provider != .shell && session.provider != .custom {
+                    TokenHistogramOverlay(paneId: session.paneId)
+                        .padding(8)
+                }
             }
             .frame(height: previewHeight)
             .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -2287,19 +2289,35 @@ final class LayoutService {
 /// Supports keyboard navigation: arrow keys to move, Enter to confirm, Escape to cancel
 struct NewTerminalSheet: View {
     let workspacePath: String
-    let onCreateTerminal: (WorktreeInfo?, AIProvider) -> Void
+    let onCreateTerminal: (String?, AIProvider) -> Void  // branch name (nil = main)
     @Environment(\.dismiss) private var dismiss
 
     @State private var worktrees: [WorktreeInfo] = []
     @State private var panes: [PaneInfo] = []
     @State private var selectedWorktreeIndex: Int = 0
     @State private var selectedPaneIndex: Int = 0
-    @State private var focusedRow: Int = 0  // 0 = worktrees, 1 = panes
+    @State private var focusedRow: Int = 0  // 0 = worktrees, 1 = panes, 2 = new branch input
     @State private var isLoading = true
+    @State private var newBranchName: String = ""
+    @FocusState private var isNewBranchFieldFocused: Bool
+
+    /// Whether the "New worktree" option is selected (last index after worktrees)
+    private var isNewWorktreeSelected: Bool {
+        selectedWorktreeIndex == worktrees.count
+    }
 
     private var selectedWorktree: WorktreeInfo? {
         guard selectedWorktreeIndex < worktrees.count else { return nil }
         return worktrees[selectedWorktreeIndex]
+    }
+
+    /// The branch name to use - either from selected worktree or new branch input
+    private var selectedBranchName: String? {
+        if isNewWorktreeSelected {
+            return newBranchName.isEmpty ? nil : newBranchName
+        }
+        guard let worktree = selectedWorktree else { return nil }
+        return worktree.isMain ? nil : worktree.displayName
     }
 
     private var selectedPane: PaneInfo? {
@@ -2325,16 +2343,59 @@ struct NewTerminalSheet: View {
                             ForEach(Array(worktrees.enumerated()), id: \.element.id) { index, worktree in
                                 CompactWorktreeChip(
                                     worktree: worktree,
-                                    isSelected: index == selectedWorktreeIndex,
+                                    isSelected: index == selectedWorktreeIndex && !isNewWorktreeSelected,
                                     isFocused: focusedRow == 0
                                 )
                                 .onTapGesture {
                                     selectedWorktreeIndex = index
                                     focusedRow = 0
+                                    isNewBranchFieldFocused = false
                                 }
                             }
+
+                            // "New worktree" option
+                            NewWorktreeChip(
+                                isSelected: isNewWorktreeSelected,
+                                isFocused: focusedRow == 0 || focusedRow == 2
+                            )
+                            .onTapGesture {
+                                selectedWorktreeIndex = worktrees.count
+                                focusedRow = 2
+                                isNewBranchFieldFocused = true
+                            }
+                        }
+
+                        // New branch name input (shown when "New worktree" is selected)
+                        if isNewWorktreeSelected {
+                            HStack(spacing: 8) {
+                                Image(systemName: "plus.circle.fill")
+                                    .foregroundStyle(.secondary)
+                                    .font(.system(size: 14))
+                                TextField("Branch name (e.g., feat/auth)", text: $newBranchName)
+                                    .textFieldStyle(.plain)
+                                    .focused($isNewBranchFieldFocused)
+                                    .onSubmit {
+                                        confirmSelection()
+                                    }
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 8)
+                            .background(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color(nsColor: .controlBackgroundColor))
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 8)
+                                    .strokeBorder(focusedRow == 2 ? Color.accentColor : Color.clear, lineWidth: 2)
+                            )
+                            .frame(maxWidth: 300)
+                            .transition(.asymmetric(
+                                insertion: .scale(scale: 0.8, anchor: .top).combined(with: .opacity).combined(with: .offset(y: -8)),
+                                removal: .scale(scale: 0.9, anchor: .top).combined(with: .opacity)
+                            ))
                         }
                     }
+                    .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isNewWorktreeSelected)
 
                     // Pane selection
                     VStack(spacing: 8) {
@@ -2382,14 +2443,15 @@ struct NewTerminalSheet: View {
                     Text("Create")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(selectedPane == nil)
+                .disabled(selectedPane == nil || (isNewWorktreeSelected && newBranchName.isEmpty))
                 .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 16)
             .frame(height: 56)
         }
-        .frame(width: 1000, height: 380)
+        .frame(width: 1000, height: isNewWorktreeSelected ? 420 : 380)
+        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isNewWorktreeSelected)
         .background(.background)
         .focusable()
         .focusEffectDisabled()
@@ -2412,20 +2474,50 @@ struct NewTerminalSheet: View {
     }
 
     private func moveRow(_ delta: Int) {
-        focusedRow = max(0, min(1, focusedRow + delta))
+        let oldRow = focusedRow
+        // Row 0 = worktrees, Row 1 = panes, Row 2 = new branch input (only when new worktree selected)
+        if isNewWorktreeSelected {
+            // When new worktree is selected, allow moving to row 2 (input field)
+            if delta > 0 && focusedRow == 0 {
+                focusedRow = 2  // Go to input field
+                isNewBranchFieldFocused = true
+            } else if delta > 0 && focusedRow == 2 {
+                focusedRow = 1  // Go to panes
+                isNewBranchFieldFocused = false
+            } else if delta < 0 && focusedRow == 1 {
+                focusedRow = 2  // Go back to input field
+                isNewBranchFieldFocused = true
+            } else if delta < 0 && focusedRow == 2 {
+                focusedRow = 0  // Go back to worktrees
+                isNewBranchFieldFocused = false
+            }
+        } else {
+            focusedRow = max(0, min(1, focusedRow + delta))
+            isNewBranchFieldFocused = false
+        }
     }
 
     private func moveSelection(_ delta: Int) {
         if focusedRow == 0 {
-            selectedWorktreeIndex = max(0, min(worktrees.count - 1, selectedWorktreeIndex + delta))
-        } else {
+            let newIndex = selectedWorktreeIndex + delta
+            // Include the "New worktree" option (at index worktrees.count)
+            selectedWorktreeIndex = max(0, min(worktrees.count, newIndex))
+            // If we selected "New worktree", focus the text field
+            if isNewWorktreeSelected {
+                focusedRow = 2
+                isNewBranchFieldFocused = true
+            }
+        } else if focusedRow == 1 {
             selectedPaneIndex = max(0, min(panes.count - 1, selectedPaneIndex + delta))
         }
+        // Row 2 (input field) doesn't have left/right selection
     }
 
     private func confirmSelection() {
         guard let pane = selectedPane else { return }
-        onCreateTerminal(selectedWorktree, pane.provider)
+        // For new worktree, require a branch name
+        if isNewWorktreeSelected && newBranchName.isEmpty { return }
+        onCreateTerminal(selectedBranchName, pane.provider)
         dismiss()
     }
 }
@@ -2496,6 +2588,45 @@ struct CompactWorktreeChip: View {
                 .foregroundStyle(worktree.isMain ? .orange : .purple)
 
             Text(worktree.displayName)
+                .font(.callout)
+                .lineLimit(1)
+                .foregroundStyle(isSelected ? .primary : .secondary)
+        }
+        .frame(width: 112, height: 104)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(borderColor, lineWidth: isSelected && isFocused ? 2 : 1)
+        )
+    }
+}
+
+// MARK: - New Worktree Chip
+
+/// Chip for creating a new worktree with a custom branch name
+struct NewWorktreeChip: View {
+    let isSelected: Bool
+    let isFocused: Bool
+
+    private var borderColor: Color {
+        if isSelected && isFocused {
+            return .accentColor
+        } else if isSelected {
+            return .accentColor.opacity(0.5)
+        }
+        return Color.primary.opacity(0.1)
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "plus.circle")
+                .font(.system(size: 36))
+                .foregroundStyle(.green)
+
+            Text("New")
                 .font(.callout)
                 .lineLimit(1)
                 .foregroundStyle(isSelected ? .primary : .secondary)

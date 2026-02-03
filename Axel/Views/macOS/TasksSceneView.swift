@@ -436,7 +436,7 @@ struct WorkspaceQueueListView: View {
         HStack(alignment: .center) {
             Image(systemName: "rectangle.stack")
                 .font(.system(size: 16))
-                .foregroundStyle(.blue)
+                .foregroundStyle(.purple)
 
             Text(headerTitle)
                 .font(.system(size: 20, weight: .bold))
@@ -856,7 +856,7 @@ struct WorkspaceQueueListView: View {
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [Color.orange.opacity(0.15), Color.clear],
+                                colors: [Color.purple.opacity(0.15), Color.clear],
                                 center: .center,
                                 startRadius: 20,
                                 endRadius: 60
@@ -868,7 +868,7 @@ struct WorkspaceQueueListView: View {
                         .font(.system(size: 44, weight: .light))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [.orange, .orange.opacity(0.7)],
+                                colors: [.purple, .purple.opacity(0.7)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -933,7 +933,7 @@ struct WorkspaceQueueListView: View {
                 .padding(.vertical, 10)
                 .background(
                     Capsule()
-                        .fill(Color.orange.opacity(0.9))
+                        .fill(Color.purple.opacity(0.9))
                 )
             }
             .buttonStyle(.plain)
