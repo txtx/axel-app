@@ -612,7 +612,7 @@ struct WorkspaceQueueListView: View {
     }
 
     private var backgroundView: some View {
-        (colorScheme == .dark ? Color(white: 27.0 / 255.0) : Color.white)
+        (colorScheme == .dark ? Color(white: 27.0 / 255.0) : Color(hex: "F9FAFB")!)
             .onTapGesture {
                 clearSelection()
             }
@@ -1068,6 +1068,7 @@ struct TaskRow: View {
     var onDelete: (() -> Void)?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.colorScheme) private var colorScheme
+    @Namespace private var animation
     @State private var showNotes: Bool = false
     @State private var isHovering: Bool = false
     @State private var isTitleFocused: Bool = false
@@ -1075,6 +1076,8 @@ struct TaskRow: View {
     @State private var isStatusHovering: Bool = false
     @State private var showSkillPicker: Bool = false
     @State private var isFileDropTarget: Bool = false
+
+    private let sidePanelWidth: CGFloat = 100
 
     private var isRunning: Bool {
         task.taskStatus == .running
@@ -1090,219 +1093,215 @@ struct TaskRow: View {
 
     private var checkboxSize: CGFloat { 20 }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            // Title row - only this part handles taps for selection/expansion
-            HStack(spacing: 12) {
-                // Leading indicator
-                ZStack {
-                    if isRunning {
-                        // Claude icon with hover to mark complete
-                        RunningTaskIndicator(
-                            size: checkboxSize,
-                            isHovering: isStatusHovering,
-                            onMarkComplete: {
-                                onToggleComplete?()
-                            }
-                        )
-                        .onHover { hovering in
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                isStatusHovering = hovering
-                            }
-                        }
-                    } else if isCompleted {
-                        Button(action: { onToggleComplete?() }) {
-                            ZStack {
-                                Circle()
-                                    .fill(Color.green)
-                                    .frame(width: checkboxSize, height: checkboxSize)
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 10, weight: .bold))
-                                    .foregroundStyle(.white)
-                            }
-                        }
-                        .buttonStyle(.plain)
-                    } else if isQueued {
-                        QueuedTaskIndicator(
-                            size: checkboxSize,
-                            isHovering: isStatusHovering,
-                            position: position,
-                            onRun: onRun
-                        )
-                        .onHover { hovering in
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                isStatusHovering = hovering
-                            }
-                        }
-                    } else {
-                        Circle()
-                            .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1.5)
-                            .frame(width: checkboxSize, height: checkboxSize)
-                    }
-                }
-
-                // Title
-                ZStack(alignment: .leading) {
-                    // Static text - only shown when collapsed (single line, truncated)
-                    if !showNotes {
-                        Text(task.title)
-                            .font(.system(size: 14))
-                            .foregroundStyle(isCompleted ? .tertiary : .primary)
-                            .strikethrough(isCompleted, color: .secondary)
-                            .lineLimit(1)
-                            .truncationMode(.tail)
-                            .transition(.opacity)
-                    }
-
-                    // Editable field - shown when expanded (supports multiple lines)
-                    if showNotes {
-                        MultilineTitleField(
-                            text: Binding(
-                                get: { task.title },
-                                set: { task.updateTitle($0) }
-                            ),
-                            font: .systemFont(ofSize: 14),
-                            shouldFocus: isTitleFocused,
-                            onEscape: onCollapse,
-                            onTab: {
-                                isTitleFocused = false
-                                isDescriptionFocused = true
-                            }
-                        )
-                        .transition(.opacity)
-                    }
-                }
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .animation(.easeInOut(duration: 0.15), value: showNotes)
-                .allowsHitTesting(showNotes) // Allow text field interaction when expanded
-
-                // Queue badge - shown when task is queued on a terminal
-                if let terminalName = queuedOnTerminalName {
-                    HStack(spacing: 4) {
-                        Image(systemName: "list.bullet")
-                            .font(.system(size: 9, weight: .semibold))
-                        Text("Queued on \(terminalName)")
-                    }
-                    .font(.caption2)
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(.orange.opacity(0.15))
-                    .clipShape(Capsule())
-                }
-
-                // Attachment indicator - shown when task has attachments
-                if !task.attachments.isEmpty {
-                    Image(systemName: "paperclip")
-                        .font(.system(size: 11))
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .contextMenu {
-                if isQueued, let onRun = onRun {
-                    Button {
-                        onRun()
-                    } label: {
-                        Label("Run", systemImage: "play.fill")
-                    }
-                    Divider()
-                }
-
-                Button {
-                    onToggleComplete?()
-                } label: {
-                    if isCompleted {
-                        Label("Mark as Incomplete", systemImage: "circle")
-                    } else {
-                        Label("Mark as Complete", systemImage: "checkmark.circle.fill")
-                    }
-                }
-
-                Divider()
-
-                Button(role: .destructive) {
-                    onDelete?()
-                } label: {
-                    Label("Delete", systemImage: "trash")
-                }
-            }
-
-            // Description - visible in both states
-            if isExpanded {
-                // Editable in expanded state
-                GrowingTextView(
-                    text: Binding(
-                        get: { task.taskDescription ?? "" },
-                        set: { task.updateDescription($0.isEmpty ? nil : $0) }
-                    ),
-                    placeholder: "Notes",
-                    font: .systemFont(ofSize: 13),
-                    shouldFocus: isDescriptionFocused,
-                    onEscape: onCollapse,
-                    onShiftTab: {
-                        isDescriptionFocused = false
-                        isTitleFocused = true
+    @ViewBuilder
+    private var leadingIndicator: some View {
+        ZStack {
+            if isRunning {
+                RunningTaskIndicator(
+                    size: checkboxSize,
+                    isHovering: isStatusHovering,
+                    onMarkComplete: {
+                        onToggleComplete?()
                     }
                 )
-                .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
-                .padding(.top, 6)
-                .padding(.leading, 32)
-                .opacity(showNotes ? 1 : 0)
-                .offset(y: showNotes ? 0 : -8)
-                .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showNotes)
-            } else if let description = task.taskDescription, !description.isEmpty {
-                // Read-only preview in collapsed state
-                Text(description)
-                    .font(.system(size: 13))
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.tail)
-                    .padding(.top, 4)
-                    .padding(.leading, 32)
-            }
-
-            // Attachments row - only in expanded state
-            if isExpanded && !task.attachments.isEmpty {
-                VStack(alignment: .leading, spacing: 6) {
-                    ForEach(task.attachments, id: \.id) { attachment in
-                        HStack(spacing: 6) {
-                            Image(systemName: "doc.fill")
-                                .font(.system(size: 10))
-                                .foregroundStyle(.secondary)
-                            Text(attachment.fileName)
-                                .font(.system(size: 12))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                                .truncationMode(.middle)
-                            Spacer()
-                            Button {
-                                modelContext.delete(attachment)
-                            } label: {
-                                Image(systemName: "xmark")
-                                    .font(.system(size: 9, weight: .medium))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            .buttonStyle(.plain)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .fill(Color.primary.opacity(0.05))
-                        )
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isStatusHovering = hovering
                     }
                 }
-                .padding(.top, 6)
+            } else if isCompleted {
+                Button(action: { onToggleComplete?() }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: checkboxSize, height: checkboxSize)
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .buttonStyle(.plain)
+            } else if isQueued {
+                QueuedTaskIndicator(
+                    size: checkboxSize,
+                    isHovering: isStatusHovering,
+                    position: position,
+                    onRun: onRun
+                )
+                .onHover { hovering in
+                    withAnimation(.easeInOut(duration: 0.15)) {
+                        isStatusHovering = hovering
+                    }
+                }
+            } else {
+                Circle()
+                    .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1.5)
+                    .frame(width: checkboxSize, height: checkboxSize)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var titleSection: some View {
+        ZStack(alignment: .leading) {
+            if !showNotes {
+                Text(task.title)
+                    .font(.system(size: 14))
+                    .foregroundStyle(isCompleted ? .tertiary : .primary)
+                    .strikethrough(isCompleted, color: .secondary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .transition(.opacity)
+            }
+            if showNotes {
+                MultilineTitleField(
+                    text: Binding(
+                        get: { task.title },
+                        set: { task.updateTitle($0) }
+                    ),
+                    font: .systemFont(ofSize: 14),
+                    shouldFocus: isTitleFocused,
+                    onEscape: onCollapse,
+                    onTab: {
+                        isTitleFocused = false
+                        isDescriptionFocused = true
+                    }
+                )
+                .transition(.opacity)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .animation(.easeInOut(duration: 0.15), value: showNotes)
+        .allowsHitTesting(showNotes)
+    }
+
+    @ViewBuilder
+    private var titleRowContextMenu: some View {
+        if isQueued, let onRun = onRun {
+            Button {
+                onRun()
+            } label: {
+                Label("Run", systemImage: "play.fill")
+            }
+            Divider()
+        }
+
+        Button {
+            onToggleComplete?()
+        } label: {
+            if isCompleted {
+                Label("Mark as Incomplete", systemImage: "circle")
+            } else {
+                Label("Mark as Complete", systemImage: "checkmark.circle.fill")
+            }
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            onDelete?()
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    @ViewBuilder
+    private var descriptionSection: some View {
+        if isExpanded {
+            GrowingTextView(
+                text: Binding(
+                    get: { task.taskDescription ?? "" },
+                    set: { task.updateDescription($0.isEmpty ? nil : $0) }
+                ),
+                placeholder: "Notes",
+                font: .systemFont(ofSize: 13),
+                shouldFocus: isDescriptionFocused,
+                onEscape: onCollapse,
+                onShiftTab: {
+                    isDescriptionFocused = false
+                    isTitleFocused = true
+                }
+            )
+            .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
+            .padding(.top, 6)
+            .padding(.leading, 32)
+            .opacity(showNotes ? 1 : 0)
+            .offset(y: showNotes ? 0 : -8)
+            .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showNotes)
+            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
+        } else if let description = task.taskDescription, !description.isEmpty {
+            Text(description)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+                .truncationMode(.tail)
+                .padding(.top, 4)
                 .padding(.leading, 32)
-                .opacity(showNotes ? 1 : 0)
-                .offset(y: showNotes ? 0 : -8)
-                .animation(.spring(response: 0.25, dampingFraction: 0.85).delay(0.05), value: showNotes)
+        }
+    }
+
+    @ViewBuilder
+    private var attachmentsSection: some View {
+        if isExpanded && !task.attachments.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(task.attachments, id: \.id) { attachment in
+                    HStack(spacing: 6) {
+                        Image(systemName: "doc.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                        Text(attachment.fileName)
+                            .font(.system(size: 12))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                        Spacer()
+                        Button {
+                            modelContext.delete(attachment)
+                        } label: {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .medium))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        RoundedRectangle(cornerRadius: 4)
+                            .fill(Color.primary.opacity(0.05))
+                    )
+                }
+            }
+            .padding(.top, 6)
+            .padding(.leading, 32)
+            .opacity(showNotes ? 1 : 0)
+            .offset(y: showNotes ? 0 : -8)
+            .animation(.spring(response: 0.25, dampingFraction: 0.85).delay(0.05), value: showNotes)
+            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
+        }
+    }
+
+    @ViewBuilder
+    private var sidePanel: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Status section
+            VStack(alignment: .leading, spacing: 6) {
+                Text("STATUS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .tracking(0.8)
+
+                statusDropdown
             }
 
-            // Skills and Status row - only in expanded state
-            if isExpanded {
-                HStack(spacing: 8) {
-                    // Attached skills chips
+            // Skills section
+            VStack(alignment: .leading, spacing: 6) {
+                Text("SKILLS")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .tracking(0.8)
+
+                FlowLayout(spacing: 6) {
                     ForEach(task.taskSkills, id: \.id) { taskSkill in
                         if let skill = taskSkill.skill {
                             HStack(spacing: 4) {
@@ -1312,7 +1311,6 @@ struct TaskRow: View {
                                     .font(.system(size: 11, weight: .medium))
                                     .lineLimit(1)
                                 Button {
-                                    // Remove skill
                                     modelContext.delete(taskSkill)
                                 } label: {
                                     Image(systemName: "xmark")
@@ -1330,92 +1328,150 @@ struct TaskRow: View {
                         }
                     }
 
-                    // Add skill button
                     Button {
                         showSkillPicker = true
                     } label: {
-                        Image(systemName: "plus")
-                            .font(.system(size: 10, weight: .medium))
-                            .foregroundStyle(.secondary)
-                            .frame(width: 22, height: 22)
-                            .background(
-                                Circle()
-                                    .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1)
-                            )
+                        HStack(spacing: 4) {
+                            Image(systemName: "plus")
+                                .font(.system(size: 9, weight: .medium))
+                            Text("Add")
+                                .font(.system(size: 11, weight: .medium))
+                        }
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            Capsule()
+                                .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1)
+                        )
                     }
                     .buttonStyle(.plain)
                     .help("Attach skill")
                     .sheet(isPresented: $showSkillPicker) {
                         TaskSkillPickerView(task: task)
                     }
+                }
+            }
 
-                    Spacer()
+            Spacer()
+        }
+        .frame(width: sidePanelWidth)
+        .padding(.leading, 16)
+        .opacity(showNotes ? 1 : 0)
+        .offset(x: showNotes ? 0 : 20)
+        .animation(.spring(response: 0.3, dampingFraction: 0.8).delay(0.05), value: showNotes)
+    }
 
-                    // Status dropdown
-                    Menu {
-                        ForEach(TaskStatus.allCases, id: \.self) { status in
-                            Button(action: {
-                                // First collapse the task, then update status after animation completes
-                                if task.taskStatus != status {
-                                    onCollapse?()
-                                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                                        // Clear selection FIRST in its own render cycle
-                                        onStatusChange?()
-                                        // Update status in the next run loop iteration
-                                        // so SwiftUI processes the selection clear first
-                                        DispatchQueue.main.async {
-                                            task.updateStatusWithUndo(status)
-                                        }
-                                    }
-                                }
-                            }) {
-                                HStack {
-                                    Text(status.menuLabel)
-                                    if task.taskStatus == status {
-                                        Image(systemName: "checkmark")
-                                    }
-                                }
+    @ViewBuilder
+    private var statusDropdown: some View {
+        Menu {
+            ForEach(TaskStatus.allCases, id: \.self) { status in
+                Button(action: {
+                    if task.taskStatus != status {
+                        onCollapse?()
+                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                            onStatusChange?()
+                            DispatchQueue.main.async {
+                                task.updateStatusWithUndo(status)
                             }
                         }
-                    } label: {
-                        HStack(spacing: 5) {
-                            Text(task.taskStatus.displayName)
-                                .font(.system(size: 11, weight: .medium))
-                                .tracking(0.5)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 8, weight: .medium))
-                        }
-                        .foregroundStyle(Color(hex: "9A9C9D")!)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 3)
-                        .background(
-                            RoundedRectangle(cornerRadius: 4)
-                                .stroke(Color(hex: "9A9C9D")!.opacity(isStatusHovering ? 0.5 : 0), lineWidth: 1)
-                        )
-                        .scaleEffect(isStatusHovering ? 1.05 : 1.0)
-                        .animation(.easeInOut(duration: 0.15), value: isStatusHovering)
-                        .onHover { hovering in
-                            isStatusHovering = hovering
+                    }
+                }) {
+                    HStack {
+                        Text(status.menuLabel)
+                        if task.taskStatus == status {
+                            Image(systemName: "checkmark")
                         }
                     }
-                    .menuStyle(.borderlessButton)
-                    .menuIndicator(.hidden)
-                    .fixedSize()
                 }
-                .padding(.top, 8)
-                .padding(.bottom, 8)
-                .padding(.horizontal, 12)
-                .opacity(showNotes ? 1 : 0)
-                .offset(y: showNotes ? 0 : -8)
-                .animation(.spring(response: 0.25, dampingFraction: 0.85).delay(0.08), value: showNotes)
+            }
+        } label: {
+            HStack(spacing: 5) {
+                Text(task.taskStatus.displayName)
+                    .font(.system(size: 11, weight: .medium))
+                    .tracking(0.5)
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 8, weight: .medium))
+            }
+            .foregroundStyle(Color(hex: "9A9C9D")!)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(
+                RoundedRectangle(cornerRadius: 4)
+                    .stroke(Color(hex: "9A9C9D")!.opacity(isStatusHovering ? 0.5 : 0), lineWidth: 1)
+            )
+            .scaleEffect(isStatusHovering ? 1.05 : 1.0)
+            .animation(.easeInOut(duration: 0.15), value: isStatusHovering)
+            .onHover { hovering in
+                isStatusHovering = hovering
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            // Main content
+            VStack(alignment: .leading, spacing: 0) {
+                // Title row - only this part handles taps for selection/expansion
+                HStack(alignment: .top, spacing: 12) {
+                    leadingIndicator
+                        .padding(.top, 1)
+                        .transaction { $0.animation = nil }
+                    titleSection
+
+                    // Queue badge - shown when task is queued on a terminal
+                    if let terminalName = queuedOnTerminalName {
+                        HStack(spacing: 4) {
+                            Image(systemName: "list.bullet")
+                                .font(.system(size: 9, weight: .semibold))
+                            Text("Queued on \(terminalName)")
+                        }
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(.orange.opacity(0.15))
+                        .clipShape(Capsule())
+                    }
+
+                    // Attachment indicator - shown when task has attachments (only in collapsed state)
+                    if !task.attachments.isEmpty && !isExpanded {
+                        Image(systemName: "paperclip")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+                .contextMenu {
+                    titleRowContextMenu
+                }
+
+                descriptionSection
+                attachmentsSection
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            // Side panel (expanded only)
+            if isExpanded {
+                Divider()
+                    .padding(.vertical, 8)
+                    .opacity(showNotes ? 1 : 0)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.8).delay(0.03), value: showNotes)
+                    .transition(.opacity)
+
+                sidePanel
+                    .transition(.opacity)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: isExpanded ? 10 : 6)
-                .fill(isExpanded ? (colorScheme == .dark ? Color(white: 0.20) : Color(hex: "F7F7F7")!) : (isHighlighted ? Color.orange.opacity(0.08) : .clear))
+                .fill(isExpanded ? (colorScheme == .dark ? Color(white: 0.20) : Color.white) : (isHighlighted ? Color.orange.opacity(0.08) : .clear))
                 .shadow(color: isExpanded ? .black.opacity(colorScheme == .dark ? 0.3 : 0.1) : .clear, radius: isExpanded ? 6 : 0, y: isExpanded ? 3 : 0)
+                .matchedGeometryEffect(id: "background-\(task.id)", in: animation)
         )
         .overlay(
             RoundedRectangle(cornerRadius: isExpanded ? 10 : 6)
@@ -1448,23 +1504,25 @@ struct TaskRow: View {
         .onHover { hovering in
             isHovering = hovering
         }
-        .padding(.top, isExpanded ? 24 : 0)
-        .padding(.bottom, isExpanded ? 32 : 0)
-        .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isExpanded)
+        .padding(.horizontal, isExpanded ? 8 : 0)
+        .padding(.top, 0)
+        .padding(.bottom, isExpanded ? 16 : 0)
+        .animation(nil, value: isExpanded)
         .onChange(of: isExpanded) { _, expanded in
             if expanded {
-                // Shorter delay for smoother feel
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                    withAnimation(.easeOut(duration: 0.2)) {
+                // Trigger content animation slightly after the container starts expanding
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                         showNotes = true
                     }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
                         isTitleFocused = true
                         isDescriptionFocused = false
                     }
                 }
             } else {
-                withAnimation(.easeIn(duration: 0.1)) {
+                // Fade out content first, then container collapses
+                withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
                     showNotes = false
                 }
                 isTitleFocused = false
@@ -1664,6 +1722,65 @@ struct KeyboardShortcutHint: View {
             Text(label)
                 .font(.system(size: 11))
                 .foregroundStyle(.tertiary)
+        }
+    }
+}
+
+// MARK: - Flow Layout
+
+/// A layout that arranges views in rows, wrapping to the next row when needed
+struct FlowLayout: Layout {
+    var spacing: CGFloat = 8
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        let containerWidth = proposal.width ?? .infinity
+        var currentX: CGFloat = 0
+        var currentY: CGFloat = 0
+        var lineHeight: CGFloat = 0
+        var totalHeight: CGFloat = 0
+        var maxWidth: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+
+            if currentX + size.width > containerWidth && currentX > 0 {
+                // Move to next line
+                currentX = 0
+                currentY += lineHeight + spacing
+                lineHeight = 0
+            }
+
+            lineHeight = max(lineHeight, size.height)
+            currentX += size.width + spacing
+            maxWidth = max(maxWidth, currentX - spacing)
+            totalHeight = currentY + lineHeight
+        }
+
+        return CGSize(width: maxWidth, height: totalHeight)
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        var currentX: CGFloat = bounds.minX
+        var currentY: CGFloat = bounds.minY
+        var lineHeight: CGFloat = 0
+
+        for subview in subviews {
+            let size = subview.sizeThatFits(.unspecified)
+
+            if currentX + size.width > bounds.maxX && currentX > bounds.minX {
+                // Move to next line
+                currentX = bounds.minX
+                currentY += lineHeight + spacing
+                lineHeight = 0
+            }
+
+            subview.place(
+                at: CGPoint(x: currentX, y: currentY),
+                proposal: ProposedViewSize(size)
+            )
+
+            lineHeight = max(lineHeight, size.height)
+            currentX += size.width + spacing
         }
     }
 }

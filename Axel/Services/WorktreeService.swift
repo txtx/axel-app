@@ -25,6 +25,7 @@ final class WorktreeService {
     /// - Parameter workspacePath: The path to the git repository
     /// - Returns: Array of WorktreeInfo, sorted with main first then alphabetically
     func listWorktrees(in workspacePath: String) async -> [WorktreeInfo] {
+        #if os(macOS)
         let path = workspacePath
         return await withCheckedContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
@@ -32,8 +33,13 @@ final class WorktreeService {
                 continuation.resume(returning: result)
             }
         }
+        #else
+        // Worktrees are not supported on iOS
+        return []
+        #endif
     }
 
+    #if os(macOS)
     /// Parse git worktree list output
     private nonisolated static func parseWorktrees(in workspacePath: String) -> [WorktreeInfo] {
         let process = Process()
@@ -122,4 +128,5 @@ final class WorktreeService {
             return lhs.displayName.localizedCaseInsensitiveCompare(rhs.displayName) == .orderedAscending
         }
     }
+    #endif
 }

@@ -1440,6 +1440,14 @@ struct WorkerPickerPanel: View {
             navigateDown()
             return .handled
         }
+        .onKeyPress(.leftArrow) {
+            navigateLeft()
+            return .handled
+        }
+        .onKeyPress(.rightArrow) {
+            navigateRight()
+            return .handled
+        }
         .onKeyPress(.return) {
             confirmSelection()
             return .handled
@@ -1963,6 +1971,26 @@ struct WorkerPickerPanel: View {
                index < allSessions.count - 1 {
                 selection = .existingSession(allSessions[index + 1])
             }
+        }
+    }
+
+    private func navigateLeft() {
+        // Only cycle panes when "New Session" is selected
+        guard case .newSession = selection, !panes.isEmpty else { return }
+        if selectedPaneIndex > 0 {
+            selectedPaneIndex -= 1
+        } else {
+            selectedPaneIndex = panes.count - 1  // Wrap around to last
+        }
+    }
+
+    private func navigateRight() {
+        // Only cycle panes when "New Session" is selected
+        guard case .newSession = selection, !panes.isEmpty else { return }
+        if selectedPaneIndex < panes.count - 1 {
+            selectedPaneIndex += 1
+        } else {
+            selectedPaneIndex = 0  // Wrap around to first
         }
     }
 

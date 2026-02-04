@@ -69,14 +69,20 @@ struct InboxView: View {
         .background(.background)
         .onAppear {
             inboxService.connect()
-            // Auto-select the first item when inbox opens
-            if selection == nil, let first = pendingEvents.first {
+            // Always select the first item when inbox appears
+            // This ensures we show the right item when returning to inbox
+            if let first = pendingEvents.first {
                 selection = first
             }
         }
         .onChange(of: pendingEvents) { _, newEvents in
-            // Auto-select the first item when events change and nothing is selected
-            if selection == nil, let first = newEvents.first {
+            // When events change, ensure selection is still valid
+            // If current selection is no longer in pending events, select the first item
+            if let current = selection {
+                if !newEvents.contains(where: { $0.id == current.id }) {
+                    selection = newEvents.first
+                }
+            } else if let first = newEvents.first {
                 selection = first
             }
         }
@@ -601,7 +607,9 @@ struct InboxEventDetailView: View {
 
                                 // Trigger queue consumption via notification
                                 // This will dequeue and start the next task if one is queued
+                                #if os(macOS)
                                 inboxService.confirmTaskCompletion(forPaneId: event.paneId)
+                                #endif
 
                                 selection = nil
                             } label: {

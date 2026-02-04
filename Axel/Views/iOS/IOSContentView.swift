@@ -34,7 +34,7 @@ struct iOSContentView: View {
         if case .queue(let filter) = sidebarSelection {
             return filter
         }
-        return .queued
+        return .backlog
     }
 
     private func performSync() {
@@ -176,7 +176,7 @@ struct iOSContentView: View {
     }
 }
 
-// MARK: - iPhone Tab View
+// MARK: - iPhone Unified View
 
 struct iPhoneTabView: View {
     @Bindable var appState: AppState
@@ -187,47 +187,742 @@ struct iPhoneTabView: View {
     @Binding var selectedAgent: AgentSelection?
     @Binding var selectedContext: Context?
 
-    @State private var selectedTab: Int = 0
+    @Query(sort: \Hint.createdAt, order: .reverse) private var allHints: [Hint]
+    @Query(sort: \WorkTask.priority) private var allTasks: [WorkTask]
+    @Query(sort: \Workspace.name) private var workspaces: [Workspace]
+
+    @State private var filterWorkspaceId: UUID?
+    @State private var syncService = SyncService.shared
+    @State private var showSettings = false
+    @State private var expandedTaskId: UUID?
+    @State private var editMode: EditMode = .inactive
+    @Namespace private var taskAnimation
+
+    private var pendingHints: [Hint] {
+        let hints = filterWorkspaceId == nil ? allHints : allHints.filter { $0.task?.workspace?.id == filterWorkspaceId }
+        return hints.filter { $0.hintStatus == .pending }
+    }
+
+    private var tasks: [WorkTask] {
+        guard let filterWorkspaceId else { return allTasks }
+        return allTasks.filter { $0.workspace?.id == filterWorkspaceId }
+    }
+
+    private var selectedWorkspace: Workspace? {
+        guard let filterWorkspaceId else { return nil }
+        return workspaces.first { $0.id == filterWorkspaceId }
+    }
+
+    private var upNextTasks: [WorkTask] {
+        tasks.filter { $0.taskStatus == .queued }.sorted { $0.priority < $1.priority }
+    }
+
+    private var backlogTasks: [WorkTask] {
+        tasks.filter { $0.taskStatus == .backlog }.sorted { $0.priority < $1.priority }
+    }
+
+    private var runningTasks: [WorkTask] {
+        tasks.filter { $0.taskStatus == .running }.sorted { $0.priority < $1.priority }
+    }
+
+    private var completedTasks: [WorkTask] {
+        tasks.filter { $0.taskStatus == .completed }.sorted { $0.completedAt ?? $0.updatedAt > $1.completedAt ?? $1.updatedAt }
+    }
+
+    private var upNextListHeight: CGFloat {
+        let baseRowHeight: CGFloat = 56
+        let expandedRowHeight: CGFloat = 220
+        var totalHeight: CGFloat = 0
+        for task in upNextTasks {
+            if expandedTaskId == task.id {
+                totalHeight += expandedRowHeight
+            } else {
+                totalHeight += baseRowHeight
+            }
+        }
+        return max(totalHeight, baseRowHeight)
+    }
+
+    private var backlogListHeight: CGFloat {
+        let baseRowHeight: CGFloat = 56
+        let expandedRowHeight: CGFloat = 220
+        var totalHeight: CGFloat = 0
+        for task in backlogTasks {
+            if expandedTaskId == task.id {
+                totalHeight += expandedRowHeight
+            } else {
+                totalHeight += baseRowHeight
+            }
+        }
+        return max(totalHeight, baseRowHeight)
+    }
 
     var body: some View {
-        TabView(selection: $selectedTab) {
-            // Inbox Tab (Hints) - RED icon for call to action
-            NavigationStack {
-                iPhoneInboxView(selection: $selectedHint)
-            }
-            .tabItem {
-                Label("Inbox", systemImage: "tray.fill")
-            }
-            .tag(0)
+        NavigationStack {
+            ZStack(alignment: .bottomTrailing) {
+                ScrollView {
+                    LazyVStack(spacing: 0, pinnedViews: [.sectionHeaders]) {
+                        // Workspace filter chips
+                        if !workspaces.isEmpty {
+                            WorkspaceFilterChips(workspaces: workspaces, selectedWorkspaceId: $filterWorkspaceId)
+                                .padding(.horizontal, 20)
+                                .padding(.top, 8)
+                                .padding(.bottom, 16)
+                        }
 
-            // Tasks Tab
-            NavigationStack {
-                iPhoneQueueView(viewModel: viewModel, selection: $selectedTask, appState: appState)
-            }
-            .tabItem {
-                Label("Tasks", systemImage: "rectangle.stack")
-            }
-            .tag(1)
+                        // Inbox section (horizontal scroll)
+                        if !pendingHints.isEmpty {
+                            inboxSection
+                        }
 
-            // Terminals Tab
-            NavigationStack {
-                iPhoneTerminalsView()
-            }
-            .tabItem {
-                Label("Terminals", systemImage: "terminal")
-            }
-            .tag(2)
+                        // Tasks sections
+                        tasksSection
+                    }
+                    .padding(.bottom, 100)
+                }
+                .refreshable {
+                    syncService.performFullSyncInBackground(container: modelContext.container)
+                    try? await Task.sleep(nanoseconds: 500_000_000)
+                }
 
-            // Settings Tab
-            NavigationStack {
-                iPhoneSettingsView()
+                // Floating action button
+                Button {
+                    appState.isNewTaskPresented = true
+                } label: {
+                    Image(systemName: "plus")
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(.white)
+                        .frame(width: 56, height: 56)
+                        .background(.blue)
+                        .clipShape(Circle())
+                        .shadow(color: .blue.opacity(0.3), radius: 8, y: 4)
+                }
+                .padding(.trailing, 20)
+                .padding(.bottom, 24)
             }
-            .tabItem {
-                Label("Settings", systemImage: "gear")
+            .background(Color(white: 0.11))
+            .navigationTitle("Tasks")
+            .navigationBarTitleDisplayMode(.large)
+            .toolbar {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button {
+                        showSettings = true
+                    } label: {
+                        Image(systemName: "gearshape.fill")
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
-            .tag(3)
+            .navigationDestination(for: Hint.self) { hint in
+                iPhoneHintDetailView(hint: hint)
+            }
+            .sheet(isPresented: $appState.isNewTaskPresented) {
+                CreateTaskView(isPresented: $appState.isNewTaskPresented, workspace: selectedWorkspace)
+                    .presentationDetents([.medium])
+            }
+            .sheet(isPresented: $showSettings) {
+                NavigationStack {
+                    iPhoneSettingsView()
+                        .toolbar {
+                            ToolbarItem(placement: .topBarTrailing) {
+                                Button("Done") {
+                                    showSettings = false
+                                }
+                                .fontWeight(.semibold)
+                            }
+                        }
+                }
+            }
         }
-        .tint(.blue)
+    }
+
+    // MARK: - Inbox Section
+
+    private var inboxSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Text("Inbox")
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(Color.white.opacity(0.5))
+                    .textCase(.uppercase)
+                    .tracking(0.8)
+
+                Text("\(pendingHints.count)")
+                    .font(.caption.weight(.bold).monospacedDigit())
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.orange)
+                    .clipShape(Capsule())
+
+                Spacer()
+            }
+            .padding(.horizontal, 20)
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                LazyHStack(spacing: 12) {
+                    ForEach(pendingHints) { hint in
+                        NavigationLink(value: hint) {
+                            InboxCard(hint: hint)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .padding(.horizontal, 20)
+            }
+        }
+        .padding(.bottom, 24)
+    }
+
+    // MARK: - Tasks Section
+
+    private var tasksSection: some View {
+        VStack(spacing: 0) {
+            if runningTasks.isEmpty && upNextTasks.isEmpty && backlogTasks.isEmpty && completedTasks.isEmpty {
+                VStack(spacing: 14) {
+                    Image(systemName: "tray")
+                        .font(.system(size: 40, weight: .thin))
+                        .foregroundStyle(.secondary.opacity(0.6))
+                    Text("No tasks yet")
+                        .font(.system(size: 17, weight: .medium))
+                        .foregroundStyle(.secondary)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.top, 60)
+            } else {
+                if !runningTasks.isEmpty {
+                    taskSectionHeader("Running")
+                    ForEach(runningTasks, id: \.id) { task in
+                        ExpandableTaskRow(
+                            task: task,
+                            position: nil,
+                            isExpanded: expandedTaskId == task.id,
+                            animation: taskAnimation,
+                            onTap: { toggleExpansion(for: task) },
+                            onStatusChange: { syncService.performFullSyncInBackground(container: modelContext.container) },
+                            onDelete: { Task { await viewModel.deleteTodo(task, context: modelContext) } }
+                        )
+                        .contextMenu {
+                            taskContextMenu(for: task)
+                        }
+                    }
+                }
+
+                // Up Next section - tasks assigned to terminal queues (show position numbers)
+                if !upNextTasks.isEmpty {
+                    HStack {
+                        Text("Up Next")
+                            .font(.system(size: 13, weight: .semibold))
+                            .foregroundStyle(Color.white.opacity(0.5))
+                            .textCase(.uppercase)
+                            .tracking(0.8)
+                        Spacer()
+                        if editMode == .active {
+                            Button("Done") {
+                                withAnimation { editMode = .inactive }
+                            }
+                            .font(.system(size: 14, weight: .medium))
+                            .foregroundStyle(.blue)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.top, 24)
+                    .padding(.bottom, 8)
+
+                    List {
+                        ForEach(Array(upNextTasks.enumerated()), id: \.element.id) { index, task in
+                            ExpandableTaskRow(
+                                task: task,
+                                position: index + 1,
+                                isExpanded: expandedTaskId == task.id,
+                                animation: taskAnimation,
+                                onTap: { toggleExpansion(for: task) },
+                                onStatusChange: { syncService.performFullSyncInBackground(container: modelContext.container) },
+                                onDelete: { Task { await viewModel.deleteTodo(task, context: modelContext) } }
+                            )
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .contextMenu {
+                                taskContextMenu(for: task)
+                            }
+                        }
+                        .onMove(perform: moveUpNextTask)
+                    }
+                    .listStyle(.plain)
+                    .environment(\.editMode, $editMode)
+                    .frame(height: upNextListHeight)
+                    .scrollDisabled(true)
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.5)
+                            .onEnded { _ in
+                                withAnimation { editMode = .active }
+                            }
+                    )
+                }
+
+                // Backlog section - unassigned tasks (no position numbers)
+                if !backlogTasks.isEmpty {
+                    taskSectionHeader("Backlog")
+                    List {
+                        ForEach(backlogTasks, id: \.id) { task in
+                            ExpandableTaskRow(
+                                task: task,
+                                position: nil,
+                                isExpanded: expandedTaskId == task.id,
+                                animation: taskAnimation,
+                                onTap: { toggleExpansion(for: task) },
+                                onStatusChange: { syncService.performFullSyncInBackground(container: modelContext.container) },
+                                onDelete: { Task { await viewModel.deleteTodo(task, context: modelContext) } }
+                            )
+                            .listRowInsets(EdgeInsets(top: 0, leading: 0, bottom: 0, trailing: 0))
+                            .listRowBackground(Color.clear)
+                            .listRowSeparator(.hidden)
+                            .contextMenu {
+                                taskContextMenu(for: task)
+                            }
+                        }
+                        .onMove(perform: moveBacklogTask)
+                    }
+                    .listStyle(.plain)
+                    .environment(\.editMode, $editMode)
+                    .frame(height: backlogListHeight)
+                    .scrollDisabled(true)
+                    .simultaneousGesture(
+                        LongPressGesture(minimumDuration: 0.5)
+                            .onEnded { _ in
+                                withAnimation { editMode = .active }
+                            }
+                    )
+                }
+
+                if !completedTasks.isEmpty {
+                    taskSectionHeader("Completed")
+                    ForEach(completedTasks, id: \.id) { task in
+                        ExpandableTaskRow(
+                            task: task,
+                            position: nil,
+                            isExpanded: expandedTaskId == task.id,
+                            animation: taskAnimation,
+                            onTap: { toggleExpansion(for: task) },
+                            onStatusChange: { syncService.performFullSyncInBackground(container: modelContext.container) },
+                            onDelete: { Task { await viewModel.deleteTodo(task, context: modelContext) } }
+                        )
+                        .contextMenu {
+                            taskContextMenu(for: task)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func taskSectionHeader(_ title: String) -> some View {
+        HStack {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(Color.white.opacity(0.5))
+                .textCase(.uppercase)
+                .tracking(0.8)
+            Spacer()
+        }
+        .padding(.horizontal, 16)
+        .padding(.top, 24)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private func taskContextMenu(for task: WorkTask) -> some View {
+        if task.taskStatus.isPending {
+            Button {
+                withAnimation { task.updateStatus(.running) }
+                syncService.performFullSyncInBackground(container: modelContext.container)
+            } label: {
+                Label("Run", systemImage: "play.fill")
+            }
+        }
+
+        if task.taskStatus.isPending || task.taskStatus == .running {
+            Button {
+                withAnimation { task.markCompleted() }
+                syncService.performFullSyncInBackground(container: modelContext.container)
+            } label: {
+                Label("Complete", systemImage: "checkmark.circle.fill")
+            }
+        }
+
+        if task.taskStatus == .running {
+            Button {
+                withAnimation { task.updateStatus(.aborted) }
+                syncService.performFullSyncInBackground(container: modelContext.container)
+            } label: {
+                Label("Cancel", systemImage: "xmark.circle.fill")
+            }
+        }
+
+        if task.taskStatus == .completed || task.taskStatus == .aborted {
+            Button {
+                withAnimation { task.updateStatus(.backlog) }
+                syncService.performFullSyncInBackground(container: modelContext.container)
+            } label: {
+                Label("Requeue", systemImage: "arrow.uturn.backward.circle.fill")
+            }
+        }
+
+        Divider()
+
+        Button(role: .destructive) {
+            Task { await viewModel.deleteTodo(task, context: modelContext) }
+        } label: {
+            Label("Delete", systemImage: "trash")
+        }
+    }
+
+    private func toggleExpansion(for task: WorkTask) {
+        withAnimation(.spring(response: 0.35, dampingFraction: 0.8)) {
+            if expandedTaskId == task.id {
+                expandedTaskId = nil
+            } else {
+                expandedTaskId = task.id
+            }
+        }
+    }
+
+    private func moveUpNextTask(from source: IndexSet, to destination: Int) {
+        var reorderedTasks = upNextTasks
+        reorderedTasks.move(fromOffsets: source, toOffset: destination)
+        for (index, task) in reorderedTasks.enumerated() {
+            if task.priority != index {
+                task.updatePriority(index)
+            }
+        }
+        syncService.performFullSyncInBackground(container: modelContext.container)
+    }
+
+    private func moveBacklogTask(from source: IndexSet, to destination: Int) {
+        var reorderedTasks = backlogTasks
+        reorderedTasks.move(fromOffsets: source, toOffset: destination)
+        for (index, task) in reorderedTasks.enumerated() {
+            if task.priority != index {
+                task.updatePriority(index)
+            }
+        }
+        syncService.performFullSyncInBackground(container: modelContext.container)
+    }
+}
+
+// MARK: - Running Task Indicator (iOS)
+
+/// Animated dashed circle that spins for running tasks
+struct RunningTaskIndicator: View {
+    let size: CGFloat
+
+    @State private var rotation: Double = 0
+
+    var body: some View {
+        Circle()
+            .strokeBorder(
+                style: StrokeStyle(
+                    lineWidth: 1.5,
+                    lineCap: .round,
+                    dash: [2, 3]
+                )
+            )
+            .foregroundStyle(Color.orange.opacity(0.8))
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(rotation))
+            .onAppear {
+                withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
+                    rotation = 360
+                }
+            }
+    }
+}
+
+// MARK: - Expandable Task Row
+
+struct ExpandableTaskRow: View {
+    @Bindable var task: WorkTask
+    var position: Int?
+    var isExpanded: Bool
+    var animation: Namespace.ID
+    var onTap: () -> Void
+    var onStatusChange: () -> Void
+    var onDelete: () -> Void
+
+    @State private var editedTitle: String = ""
+    @State private var editedDescription: String = ""
+    @FocusState private var isTitleFocused: Bool
+    @FocusState private var isDescriptionFocused: Bool
+
+    // Animation state - tracks the sequenced animation phases
+    @State private var showIndicator: Bool = true
+    @State private var titleOffset: Bool = false
+    @State private var showContent: Bool = false
+
+    private let indicatorSize: CGFloat = 26
+    private let indicatorSpace: CGFloat = 42 // indicatorSize + spacing
+
+    private var isRunning: Bool { task.taskStatus == .running }
+    private var isCompleted: Bool { task.taskStatus == .completed }
+    private var isQueued: Bool { task.taskStatus.isPending }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            // Main row (always visible)
+            Button(action: onTap) {
+                HStack(spacing: 0) {
+                    // Leading status indicator - fades out when expanding
+                    statusIndicator
+                        .frame(width: indicatorSize, height: indicatorSize)
+                        .opacity(showIndicator ? 1 : 0)
+                        .frame(width: titleOffset ? 0 : indicatorSize)
+                        .padding(.trailing, titleOffset ? 0 : 16)
+
+                    // Title - slides left when indicator disappears
+                    Text(task.title)
+                        .font(.system(size: 17))
+                        .foregroundStyle(isCompleted ? .tertiary : .primary)
+                        .strikethrough(isCompleted, color: .secondary)
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .opacity(showContent ? 0 : 1)
+
+                    // Chevron
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 13, weight: .semibold))
+                        .foregroundStyle(.tertiary)
+                        .rotationEffect(.degrees(isExpanded ? 90 : 0))
+                }
+                .padding(.horizontal, 16)
+                .padding(.vertical, 14)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            // Expanded content
+            if showContent {
+                expandedContent
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+        .background(
+            RoundedRectangle(cornerRadius: isExpanded ? 12 : 0)
+                .fill(isExpanded ? Color.white.opacity(0.05) : .clear)
+        )
+        .padding(.horizontal, isExpanded ? 8 : 0)
+        .padding(.vertical, isExpanded ? 4 : 0)
+        .onAppear {
+            editedTitle = task.title
+            editedDescription = task.taskDescription ?? ""
+            // Sync animation state on appear
+            showIndicator = !isExpanded
+            titleOffset = isExpanded
+            showContent = isExpanded
+        }
+        .onChange(of: isExpanded) { _, expanded in
+            if expanded {
+                // Expanding sequence: indicator out → title slides → content appears
+                withAnimation(.easeOut(duration: 0.15)) {
+                    showIndicator = false
+                }
+                withAnimation(.easeInOut(duration: 0.2).delay(0.1)) {
+                    titleOffset = true
+                }
+                withAnimation(.easeOut(duration: 0.2).delay(0.25)) {
+                    showContent = true
+                }
+            } else {
+                // Collapsing sequence: content out → title slides → indicator appears
+                withAnimation(.easeIn(duration: 0.15)) {
+                    showContent = false
+                }
+                withAnimation(.easeInOut(duration: 0.2).delay(0.1)) {
+                    titleOffset = false
+                }
+                withAnimation(.easeOut(duration: 0.15).delay(0.25)) {
+                    showIndicator = true
+                }
+            }
+        }
+        .onChange(of: task.title) { _, newValue in
+            if editedTitle != newValue { editedTitle = newValue }
+        }
+        .onChange(of: task.taskDescription) { _, newValue in
+            let newDesc = newValue ?? ""
+            if editedDescription != newDesc { editedDescription = newDesc }
+        }
+    }
+
+    @ViewBuilder
+    private var statusIndicator: some View {
+        ZStack {
+            if isRunning {
+                RunningTaskIndicator(size: indicatorSize)
+            } else if isCompleted {
+                ZStack {
+                    Circle()
+                        .fill(Color.green)
+                        .frame(width: indicatorSize, height: indicatorSize)
+                    Image(systemName: "checkmark")
+                        .font(.system(size: 12, weight: .bold))
+                        .foregroundStyle(.white)
+                }
+            } else if isQueued {
+                if let pos = position {
+                    ZStack {
+                        Circle()
+                            .strokeBorder(Color.gray.opacity(0.6), lineWidth: 1.5)
+                            .frame(width: indicatorSize, height: indicatorSize)
+                        Text("\(pos)")
+                            .font(.system(size: 12, weight: .bold).monospacedDigit())
+                            .foregroundStyle(.gray)
+                    }
+                } else {
+                    Circle()
+                        .strokeBorder(Color.white.opacity(0.2), lineWidth: 1.5)
+                        .frame(width: indicatorSize, height: indicatorSize)
+                }
+            } else {
+                Circle()
+                    .strokeBorder(Color.white.opacity(0.2), lineWidth: 1.5)
+                    .frame(width: indicatorSize, height: indicatorSize)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            // Editable title
+            TextField("Task title", text: $editedTitle, axis: .vertical)
+                .font(.system(size: 17, weight: .medium))
+                .foregroundStyle(isCompleted ? .tertiary : .primary)
+                .focused($isTitleFocused)
+                .onChange(of: editedTitle) { _, newValue in
+                    if newValue != task.title {
+                        task.updateTitle(newValue)
+                    }
+                }
+
+            // Editable description
+            TextField("Add notes...", text: $editedDescription, axis: .vertical)
+                .font(.system(size: 15))
+                .foregroundStyle(.secondary)
+                .focused($isDescriptionFocused)
+                .onChange(of: editedDescription) { _, newValue in
+                    let newDesc = newValue.isEmpty ? nil : newValue
+                    if newDesc != task.taskDescription {
+                        task.updateDescription(newDesc)
+                    }
+                }
+
+            // Action buttons - refined styling
+            HStack(spacing: 12) {
+                if isQueued {
+                    Button {
+                        withAnimation { task.updateStatus(.running) }
+                        onStatusChange()
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                }
+
+                if isQueued || isRunning {
+                    Button {
+                        withAnimation { task.markCompleted() }
+                        onStatusChange()
+                    } label: {
+                        Label("Complete", systemImage: "checkmark")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.green)
+                }
+
+                if isCompleted {
+                    Button {
+                        withAnimation { task.updateStatus(.backlog) }
+                        onStatusChange()
+                    } label: {
+                        Label("Reopen", systemImage: "arrow.uturn.backward")
+                            .font(.system(size: 14, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                Spacer()
+
+                Button(role: .destructive) {
+                    onDelete()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14))
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+            }
+        }
+        .padding(.horizontal, 16)
+        .padding(.bottom, 16)
+        .padding(.top, 4)
+    }
+}
+
+// MARK: - Inbox Card
+
+struct InboxCard: View {
+    let hint: Hint
+
+    private var typeIcon: String {
+        switch hint.hintType {
+        case .exclusiveChoice: "circle.circle"
+        case .multipleChoice: "checklist"
+        case .textInput: "text.cursor"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Image(systemName: typeIcon)
+                    .font(.system(size: 14, weight: .medium))
+                    .foregroundStyle(.orange)
+
+                Spacer()
+
+                Circle()
+                    .fill(.orange)
+                    .frame(width: 8, height: 8)
+            }
+
+            Text(hint.title)
+                .font(.system(size: 15, weight: .medium))
+                .foregroundStyle(.primary)
+                .lineLimit(3)
+                .multilineTextAlignment(.leading)
+
+            if let task = hint.task {
+                Text(task.title)
+                    .font(.system(size: 12))
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 0)
+
+            Text(hint.createdAt, style: .relative)
+                .font(.system(size: 11))
+                .foregroundStyle(.quaternary)
+        }
+        .padding(14)
+        .frame(width: 180, height: 140)
+        .background(Color.white.opacity(0.06))
+        .clipShape(RoundedRectangle(cornerRadius: 14))
     }
 }
 
@@ -590,465 +1285,6 @@ struct iPhoneHintDetailView: View {
     }
 }
 
-// MARK: - iPhone Tasks View
-
-struct iPhoneQueueView: View {
-    @Environment(\.modelContext) private var modelContext
-    @Query(sort: \WorkTask.priority) private var allTasks: [WorkTask]
-    @Query(sort: \Workspace.name) private var workspaces: [Workspace]
-
-    var viewModel: TodoViewModel
-    @Binding var selection: WorkTask?
-    @Bindable var appState: AppState
-    @State private var filterWorkspaceId: UUID?
-    @State private var syncService = SyncService.shared
-
-    private var selectedWorkspace: Workspace? {
-        guard let filterWorkspaceId else { return nil }
-        return workspaces.first { $0.id == filterWorkspaceId }
-    }
-
-    private var tasks: [WorkTask] {
-        guard let filterWorkspaceId else { return allTasks }
-        return allTasks.filter { $0.workspace?.id == filterWorkspaceId }
-    }
-
-    private var queuedTasks: [WorkTask] {
-        tasks.filter { $0.taskStatus.isPending }.sorted { $0.priority < $1.priority }
-    }
-
-    private var runningTasks: [WorkTask] {
-        tasks.filter { $0.taskStatus == .running }.sorted { $0.priority < $1.priority }
-    }
-
-    private var completedTasks: [WorkTask] {
-        tasks.filter { $0.taskStatus == .completed }.sorted { $0.completedAt ?? $0.updatedAt > $1.completedAt ?? $1.updatedAt }
-    }
-
-    private var activeCount: Int {
-        runningTasks.count + queuedTasks.count
-    }
-
-    private var allFilteredTasks: [WorkTask] {
-        runningTasks + queuedTasks + completedTasks
-    }
-
-    var body: some View {
-        ZStack(alignment: .bottomTrailing) {
-            VStack(spacing: 0) {
-                // Header
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 12) {
-                        Image(systemName: "rectangle.stack")
-                            .font(.system(size: 22))
-                            .foregroundStyle(.blue)
-
-                        Text("Tasks")
-                            .font(.system(size: 28, weight: .bold))
-
-                        Spacer()
-                    }
-
-                    // Workspace filter
-                    if !workspaces.isEmpty {
-                        WorkspaceFilterChips(workspaces: workspaces, selectedWorkspaceId: $filterWorkspaceId)
-                    }
-                }
-                .padding(.horizontal, 20)
-                .padding(.top, 20)
-                .padding(.bottom, 20)
-
-                if allFilteredTasks.isEmpty {
-                    Spacer()
-                    VStack(spacing: 14) {
-                        Image(systemName: "tray")
-                            .font(.system(size: 40, weight: .thin))
-                            .foregroundStyle(.tertiary)
-                        Text("No tasks yet")
-                            .font(.system(size: 17, weight: .medium))
-                            .foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                } else {
-                    ScrollView {
-                        LazyVStack(spacing: 0) {
-                            if !runningTasks.isEmpty {
-                                sectionHeader("Running")
-                                ForEach(runningTasks, id: \.id) { task in
-                                    NavigationLink(value: task) {
-                                        SlickTaskRow(task: task, position: nil)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        taskContextMenu(for: task)
-                                    }
-                                }
-                            }
-
-                            if !queuedTasks.isEmpty {
-                                if !runningTasks.isEmpty {
-                                    sectionHeader("Up Next")
-                                }
-                                ForEach(Array(queuedTasks.enumerated()), id: \.element.id) { index, task in
-                                    NavigationLink(value: task) {
-                                        SlickTaskRow(task: task, position: index + 1)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        taskContextMenu(for: task)
-                                    }
-                                }
-                            }
-
-                            if !completedTasks.isEmpty {
-                                sectionHeader("Completed")
-                                ForEach(completedTasks, id: \.id) { task in
-                                    NavigationLink(value: task) {
-                                        SlickTaskRow(task: task, position: nil)
-                                    }
-                                    .buttonStyle(.plain)
-                                    .contextMenu {
-                                        taskContextMenu(for: task)
-                                    }
-                                }
-                            }
-                        }
-                        .padding(.horizontal, 20)
-                        .padding(.bottom, 80)
-                    }
-                    .refreshable {
-                        syncService.performFullSyncInBackground(container: modelContext.container)
-                        try? await Task.sleep(nanoseconds: 500_000_000)
-                    }
-                }
-            }
-
-            // Floating action button
-            Button {
-                appState.isNewTaskPresented = true
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
-                    .background(.blue)
-                    .clipShape(Circle())
-                    .shadow(color: .blue.opacity(0.3), radius: 8, y: 4)
-            }
-            .padding(.trailing, 20)
-            .padding(.bottom, 24)
-        }
-        .background(Color(white: 0.11))
-        .navigationBarTitleDisplayMode(.inline)
-        .toolbar(.hidden, for: .navigationBar)
-        .navigationDestination(for: WorkTask.self) { task in
-            iPhoneTaskDetailView(task: task, viewModel: viewModel)
-        }
-        .sheet(isPresented: $appState.isNewTaskPresented) {
-            CreateTaskView(isPresented: $appState.isNewTaskPresented, workspace: selectedWorkspace)
-                .presentationDetents([.medium])
-        }
-    }
-
-    private func sectionHeader(_ title: String) -> some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 12, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.35))
-                .textCase(.uppercase)
-                .tracking(0.8)
-            Spacer()
-        }
-        .padding(.leading, 16)
-        .padding(.top, 24)
-        .padding(.bottom, 8)
-    }
-
-    // Context menu actions matching macOS Task menu
-    @ViewBuilder
-    private func taskContextMenu(for task: WorkTask) -> some View {
-        // Run action (only for pending tasks)
-        if task.taskStatus.isPending {
-            Button {
-                withAnimation {
-                    task.updateStatus(.running)
-                }
-                syncService.performFullSyncInBackground(container: modelContext.container)
-            } label: {
-                Label("Run", systemImage: "play.fill")
-            }
-        }
-
-        // Complete action (for pending or running tasks)
-        if task.taskStatus.isPending || task.taskStatus == .running {
-            Button {
-                withAnimation {
-                    task.markCompleted()
-                }
-                syncService.performFullSyncInBackground(container: modelContext.container)
-            } label: {
-                Label("Complete", systemImage: "checkmark.circle.fill")
-            }
-        }
-
-        // Cancel action (for running tasks)
-        if task.taskStatus == .running {
-            Button {
-                withAnimation {
-                    task.updateStatus(.aborted)
-                }
-                syncService.performFullSyncInBackground(container: modelContext.container)
-            } label: {
-                Label("Cancel", systemImage: "xmark.circle.fill")
-            }
-        }
-
-        // Requeue action (for completed or aborted tasks)
-        if task.taskStatus == .completed || task.taskStatus == .aborted {
-            Button {
-                withAnimation {
-                    task.updateStatus(.backlog)
-                }
-                syncService.performFullSyncInBackground(container: modelContext.container)
-            } label: {
-                Label("Requeue", systemImage: "arrow.uturn.backward.circle.fill")
-            }
-        }
-
-        Divider()
-
-        // Delete action
-        Button(role: .destructive) {
-            Task {
-                await viewModel.deleteTodo(task, context: modelContext)
-            }
-        } label: {
-            Label("Delete", systemImage: "trash")
-        }
-    }
-}
-
-
-struct iPhoneTaskDetailView: View {
-    @Bindable var task: WorkTask
-    var viewModel: TodoViewModel
-    @Environment(\.modelContext) private var modelContext
-    @Environment(\.dismiss) private var dismiss
-    @State private var editedTitle: String = ""
-    @State private var editedDescription: String = ""
-    @State private var isPreviewingMarkdown: Bool = false
-    @State private var syncService = SyncService.shared
-    @State private var showDeleteConfirmation: Bool = false
-
-    private var statusColor: Color {
-        switch task.taskStatus {
-        case .backlog, .queued: .blue
-        case .running: .orange
-        case .completed: .green
-        case .inReview: .yellow
-        case .aborted: .red
-        }
-    }
-
-    private var statusIcon: String {
-        switch task.taskStatus {
-        case .backlog, .queued: "clock.circle.fill"
-        case .running: "play.circle.fill"
-        case .completed: "checkmark.circle.fill"
-        case .inReview: "eye.circle.fill"
-        case .aborted: "xmark.circle.fill"
-        }
-    }
-
-    var body: some View {
-        Form {
-            // Quick Actions Section (consistent with macOS Task menu)
-            Section {
-                // Run action (only for pending tasks)
-                if task.taskStatus.isPending {
-                    Button {
-                        withAnimation {
-                            task.updateStatus(.running)
-                        }
-                        Task {
-                            await syncService.performFullSync(context: modelContext)
-                        }
-                    } label: {
-                        Label("Run", systemImage: "play.fill")
-                            .foregroundStyle(.green)
-                    }
-                }
-
-                // Complete action (for pending or running tasks)
-                if task.taskStatus.isPending || task.taskStatus == .running {
-                    Button {
-                        withAnimation {
-                            task.markCompleted()
-                        }
-                        Task {
-                            await syncService.performFullSync(context: modelContext)
-                        }
-                    } label: {
-                        Label("Complete", systemImage: "checkmark.circle.fill")
-                            .foregroundStyle(.green)
-                    }
-                }
-
-                // Cancel action (for running tasks)
-                if task.taskStatus == .running {
-                    Button {
-                        withAnimation {
-                            task.updateStatus(.aborted)
-                        }
-                        Task {
-                            await syncService.performFullSync(context: modelContext)
-                        }
-                    } label: {
-                        Label("Cancel", systemImage: "xmark.circle.fill")
-                            .foregroundStyle(.orange)
-                    }
-                }
-
-                // Requeue action (for completed or aborted tasks)
-                if task.taskStatus == .completed || task.taskStatus == .aborted {
-                    Button {
-                        withAnimation {
-                            task.updateStatus(.backlog)
-                        }
-                        Task {
-                            await syncService.performFullSync(context: modelContext)
-                        }
-                    } label: {
-                        Label("Requeue", systemImage: "arrow.uturn.backward.circle.fill")
-                            .foregroundStyle(.blue)
-                    }
-                }
-            } header: {
-                HStack(spacing: 8) {
-                    Image(systemName: statusIcon)
-                        .foregroundStyle(statusColor)
-                    Text(task.taskStatus.rawValue.replacingOccurrences(of: "_", with: " ").capitalized)
-                        .foregroundStyle(statusColor)
-                }
-            }
-
-            Section {
-                TextField("Task", text: $editedTitle, axis: .vertical)
-                    .font(.body)
-                    .onChange(of: editedTitle) { _, newValue in
-                        // Only update if the value actually changed
-                        guard newValue != task.title else { return }
-                        task.updateTitle(newValue)
-                    }
-            }
-
-            // Description (Markdown)
-            Section {
-                Picker("Mode", selection: $isPreviewingMarkdown) {
-                    Text("Edit").tag(false)
-                    Text("Preview").tag(true)
-                }
-                .pickerStyle(.segmented)
-                .listRowInsets(EdgeInsets())
-                .listRowBackground(Color.clear)
-
-                if isPreviewingMarkdown {
-                    if editedDescription.isEmpty {
-                        Text("No description")
-                            .foregroundStyle(.tertiary)
-                            .italic()
-                    } else {
-                        Text(LocalizedStringKey(editedDescription))
-                    }
-                } else {
-                    TextEditor(text: $editedDescription)
-                        .font(.system(.body, design: .monospaced))
-                        .frame(minHeight: 100)
-                        .onChange(of: editedDescription) { _, newValue in
-                            // Only update if the value actually changed
-                            let newDesc = newValue.isEmpty ? nil : newValue
-                            guard newDesc != task.taskDescription else { return }
-                            task.updateDescription(newDesc)
-                        }
-
-                    Text("Supports **bold**, *italic*, `code`, - lists, # headings")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-            } header: {
-                Text("Description (Markdown)")
-            }
-
-            Section {
-                HStack {
-                    Text("Created")
-                    Spacer()
-                    Text(task.createdAt, style: .date)
-                        .foregroundStyle(.secondary)
-                }
-
-                if task.taskStatus == .completed, let completedAt = task.completedAt {
-                    HStack {
-                        Text("Completed")
-                        Spacer()
-                        Text(completedAt, style: .relative)
-                            .foregroundStyle(.green)
-                    }
-                }
-            }
-
-            Section {
-                Button(role: .destructive) {
-                    showDeleteConfirmation = true
-                } label: {
-                    Label("Delete Task", systemImage: "trash")
-                }
-            }
-        }
-        .navigationTitle("Task")
-        .navigationBarTitleDisplayMode(.inline)
-        .confirmationDialog("Delete Task?", isPresented: $showDeleteConfirmation, titleVisibility: .visible) {
-            Button("Delete", role: .destructive) {
-                Task {
-                    await viewModel.deleteTodo(task, context: modelContext)
-                }
-                dismiss()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("This action cannot be undone.")
-        }
-        .onAppear {
-            editedTitle = task.title
-            editedDescription = task.taskDescription ?? ""
-        }
-        .onChange(of: task.id) { _, _ in
-            // Task selection changed
-            editedTitle = task.title
-            editedDescription = task.taskDescription ?? ""
-        }
-        .onChange(of: task.title) { _, newTitle in
-            // Update local state when sync updates title
-            if editedTitle != newTitle {
-                editedTitle = newTitle
-            }
-        }
-        .onChange(of: task.taskDescription) { _, newDescription in
-            // Update local state when sync updates description
-            let newValue = newDescription ?? ""
-            if editedDescription != newValue {
-                editedDescription = newValue
-            }
-        }
-        .onDisappear {
-            // Sync changes when leaving the detail view
-            Task {
-                await syncService.performFullSync(context: modelContext)
-            }
-        }
-    }
-}
-
 // MARK: - iPhone Skills View
 
 struct iPhoneSkillsView: View {
@@ -1236,19 +1472,6 @@ struct iPhoneContextDetailView: View {
             .onChange(of: editedContent) { _, newValue in
                 context.updateContent(newValue)
             }
-    }
-}
-
-// MARK: - iPhone Terminals View
-
-struct iPhoneTerminalsView: View {
-    var body: some View {
-        ContentUnavailableView {
-            Label("Terminals", systemImage: "terminal")
-        } description: {
-            Text("Running terminal sessions will appear here")
-        }
-        .navigationTitle("Terminals")
     }
 }
 
@@ -1466,14 +1689,11 @@ struct iPadSplitView: View {
                     selection: $selectedTask,
                     onNewTask: { appState.isNewTaskPresented = true }
                 )
-            case .inbox, .none:
+            case .inbox, .terminals, .none:
                 HintInboxView(
                     filter: currentHintFilter,
                     selection: $selectedHint
                 )
-            case .terminals:
-                Text("Terminals")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         } detail: {
             switch sidebarSelection {
@@ -1516,80 +1736,6 @@ struct iPadSplitView: View {
         .onChange(of: selectedTask) { _, _ in
             showTerminal = false
         }
-    }
-}
-
-// MARK: - Slick Task Row (shared iOS/visionOS)
-
-struct SlickTaskRow: View {
-    let task: WorkTask
-    var position: Int? = nil
-
-    private let indicatorSize: CGFloat = 26
-
-    private var isRunning: Bool { task.taskStatus == .running }
-    private var isCompleted: Bool { task.taskStatus == .completed }
-    private var isQueued: Bool { task.taskStatus.isPending }
-
-    var body: some View {
-        HStack(spacing: 16) {
-            // Leading status indicator
-            ZStack {
-                if isRunning {
-                    HStack(alignment: .bottom, spacing: 2) {
-                        RoundedRectangle(cornerRadius: 1).frame(width: 3.5, height: 7)
-                        RoundedRectangle(cornerRadius: 1).frame(width: 3.5, height: 12)
-                        RoundedRectangle(cornerRadius: 1).frame(width: 3.5, height: 16)
-                        RoundedRectangle(cornerRadius: 1).frame(width: 3.5, height: 9)
-                    }
-                    .foregroundStyle(.orange)
-                    .frame(width: indicatorSize, height: indicatorSize)
-                } else if isCompleted {
-                    ZStack {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: indicatorSize, height: indicatorSize)
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 12, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
-                } else if isQueued {
-                    if let pos = position {
-                        Text("\(pos)")
-                            .font(.system(size: 14, weight: .bold).monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(width: indicatorSize, height: indicatorSize)
-                    } else {
-                        RoundedRectangle(cornerRadius: 6)
-                            .strokeBorder(Color.white.opacity(0.2), lineWidth: 1.5)
-                            .frame(width: indicatorSize, height: indicatorSize)
-                    }
-                } else {
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(Color.white.opacity(0.2), lineWidth: 1.5)
-                        .frame(width: indicatorSize, height: indicatorSize)
-                }
-            }
-
-            // Title
-            Text(task.title)
-                .font(.system(size: 17))
-                .foregroundStyle(isCompleted ? .tertiary : .primary)
-                .strikethrough(isCompleted, color: .secondary)
-                .lineLimit(2)
-
-            Spacer(minLength: 4)
-
-            // Relative time
-            if !isRunning {
-                Text(task.createdAt, style: .relative)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.quaternary)
-            }
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 14)
-        .contentShape(Rectangle())
     }
 }
 

@@ -278,6 +278,7 @@ final class InboxService {
 
     // MARK: - Scripting Support
 
+    #if os(macOS)
     /// Get scriptable agents for AppleScript support
     func getScriptableAgents(for workspaceId: UUID) -> [ScriptableAgent] {
         TerminalSessionManager.shared.sessions(for: workspaceId).map { session in
@@ -291,6 +292,7 @@ final class InboxService {
             )
         }
     }
+    #endif
 
     // MARK: - Public API
 
@@ -359,6 +361,7 @@ final class InboxService {
         resolvedEventIds.contains(eventId)
     }
 
+    #if os(macOS)
     /// Confirm task completion and trigger queue consumption for the next task.
     /// This should be called when the user validates a Stop event in the inbox.
     /// - Parameter paneId: The terminal pane ID where the task completed
@@ -371,6 +374,7 @@ final class InboxService {
         )
         print("[InboxService] Task completion confirmed for pane \(paneId.prefix(8))... - triggering queue consumption")
     }
+    #endif
 
     /// Set of pane IDs that have pending (unresolved) permission requests
     var blockedPaneIds: Set<String> {

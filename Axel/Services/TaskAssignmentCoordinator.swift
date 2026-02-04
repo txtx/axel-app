@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import SwiftData
 
@@ -266,3 +267,4 @@ final class SwiftDataTaskFetcher: TaskFetching {
         return modelContext.model(for: id) as? WorkTask
     }
 }
+#endif

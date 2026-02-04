@@ -245,8 +245,9 @@ struct ContentView: View {
         return .backlog
     }
 
-    // MARK: - Content Column
+    // MARK: - Content Column (macOS only)
 
+    #if os(macOS)
     @ViewBuilder
     private var contentColumnView: some View {
         switch sidebarSelection {
@@ -321,6 +322,7 @@ struct ContentView: View {
             }
         }
     }
+    #endif
 
     // MARK: - Body
 

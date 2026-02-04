@@ -163,6 +163,7 @@ final class WorkTask {
 
         // Notify session cleanup when leaving running status
         // This triggers terminal session state update and queue consumption
+        #if os(macOS)
         if oldStatus == .running && newStatus != .running {
             NotificationCenter.default.post(
                 name: .taskNoLongerRunning,
@@ -170,6 +171,7 @@ final class WorkTask {
                 userInfo: ["taskId": self.id]
             )
         }
+        #endif
 
         let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)
         try? doc.updateTaskStatus(newStatus.rawValue)

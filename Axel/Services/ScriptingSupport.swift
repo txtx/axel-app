@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 import AppKit
 import SwiftData
@@ -448,3 +449,4 @@ private func fourCharCode(_ string: String) -> FourCharCode {
     }
     return result
 }
+#endif
