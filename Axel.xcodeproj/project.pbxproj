@@ -80,7 +80,6 @@
 		A1000001201A0103 /* TaskSkill.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0103 /* TaskSkill.swift */; };
 		A1000001201A0104 /* SkillManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0104 /* SkillManager.swift */; };
 		A1000001201A0110 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0110 /* EmptyStateView.swift */; };
-		A1000001201A0ABC /* TerminalCloseConfirmationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0ABC /* TerminalCloseConfirmationSheet.swift */; };
 		A1000001201A0111 /* TaskUndoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0111 /* TaskUndoManager.swift */; };
 		A1000001201A0112 /* TasksSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0112 /* TasksSceneView.swift */; };
 		A1000001201A0113 /* AIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0113 /* AIProvider.swift */; };
@@ -89,6 +88,7 @@
 		A1000001201A0116 /* AIProviderUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0116 /* AIProviderUI.swift */; };
 		A1000001201A0117 /* TasksTableView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0117 /* TasksTableView.swift */; };
 		A1000001201A0200 /* TaskQueueService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0200 /* TaskQueueService.swift */; };
+		A1000001201A0ABC /* TerminalCloseConfirmationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0ABC /* TerminalCloseConfirmationSheet.swift */; };
 		A100000120A10030 /* TaskAssignee.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000110A10030 /* TaskAssignee.swift */; };
 		AE133ED0512C6A98BDE08952 /* AutomergeModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04E9C8657F1187F40A1EC1DB /* AutomergeModelTests.swift */; };
 		B81242E637B124591F5B7B93 /* SessionStatusService.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C177CAE09A36E267719D856 /* SessionStatusService.swift */; };
@@ -203,7 +203,6 @@
 		A1000001101A0103 /* TaskSkill.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskSkill.swift; sourceTree = "<group>"; };
 		A1000001101A0104 /* SkillManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SkillManager.swift; sourceTree = "<group>"; };
 		A1000001101A0110 /* EmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
-		A1000001101A0ABC /* TerminalCloseConfirmationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalCloseConfirmationSheet.swift; sourceTree = "<group>"; };
 		A1000001101A0111 /* TaskUndoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskUndoManager.swift; sourceTree = "<group>"; };
 		A1000001101A0112 /* TasksSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksSceneView.swift; sourceTree = "<group>"; };
 		A1000001101A0113 /* AIProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProvider.swift; sourceTree = "<group>"; };
@@ -212,6 +211,7 @@
 		A1000001101A0116 /* AIProviderUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderUI.swift; sourceTree = "<group>"; };
 		A1000001101A0117 /* TasksTableView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksTableView.swift; sourceTree = "<group>"; };
 		A1000001101A0200 /* TaskQueueService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskQueueService.swift; sourceTree = "<group>"; };
+		A1000001101A0ABC /* TerminalCloseConfirmationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalCloseConfirmationSheet.swift; sourceTree = "<group>"; };
 		A100000110A10030 /* TaskAssignee.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskAssignee.swift; sourceTree = "<group>"; };
 		ABB3623AE837474A68F802B1 /* SessionRecoveryService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SessionRecoveryService.swift; sourceTree = "<group>"; };
 		ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = SyncIntegrationTests.swift; sourceTree = "<group>"; };
@@ -225,17 +225,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		43E774732F298D900093DEC6 /* AxelUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
-			path = AxelUITests;
-			sourceTree = "<group>";
-		};
+		43E774732F298D900093DEC6 /* AxelUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = AxelUITests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -616,9 +606,9 @@
 			);
 			mainGroup = A1000001401A0001;
 			packageReferences = (
-				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */,
+				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */,
 				43BD82702F1D5F650092A96C /* XCRemoteSwiftPackageReference "supabase-swift" */,
-				43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "GhosttyKit" */,
+				43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */,
 				43BD827E2F1D70000092A96C /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = A1000001401A0003 /* Products */;
@@ -840,7 +830,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.10;
+				MARKETING_VERSION = 0.1.11;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -866,7 +856,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.10;
+				MARKETING_VERSION = 0.1.11;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1159,11 +1149,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */ = {
+		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AutomergeWrapper;
 		};
-		43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "GhosttyKit" */ = {
+		43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/GhosttyKit;
 		};
@@ -1196,7 +1186,7 @@
 		};
 		43BD82742F1D63F40092A96C /* AutomergeWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */;
+			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */;
 			productName = AutomergeWrapper;
 		};
 		43BD827F2F1D70000092A96C /* Sparkle */ = {
@@ -1206,7 +1196,7 @@
 		};
 		43BD82822F1D90000092A96C /* GhosttyKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "GhosttyKit" */;
+			package = 43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */;
 			productName = GhosttyKit;
 		};
 /* End XCSwiftPackageProductDependency section */

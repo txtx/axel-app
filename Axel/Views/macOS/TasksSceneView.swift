@@ -1217,7 +1217,8 @@ protocol ExpandableListItem: Identifiable, Equatable {
 }
 
 struct ExpandableRowStyle {
-    var animationDuration: Double = 0.25
+    var expandAnimationDuration: Double = 0.24
+    var selectAnimationDuration: Double = 0.12
     var selectedColor: Color = Color(red: 203 / 255, green: 226 / 255, blue: 255 / 255)
     var expandedColor: Color = .white
     var shadowColor: Color = .black.opacity(0.08)
@@ -1240,6 +1241,7 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
     let expandedContent: () -> ExpandedContent
     @State private var isStatusHovering: Bool = false
     @Environment(\.colorScheme) private var colorScheme
+    @State private var wasSelectedOnMouseDown: Bool? = nil
 
     init(
         item: Binding<Item>,
@@ -1293,7 +1295,7 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
                         )
                     } else {
                         Button(action: {
-                            withAnimation(.easeInOut(duration: style.animationDuration)) {
+                            withAnimation(.easeInOut(duration: style.selectAnimationDuration)) {
                                 item.isChecked.toggle()
                             }
                         }) {
@@ -1329,19 +1331,35 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
             .padding(.horizontal)
             .padding(.vertical, style.verticalPadding)
             .contentShape(Rectangle())
-            .onTapGesture(count: 2) {
-                withAnimation(.easeInOut(duration: style.animationDuration)) {
-                    isExpanded = true
-                    isSelected = false
-                }
-            }
-            .onTapGesture(count: 1) {
-                if !isExpanded {
-                    withAnimation(.easeInOut(duration: style.animationDuration)) {
+            .simultaneousGesture(
+                DragGesture(minimumDistance: 0)
+                    .onChanged { _ in
+                        if wasSelectedOnMouseDown == nil {
+                            wasSelectedOnMouseDown = isSelected
+                        }
+                        if !isExpanded && !isSelected {
+                            withAnimation(.easeInOut(duration: style.selectAnimationDuration)) {
+                                isSelected = true
+                            }
+                        }
+                    }
+                    .onEnded { _ in
+                        if !isExpanded && (wasSelectedOnMouseDown ?? false) {
+                            withAnimation(.easeInOut(duration: style.expandAnimationDuration)) {
+                                isExpanded = true
+                                isSelected = false
+                            }
+                        }
+                        wasSelectedOnMouseDown = nil
+                    }
+            )
+            .highPriorityGesture(TapGesture().onEnded {
+                if !isExpanded && !isSelected {
+                    withAnimation(.easeInOut(duration: style.selectAnimationDuration)) {
                         isSelected = true
                     }
                 }
-            }
+            })
 
             if isExpanded {
                 expandedContent()
@@ -1419,12 +1437,7 @@ struct ExpandableListContainer<Content: View>: View {
             .padding()
         }
         .background(backgroundColor)
-        .animation(.easeInOut(duration: style.animationDuration), value: hasExpandedItem)
-        .onTapGesture {
-            withAnimation(.easeInOut(duration: style.animationDuration)) {
-                onDismiss()
-            }
-        }
+        .animation(.easeInOut(duration: style.expandAnimationDuration), value: hasExpandedItem)
     }
 }
 
