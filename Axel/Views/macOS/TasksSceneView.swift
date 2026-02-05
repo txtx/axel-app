@@ -5,6 +5,25 @@ import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 
+private let secondListAccentColor = Color(hex: "693EFE")!
+
+extension WorkTask: ExpandableListItem, Equatable {
+    static func == (lhs: WorkTask, rhs: WorkTask) -> Bool {
+        lhs.id == rhs.id
+    }
+
+    var isChecked: Bool {
+        get { taskStatus == .completed }
+        set {
+            if newValue != isChecked {
+                Task { @MainActor in
+                    updateStatusWithUndo(newValue ? .completed : .backlog)
+                }
+            }
+        }
+    }
+}
+
 // MARK: - Tasks Scene View
 // Extracted from WorkspaceContentView.swift
 
@@ -80,7 +99,7 @@ struct WorkspaceQueueListView: View {
         if !runningTasks.isEmpty {
             result.append(TaskTableSection(
                 title: "Running",
-                color: NSColor.systemGreen,
+                color: NSColor.systemPurple,
                 status: .running,
                 tasks: runningTasks,
                 placeholderText: nil
@@ -436,7 +455,7 @@ struct WorkspaceQueueListView: View {
         HStack(alignment: .center) {
             Image(systemName: "rectangle.stack")
                 .font(.system(size: 16))
-                .foregroundStyle(.purple)
+                .foregroundStyle(secondListAccentColor)
 
             Text(headerTitle)
                 .font(.system(size: 20, weight: .bold))
@@ -470,90 +489,48 @@ struct WorkspaceQueueListView: View {
         } else if filter == .backlog && runningTasks.isEmpty && upNextTasks.isEmpty && backlogTasks.isEmpty {
             emptyView
         } else if filter == .backlog {
-            TaskTableView(
-                sections: tableSections,
-                isDragging: viewModel.draggingTaskId != nil,
-                dropTargetEndStatus: dropTargetEndStatus,
-                expandedTaskId: viewModel.expandedTaskId,
-                selectedTaskIds: viewModel.selectedTaskIds,
-                rowView: { task, position in
-                    AnyView(makeTaskRow(
-                        task: task,
-                        position: position,
-                        isDragTarget: viewModel.dropTargetTaskId == task.id,
-                        disableTapGesture: true
-                    ))
-                },
-                headerView: { title, count, color in
-                    AnyView(sectionHeader(
-                        title,
-                        count: count,
-                        color: color.map { Color(nsColor: $0) }
-                    ))
-                },
-                placeholderView: { text in
-                    AnyView(emptySectionPlaceholder(text))
-                },
-                dropZoneView: { _, isActive in
-                    AnyView(
-                        ZStack(alignment: .top) {
-                            Color.clear
-                                .frame(height: 26)
-                            if isActive {
-                                Rectangle()
-                                    .fill(Color.accentColor)
-                                    .frame(height: 3)
-                                    .shadow(color: Color.accentColor.opacity(0.35), radius: 6, y: 2)
-                                    .padding(.horizontal, 10)
-                                    .transition(.opacity.combined(with: .move(edge: .top)))
+            ExpandableListContainer(
+                hasExpandedItem: Binding(
+                    get: { viewModel.expandedTaskId != nil },
+                    set: { newValue in
+                        if !newValue {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                viewModel.expandedTaskId = nil
                             }
                         }
-                    )
-                },
-                onReorder: handleTableDrop,
-                onDropAtEnd: handleTableDropAtEnd,
-                onDragStart: handleTableDragStart,
-                onDragEnd: handleTableDragEnd,
-                onDropTargetChange: handleTableDropTargetChange,
-                onBackgroundClick: clearSelection,
-                onTaskClick: { taskId, modifiers in
-                    guard let task = workspace.tasks.first(where: { $0.id == taskId }) else { return }
-                    // Collapse expanded task when selecting a different one
-                    if let expandedId = viewModel.expandedTaskId, expandedId != taskId {
-                        withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                            viewModel.expandedTaskId = nil
-                        }
                     }
-                    // Handle selection based on modifiers
-                    if modifiers.contains(.shift) {
-                        extendSelectionTo(task)
-                    } else if modifiers.contains(.command) {
-                        toggleTaskSelection(task)
-                    } else {
-                        selectTask(task)
-                    }
-                },
-                onTaskDoubleClick: { taskId in
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                        if viewModel.expandedTaskId == taskId {
-                            viewModel.expandedTaskId = nil
-                        } else {
-                            viewModel.expandedTaskId = taskId
-                        }
-                    }
-                },
-                onKeyDown: { event in
-                    handleTableKeyDown(event)
+                ),
+                onDismiss: {
+                    clearSelection()
                 }
-            )
-            .frame(maxWidth: 1000)
-            .padding(.horizontal, 40)
-            .padding(.bottom, 20)
-            .frame(maxWidth: .infinity)
+            ) {
+                LazyVStack(spacing: 8) {
+                    secondListContent
+                }
+                .frame(maxWidth: 1000)
+                .padding(.horizontal, 40)
+                .padding(.bottom, 20)
+                .frame(maxWidth: .infinity)
+            }
+            .animation(.easeInOut(duration: 0.2), value: visibleTasksInOrder.map(\.id))
         } else {
-            ScrollView {
+            ExpandableListContainer(
+                hasExpandedItem: Binding(
+                    get: { viewModel.expandedTaskId != nil },
+                    set: { newValue in
+                        if !newValue {
+                            withAnimation(.easeInOut(duration: 0.25)) {
+                                viewModel.expandedTaskId = nil
+                            }
+                        }
+                    }
+                ),
+                onDismiss: {
+                    clearSelection()
+                }
+            ) {
                 LazyVStack(spacing: 1) {
-                    taskListContent
+                    secondListContent
                 }
                 .frame(maxWidth: 1000)
                 .padding(.horizontal, 40)
@@ -561,9 +538,6 @@ struct WorkspaceQueueListView: View {
                 .frame(maxWidth: .infinity)
             }
             .animation(.easeInOut(duration: 0.2), value: allFilteredTasks.map(\.id))
-            .onTapGesture {
-                clearSelection()
-            }
         }
     }
 
@@ -589,8 +563,110 @@ struct WorkspaceQueueListView: View {
         }
     }
 
+    @ViewBuilder
+    private var secondListContent: some View {
+        if filter == .backlog {
+            ForEach(tableSections, id: \.status) { section in
+                VStack(alignment: .leading, spacing: 6) {
+                    sectionHeader(
+                        section.title,
+                        count: section.tasks.count,
+                        color: section.status == .running
+                            ? secondListAccentColor
+                            : section.color.map { Color(nsColor: $0) }
+                    )
+
+                    ForEach(Array(section.tasks.enumerated()), id: \.element.id) { index, task in
+                        ExpandableRow(
+                            item: bindingForExpandableItem(task),
+                            isExpanded: Binding(
+                                get: { viewModel.expandedTaskId == task.id },
+                                set: { newValue in
+                                    viewModel.expandedTaskId = newValue ? task.id : nil
+                                }
+                            ),
+                            isSelected: Binding(
+                                get: { viewModel.selectedTaskIds.contains(task.id) },
+                                set: { newValue in
+                                    if newValue {
+                                        viewModel.expandedTaskId = nil
+                                        viewModel.selectTask(task)
+                                        setHighlightedTask(task)
+                                        return
+                                    }
+                                    if viewModel.selectedTaskIds.contains(task.id) {
+                                        viewModel.toggleTaskSelection(task, visibleTasks: visibleTasksInOrder)
+                                        setHighlightedTask(viewModel.highlightedTask(in: visibleTasksInOrder))
+                                    }
+                                }
+                            ),
+                            position: section.status == .queued ? index + 1 : nil,
+                            onRun: task.taskStatus.isPending ? { onStartTerminal?(task) } : nil
+                        ) {
+                            TextField(
+                                "Note details",
+                                text: Binding(
+                                    get: { task.taskDescription ?? "" },
+                                    set: { task.updateDescription($0.isEmpty ? nil : $0) }
+                                ),
+                                axis: .vertical
+                            )
+                            .font(.system(size: 15))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(nil)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textFieldStyle(.plain)
+                        }
+                    }
+                }
+            }
+        } else {
+            ForEach(allFilteredTasks, id: \.id) { task in
+                ExpandableRow(
+                    item: bindingForExpandableItem(task),
+                    isExpanded: Binding(
+                        get: { viewModel.expandedTaskId == task.id },
+                        set: { newValue in
+                            viewModel.expandedTaskId = newValue ? task.id : nil
+                        }
+                    ),
+                    isSelected: Binding(
+                        get: { viewModel.selectedTaskIds.contains(task.id) },
+                        set: { newValue in
+                            if newValue {
+                                viewModel.expandedTaskId = nil
+                                viewModel.selectTask(task)
+                                setHighlightedTask(task)
+                                return
+                            }
+                            if viewModel.selectedTaskIds.contains(task.id) {
+                                viewModel.toggleTaskSelection(task, visibleTasks: visibleTasksInOrder)
+                                setHighlightedTask(viewModel.highlightedTask(in: visibleTasksInOrder))
+                            }
+                        }
+                    ),
+                    onRun: task.taskStatus.isPending ? { onStartTerminal?(task) } : nil
+                ) {
+                    TextField(
+                        "Note details",
+                        text: Binding(
+                            get: { task.taskDescription ?? "" },
+                            set: { task.updateDescription($0.isEmpty ? nil : $0) }
+                        ),
+                        axis: .vertical
+                    )
+                    .font(.system(size: 15))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(nil)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textFieldStyle(.plain)
+                }
+            }
+        }
+    }
+
     private func makeTaskRow(task: WorkTask, position: Int?, isDragTarget: Bool = false, disableTapGesture: Bool = false) -> some View {
-        TaskRow(
+        ExpandableTaskRow(
             task: task,
             position: position,
             isHighlighted: viewModel.isTaskSelected(task),
@@ -611,11 +687,177 @@ struct WorkspaceQueueListView: View {
         )
     }
 
-    private var backgroundView: some View {
-        (colorScheme == .dark ? Color(white: 27.0 / 255.0) : Color(hex: "F9FAFB")!)
-            .onTapGesture {
-                clearSelection()
+    private func bindingForExpandableItem(_ task: WorkTask) -> Binding<WorkTask> {
+        Binding(
+            get: { task },
+            set: { newValue in
+                if newValue.title != task.title {
+                    task.updateTitle(newValue.title)
+                }
+                if newValue.isChecked != task.isChecked {
+                    task.isChecked = newValue.isChecked
+                }
             }
+        )
+    }
+
+    private func isReorderable(_ status: TaskStatus) -> Bool {
+        status == .queued || status == .backlog
+    }
+
+    @ViewBuilder
+    private var backlogSectionsView: some View {
+        ForEach(tableSections, id: \.status) { section in
+            VStack(alignment: .leading, spacing: 6) {
+                sectionHeader(
+                    section.title,
+                    count: section.tasks.count,
+                    color: section.color.map { Color(nsColor: $0) }
+                )
+                .dropDestination(
+                    for: String.self,
+                    action: { items, _ in
+                        guard isReorderable(section.status),
+                              let draggedId = items.first,
+                              let uuid = UUID(uuidString: draggedId) else {
+                            return false
+                        }
+                        if let firstTask = section.tasks.first {
+                            handleTableDrop(draggedId: uuid, targetTask: firstTask, targetStatus: section.status)
+                        } else {
+                            handleTableDropAtEnd(draggedId: uuid, targetStatus: section.status)
+                        }
+                        handleTableDragEnd()
+                        handleTableDropTargetChange(nil, nil)
+                        return true
+                    },
+                    isTargeted: { isTargeted in
+                        guard isReorderable(section.status) else { return }
+                        if isTargeted {
+                            handleTableDropTargetChange(nil, section.status)
+                        } else if dropTargetEndStatus == section.status {
+                            handleTableDropTargetChange(nil, nil)
+                        }
+                    }
+                )
+
+                if section.tasks.isEmpty {
+                    emptySectionPlaceholder(section.placeholderText ?? "No tasks")
+                        .dropDestination(
+                            for: String.self,
+                            action: { items, _ in
+                                guard isReorderable(section.status),
+                                      let draggedId = items.first,
+                                      let uuid = UUID(uuidString: draggedId) else {
+                                    return false
+                                }
+                                handleTableDropAtEnd(draggedId: uuid, targetStatus: section.status)
+                                handleTableDragEnd()
+                                handleTableDropTargetChange(nil, nil)
+                                return true
+                            },
+                            isTargeted: { isTargeted in
+                                guard isReorderable(section.status) else { return }
+                                if isTargeted {
+                                    handleTableDropTargetChange(nil, section.status)
+                                } else if dropTargetEndStatus == section.status {
+                                    handleTableDropTargetChange(nil, nil)
+                                }
+                            }
+                        )
+                } else {
+                    ForEach(Array(section.tasks.enumerated()), id: \.element.id) { index, task in
+                        let position = section.status == .queued ? index + 1 : nil
+                        makeTaskRow(
+                            task: task,
+                            position: position,
+                            isDragTarget: viewModel.dropTargetTaskId == task.id
+                        )
+                        .onDrag {
+                            guard isReorderable(section.status) else { return NSItemProvider() }
+                            handleTableDragStart(task.id)
+                            return NSItemProvider(object: task.id.uuidString as NSString)
+                        }
+                        .dropDestination(
+                            for: String.self,
+                            action: { items, _ in
+                                guard isReorderable(section.status),
+                                      let draggedId = items.first,
+                                      let uuid = UUID(uuidString: draggedId) else {
+                                    return false
+                                }
+                                handleTableDrop(draggedId: uuid, targetTask: task, targetStatus: section.status)
+                                handleTableDragEnd()
+                                handleTableDropTargetChange(nil, nil)
+                                return true
+                            },
+                            isTargeted: { isTargeted in
+                                guard isReorderable(section.status) else { return }
+                                if isTargeted {
+                                    handleTableDropTargetChange(task.id, nil)
+                                } else if viewModel.dropTargetTaskId == task.id {
+                                    handleTableDropTargetChange(nil, nil)
+                                }
+                            }
+                        )
+                    }
+
+                    sectionDropZone(status: section.status)
+                        .dropDestination(
+                            for: String.self,
+                            action: { items, _ in
+                                guard isReorderable(section.status),
+                                      let draggedId = items.first,
+                                      let uuid = UUID(uuidString: draggedId) else {
+                                    return false
+                                }
+                                handleTableDropAtEnd(draggedId: uuid, targetStatus: section.status)
+                                handleTableDragEnd()
+                                handleTableDropTargetChange(nil, nil)
+                                return true
+                            },
+                            isTargeted: { isTargeted in
+                                guard isReorderable(section.status) else { return }
+                                if isTargeted {
+                                    handleTableDropTargetChange(nil, section.status)
+                                } else if dropTargetEndStatus == section.status {
+                                    handleTableDropTargetChange(nil, nil)
+                                }
+                            }
+                        )
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func sectionDropZone(status: TaskStatus) -> some View {
+        ZStack(alignment: .top) {
+            Color.clear
+                .frame(height: 26)
+            if dropTargetEndStatus == status {
+                Rectangle()
+                    .fill(Color.accentColor)
+                    .frame(height: 3)
+                    .shadow(color: Color.accentColor.opacity(0.35), radius: 6, y: 2)
+                    .padding(.horizontal, 10)
+                    .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+        }
+    }
+
+    private var backgroundView: some View {
+        let isExpanded = viewModel.expandedTaskId != nil
+        return Group {
+            if colorScheme == .dark {
+                isExpanded ? Color(hex: "27292B")! : Color(hex: "292F30")!
+            } else {
+                isExpanded ? Color(hex: "F9FAFB")! : Color.white
+            }
+        }
+        .onTapGesture {
+            clearSelection()
+        }
     }
 
     private func clearSelection() {
@@ -762,87 +1004,6 @@ struct WorkspaceQueueListView: View {
             let workspaceId = workspace.syncId ?? workspace.id
             await SyncService.shared.performWorkspaceSync(workspaceId: workspaceId, context: modelContext)
         }
-    }
-
-    /// Handle keyboard events from NSTableView
-    private func handleTableKeyDown(_ event: NSEvent) -> Bool {
-        let keyCode = event.keyCode
-        let modifiers = event.modifierFlags
-
-        // Escape - collapse expanded task or clear selection
-        if keyCode == 53 { // Escape
-            if viewModel.expandedTaskId != nil {
-                withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                    viewModel.expandedTaskId = nil
-                }
-                return true
-            }
-            if !viewModel.selectedTaskIds.isEmpty {
-                viewModel.clearSelection()
-                setHighlightedTask(nil)
-                return true
-            }
-            return false
-        }
-
-        // Up arrow
-        if keyCode == 126 {
-            if viewModel.expandedTaskId != nil { return false }
-            if modifiers.contains(.command) {
-                moveSelectedPriorityUp()
-            } else {
-                moveSelectionUp(extendSelection: modifiers.contains(.shift))
-            }
-            return true
-        }
-
-        // Down arrow
-        if keyCode == 125 {
-            if viewModel.expandedTaskId != nil { return false }
-            if modifiers.contains(.command) {
-                moveSelectedPriorityDown()
-            } else {
-                moveSelectionDown(extendSelection: modifiers.contains(.shift))
-            }
-            return true
-        }
-
-        // Return/Enter - toggle expand
-        if keyCode == 36 {
-            if !viewModel.selectedTaskIds.isEmpty {
-                toggleSelectedTaskExpansion()
-                return true
-            }
-            return false
-        }
-
-        // Cmd+K - mark complete, Cmd+Option+K - mark cancelled
-        if keyCode == 40 && modifiers.contains(.command) {
-            if viewModel.expandedTaskId != nil { return false }
-            if modifiers.contains(.option) {
-                markSelectedCancelled()
-            } else {
-                markSelectedComplete()
-            }
-            return true
-        }
-
-        // Cmd+A - select all
-        if keyCode == 0 && modifiers.contains(.command) {
-            selectAllTasks()
-            return true
-        }
-
-        // Cmd+Delete - delete
-        if keyCode == 51 && modifiers.contains(.command) {
-            if !viewModel.selectedTaskIds.isEmpty {
-                showDeleteConfirmation = true
-                return true
-            }
-            return false
-        }
-
-        return false
     }
 
     private var emptyView: some View {
@@ -1047,9 +1208,229 @@ struct TaskListKeyboardModifier: ViewModifier {
     }
 }
 
+// MARK: - Expandable List Container (from ExpandableView sample)
+
+protocol ExpandableListItem: Identifiable, Equatable {
+    var id: UUID { get }
+    var title: String { get set }
+    var isChecked: Bool { get set }
+}
+
+struct ExpandableRowStyle {
+    var animationDuration: Double = 0.25
+    var selectedColor: Color = Color(red: 203 / 255, green: 226 / 255, blue: 255 / 255)
+    var expandedColor: Color = .white
+    var shadowColor: Color = .black.opacity(0.08)
+    var shadowRadius: CGFloat = 2
+    var shadowY: CGFloat = 2
+    var cornerRadius: CGFloat = 10
+    var verticalPadding: CGFloat = 8
+
+    static let `default` = ExpandableRowStyle()
+}
+
+struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
+    @Binding var item: Item
+    @Binding var isExpanded: Bool
+    @Binding var isSelected: Bool
+
+    var position: Int? = nil
+    var onRun: (() -> Void)? = nil
+    let style: ExpandableRowStyle
+    let expandedContent: () -> ExpandedContent
+    @State private var isStatusHovering: Bool = false
+    @Environment(\.colorScheme) private var colorScheme
+
+    init(
+        item: Binding<Item>,
+        isExpanded: Binding<Bool>,
+        isSelected: Binding<Bool>,
+        position: Int? = nil,
+        onRun: (() -> Void)? = nil,
+        style: ExpandableRowStyle = .default,
+        @ViewBuilder expandedContent: @escaping () -> ExpandedContent
+    ) {
+        self._item = item
+        self._isExpanded = isExpanded
+        self._isSelected = isSelected
+        self.position = position
+        self.onRun = onRun
+        self.style = style
+        self.expandedContent = expandedContent
+    }
+
+    private var backgroundColor: Color {
+        if isExpanded {
+            return colorScheme == .dark ? Color(hex: "33383A")! : Color.white
+        } else if isSelected {
+            return secondListAccentColor
+        } else {
+            return .clear
+        }
+    }
+
+    private var selectedForeground: Color {
+        isSelected ? Color.white.opacity(0.90) : .primary
+    }
+
+    private var indicatorAccent: Color {
+        isExpanded ? secondListAccentColor : selectedForeground
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .top) {
+                Group {
+                    if let task = item as? WorkTask, task.taskStatus == .running {
+                        RunningDotIndicator(size: indicatorSize, color: indicatorAccent)
+                    } else if let task = item as? WorkTask, task.taskStatus == .queued || task.taskStatus == .backlog {
+                        QueuedTaskIndicator(
+                            size: indicatorSize,
+                            isHovering: isStatusHovering,
+                            position: task.taskStatus == .queued ? position : nil,
+                            onRun: onRun,
+                            accentColor: indicatorAccent
+                        )
+                    } else {
+                        Button(action: {
+                            withAnimation(.easeInOut(duration: style.animationDuration)) {
+                                item.isChecked.toggle()
+                            }
+                        }) {
+                            Image(systemName: item.isChecked ? "checkmark.circle.fill" : "circle")
+                                .foregroundColor(isExpanded ? secondListAccentColor : (isSelected ? Color.white.opacity(0.90) : (item.isChecked ? .blue : .gray)))
+                                .imageScale(.large)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                .frame(width: indicatorSize, height: indicatorSize, alignment: .center)
+                .onHover { hovering in
+                    isStatusHovering = hovering
+                }
+
+                if isExpanded {
+                    TextField("Title", text: $item.title, axis: .vertical)
+                        .font(.system(size: 14))
+                        .textFieldStyle(.plain)
+                        .lineLimit(nil)
+                        .offset(y: 1)
+                    Spacer()
+                } else {
+                    Text(item.title)
+                        .font(.system(size: 14))
+                        .foregroundColor(selectedForeground)
+                        .lineLimit(1)
+                        .truncationMode(.tail)
+                        .offset(y: 1)
+                    Spacer()
+                }
+            }
+            .padding(.horizontal)
+            .padding(.vertical, style.verticalPadding)
+            .contentShape(Rectangle())
+            .onTapGesture(count: 2) {
+                withAnimation(.easeInOut(duration: style.animationDuration)) {
+                    isExpanded = true
+                    isSelected = false
+                }
+            }
+            .onTapGesture(count: 1) {
+                if !isExpanded {
+                    withAnimation(.easeInOut(duration: style.animationDuration)) {
+                        isSelected = true
+                    }
+                }
+            }
+
+            if isExpanded {
+                expandedContent()
+                    .padding(.horizontal)
+                    .padding(.bottom)
+            }
+        }
+        .background(backgroundColor)
+        .cornerRadius(style.cornerRadius)
+        .shadow(
+            color: isExpanded ? style.shadowColor : .clear,
+            radius: style.shadowRadius,
+            x: 0,
+            y: style.shadowY
+        )
+        .padding(.horizontal)
+    }
+
+    private var indicatorSize: CGFloat { 20 }
+}
+
+struct RunningDotIndicator: View {
+    let size: CGFloat
+    let color: Color
+
+    @State private var rotation: Double = 0
+
+    var body: some View {
+        Circle()
+            .strokeBorder(
+                style: StrokeStyle(
+                    lineWidth: 1.5,
+                    lineCap: .round,
+                    dash: [2, 3]
+                )
+            )
+            .foregroundStyle(color)
+            .frame(width: size, height: size)
+            .rotationEffect(.degrees(rotation))
+            .onAppear {
+                withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
+                    rotation = 360
+                }
+            }
+    }
+}
+
+struct ExpandableListContainer<Content: View>: View {
+    @Binding var hasExpandedItem: Bool
+    let style: ExpandableRowStyle
+    let onDismiss: () -> Void
+    let content: () -> Content
+
+    private var backgroundColor: Color {
+        .clear
+    }
+
+    init(
+        hasExpandedItem: Binding<Bool>,
+        style: ExpandableRowStyle = .default,
+        onDismiss: @escaping () -> Void,
+        @ViewBuilder content: @escaping () -> Content
+    ) {
+        self._hasExpandedItem = hasExpandedItem
+        self.style = style
+        self.onDismiss = onDismiss
+        self.content = content
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(spacing: 8) {
+                content()
+            }
+            .padding()
+        }
+        .background(backgroundColor)
+        .animation(.easeInOut(duration: style.animationDuration), value: hasExpandedItem)
+        .onTapGesture {
+            withAnimation(.easeInOut(duration: style.animationDuration)) {
+                onDismiss()
+            }
+        }
+    }
+}
+
 // MARK: - Task Row
 
-struct TaskRow: View {
+struct ExpandableTaskRow: View {
     let task: WorkTask
     var position: Int? = nil
     var isHighlighted: Bool = false
@@ -1068,16 +1449,14 @@ struct TaskRow: View {
     var onDelete: (() -> Void)?
     @Environment(\.modelContext) private var modelContext
     @Environment(\.colorScheme) private var colorScheme
-    @Namespace private var animation
-    @State private var showNotes: Bool = false
-    @State private var isHovering: Bool = false
-    @State private var isTitleFocused: Bool = false
-    @State private var isDescriptionFocused: Bool = false
-    @State private var isStatusHovering: Bool = false
-    @State private var showSkillPicker: Bool = false
+    @FocusState private var isTitleFocused: Bool
+    @FocusState private var isDescriptionFocused: Bool
+    @State private var editedTitle: String = ""
+    @State private var editedDescription: String = ""
+    @State private var showIndicator: Bool = true
+    @State private var titleOffset: Bool = false
+    @State private var showContent: Bool = false
     @State private var isFileDropTarget: Bool = false
-
-    private let sidePanelWidth: CGFloat = 100
 
     private var isRunning: Bool {
         task.taskStatus == .running
@@ -1091,387 +1470,60 @@ struct TaskRow: View {
         task.taskStatus.isPending
     }
 
-    private var checkboxSize: CGFloat { 20 }
+    private let indicatorSize: CGFloat = 22
+    private let indicatorSpacing: CGFloat = 14
 
-    @ViewBuilder
-    private var leadingIndicator: some View {
-        ZStack {
-            if isRunning {
-                RunningTaskIndicator(
-                    size: checkboxSize,
-                    isHovering: isStatusHovering,
-                    onMarkComplete: {
-                        onToggleComplete?()
-                    }
-                )
-                .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        isStatusHovering = hovering
-                    }
-                }
-            } else if isCompleted {
-                Button(action: { onToggleComplete?() }) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: checkboxSize, height: checkboxSize)
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
-                }
-                .buttonStyle(.plain)
-            } else if isQueued {
-                QueuedTaskIndicator(
-                    size: checkboxSize,
-                    isHovering: isStatusHovering,
-                    position: position,
-                    onRun: onRun
-                )
-                .onHover { hovering in
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        isStatusHovering = hovering
-                    }
-                }
-            } else {
-                Circle()
-                    .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1.5)
-                    .frame(width: checkboxSize, height: checkboxSize)
-            }
-        }
-    }
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(alignment: .center, spacing: 0) {
+                statusIndicator
+                    .frame(width: indicatorSize, height: indicatorSize)
+                    .opacity(showIndicator ? 1 : 0)
+                    .frame(width: titleOffset ? 0 : indicatorSize)
+                    .padding(.trailing, titleOffset ? 0 : indicatorSpacing)
 
-    @ViewBuilder
-    private var titleSection: some View {
-        ZStack(alignment: .leading) {
-            if !showNotes {
                 Text(task.title)
                     .font(.system(size: 14))
                     .foregroundStyle(isCompleted ? .tertiary : .primary)
                     .strikethrough(isCompleted, color: .secondary)
                     .lineLimit(1)
                     .truncationMode(.tail)
-                    .transition(.opacity)
-            }
-            if showNotes {
-                MultilineTitleField(
-                    text: Binding(
-                        get: { task.title },
-                        set: { task.updateTitle($0) }
-                    ),
-                    font: .systemFont(ofSize: 14),
-                    shouldFocus: isTitleFocused,
-                    onEscape: onCollapse,
-                    onTab: {
-                        isTitleFocused = false
-                        isDescriptionFocused = true
-                    }
-                )
-                .transition(.opacity)
-            }
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .animation(.easeInOut(duration: 0.15), value: showNotes)
-        .allowsHitTesting(showNotes)
-    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .opacity(showContent ? 0 : 1)
 
-    @ViewBuilder
-    private var titleRowContextMenu: some View {
-        if isQueued, let onRun = onRun {
-            Button {
-                onRun()
-            } label: {
-                Label("Run", systemImage: "play.fill")
-            }
-            Divider()
-        }
-
-        Button {
-            onToggleComplete?()
-        } label: {
-            if isCompleted {
-                Label("Mark as Incomplete", systemImage: "circle")
-            } else {
-                Label("Mark as Complete", systemImage: "checkmark.circle.fill")
-            }
-        }
-
-        Divider()
-
-        Button(role: .destructive) {
-            onDelete?()
-        } label: {
-            Label("Delete", systemImage: "trash")
-        }
-    }
-
-    @ViewBuilder
-    private var descriptionSection: some View {
-        if isExpanded {
-            GrowingTextView(
-                text: Binding(
-                    get: { task.taskDescription ?? "" },
-                    set: { task.updateDescription($0.isEmpty ? nil : $0) }
-                ),
-                placeholder: "Notes",
-                font: .systemFont(ofSize: 13),
-                shouldFocus: isDescriptionFocused,
-                onEscape: onCollapse,
-                onShiftTab: {
-                    isDescriptionFocused = false
-                    isTitleFocused = true
-                }
-            )
-            .frame(maxWidth: .infinity, minHeight: 32, alignment: .topLeading)
-            .padding(.top, 6)
-            .padding(.leading, 32)
-            .opacity(showNotes ? 1 : 0)
-            .offset(y: showNotes ? 0 : -8)
-            .animation(.spring(response: 0.25, dampingFraction: 0.85), value: showNotes)
-            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
-        } else if let description = task.taskDescription, !description.isEmpty {
-            Text(description)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-                .truncationMode(.tail)
-                .padding(.top, 4)
-                .padding(.leading, 32)
-        }
-    }
-
-    @ViewBuilder
-    private var attachmentsSection: some View {
-        if isExpanded && !task.attachments.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(task.attachments, id: \.id) { attachment in
-                    HStack(spacing: 6) {
-                        Image(systemName: "doc.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(.secondary)
-                        Text(attachment.fileName)
-                            .font(.system(size: 12))
-                            .foregroundStyle(.secondary)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                        Button {
-                            modelContext.delete(attachment)
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 9, weight: .medium))
-                                .foregroundStyle(.tertiary)
-                        }
-                        .buttonStyle(.plain)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(
-                        RoundedRectangle(cornerRadius: 4)
-                            .fill(Color.primary.opacity(0.05))
-                    )
-                }
-            }
-            .padding(.top, 6)
-            .padding(.leading, 32)
-            .opacity(showNotes ? 1 : 0)
-            .offset(y: showNotes ? 0 : -8)
-            .animation(.spring(response: 0.25, dampingFraction: 0.85).delay(0.05), value: showNotes)
-            .transition(.opacity.combined(with: .scale(scale: 0.95, anchor: .top)))
-        }
-    }
-
-    @ViewBuilder
-    private var sidePanel: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            // Status section
-            VStack(alignment: .leading, spacing: 6) {
-                Text("STATUS")
-                    .font(.system(size: 10, weight: .semibold))
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(.tertiary)
-                    .tracking(0.8)
+                    .rotationEffect(.degrees(isExpanded ? 90 : 0))
 
-                statusDropdown
-            }
-
-            // Skills section
-            VStack(alignment: .leading, spacing: 6) {
-                Text("SKILLS")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.tertiary)
-                    .tracking(0.8)
-
-                FlowLayout(spacing: 6) {
-                    ForEach(task.taskSkills, id: \.id) { taskSkill in
-                        if let skill = taskSkill.skill {
-                            HStack(spacing: 4) {
-                                Image(systemName: "hammer.fill")
-                                    .font(.system(size: 9))
-                                Text(skill.name)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .lineLimit(1)
-                                Button {
-                                    modelContext.delete(taskSkill)
-                                } label: {
-                                    Image(systemName: "xmark")
-                                        .font(.system(size: 8, weight: .bold))
-                                }
-                                .buttonStyle(.plain)
-                            }
-                            .foregroundStyle(.white)
-                            .padding(.horizontal, 8)
-                            .padding(.vertical, 4)
-                            .background(
-                                Capsule()
-                                    .fill(Color.purple.opacity(0.8))
-                            )
-                        }
+                if let terminalName = queuedOnTerminalName {
+                    HStack(spacing: 4) {
+                        Image(systemName: "list.bullet")
+                            .font(.system(size: 9, weight: .semibold))
+                        Text("Queued on \(terminalName)")
                     }
-
-                    Button {
-                        showSkillPicker = true
-                    } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "plus")
-                                .font(.system(size: 9, weight: .medium))
-                            Text("Add")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(
-                            Capsule()
-                                .strokeBorder(Color.secondary.opacity(0.3), lineWidth: 1)
-                        )
-                    }
-                    .buttonStyle(.plain)
-                    .help("Attach skill")
-                    .sheet(isPresented: $showSkillPicker) {
-                        TaskSkillPickerView(task: task)
-                    }
+                    .font(.caption2)
+                    .foregroundStyle(.orange)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.orange.opacity(0.15))
+                    .clipShape(Capsule())
+                    .padding(.leading, 8)
                 }
             }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 10)
+            .contentShape(Rectangle())
 
-            Spacer()
-        }
-        .frame(width: sidePanelWidth)
-        .padding(.leading, 16)
-        .opacity(showNotes ? 1 : 0)
-        .offset(x: showNotes ? 0 : 20)
-        .animation(.spring(response: 0.3, dampingFraction: 0.8).delay(0.05), value: showNotes)
-    }
-
-    @ViewBuilder
-    private var statusDropdown: some View {
-        Menu {
-            ForEach(TaskStatus.allCases, id: \.self) { status in
-                Button(action: {
-                    if task.taskStatus != status {
-                        onCollapse?()
-                        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
-                            onStatusChange?()
-                            DispatchQueue.main.async {
-                                task.updateStatusWithUndo(status)
-                            }
-                        }
-                    }
-                }) {
-                    HStack {
-                        Text(status.menuLabel)
-                        if task.taskStatus == status {
-                            Image(systemName: "checkmark")
-                        }
-                    }
-                }
-            }
-        } label: {
-            HStack(spacing: 5) {
-                Text(task.taskStatus.displayName)
-                    .font(.system(size: 11, weight: .medium))
-                    .tracking(0.5)
-                Image(systemName: "chevron.down")
-                    .font(.system(size: 8, weight: .medium))
-            }
-            .foregroundStyle(Color(hex: "9A9C9D")!)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 3)
-            .background(
-                RoundedRectangle(cornerRadius: 4)
-                    .stroke(Color(hex: "9A9C9D")!.opacity(isStatusHovering ? 0.5 : 0), lineWidth: 1)
-            )
-            .scaleEffect(isStatusHovering ? 1.05 : 1.0)
-            .animation(.easeInOut(duration: 0.15), value: isStatusHovering)
-            .onHover { hovering in
-                isStatusHovering = hovering
+            if showContent {
+                expandedContent
+                    .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .fixedSize()
-    }
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            // Main content
-            VStack(alignment: .leading, spacing: 0) {
-                // Title row - only this part handles taps for selection/expansion
-                HStack(alignment: .top, spacing: 12) {
-                    leadingIndicator
-                        .padding(.top, 1)
-                        .transaction { $0.animation = nil }
-                    titleSection
-
-                    // Queue badge - shown when task is queued on a terminal
-                    if let terminalName = queuedOnTerminalName {
-                        HStack(spacing: 4) {
-                            Image(systemName: "list.bullet")
-                                .font(.system(size: 9, weight: .semibold))
-                            Text("Queued on \(terminalName)")
-                        }
-                        .font(.caption2)
-                        .foregroundStyle(.orange)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(.orange.opacity(0.15))
-                        .clipShape(Capsule())
-                    }
-
-                    // Attachment indicator - shown when task has attachments (only in collapsed state)
-                    if !task.attachments.isEmpty && !isExpanded {
-                        Image(systemName: "paperclip")
-                            .font(.system(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                }
-                .contextMenu {
-                    titleRowContextMenu
-                }
-
-                descriptionSection
-                attachmentsSection
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            // Side panel (expanded only)
-            if isExpanded {
-                Divider()
-                    .padding(.vertical, 8)
-                    .opacity(showNotes ? 1 : 0)
-                    .animation(.spring(response: 0.3, dampingFraction: 0.8).delay(0.03), value: showNotes)
-                    .transition(.opacity)
-
-                sidePanel
-                    .transition(.opacity)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
         .background(
             RoundedRectangle(cornerRadius: isExpanded ? 10 : 6)
-                .fill(isExpanded ? (colorScheme == .dark ? Color(white: 0.20) : Color.white) : (isHighlighted ? Color.orange.opacity(0.08) : .clear))
+                .fill(isExpanded ? (colorScheme == .dark ? Color(hex: "33383A")! : Color.white) : (isHighlighted ? Color.orange.opacity(0.08) : .clear))
                 .shadow(color: isExpanded ? .black.opacity(colorScheme == .dark ? 0.3 : 0.1) : .clear, radius: isExpanded ? 6 : 0, y: isExpanded ? 3 : 0)
-                .matchedGeometryEffect(id: "background-\(task.id)", in: animation)
         )
         .overlay(
             RoundedRectangle(cornerRadius: isExpanded ? 10 : 6)
@@ -1501,29 +1553,33 @@ struct TaskRow: View {
                 onTap([])
             }
         })
-        .onHover { hovering in
-            isHovering = hovering
-        }
         .padding(.horizontal, isExpanded ? 8 : 0)
         .padding(.top, 0)
-        .padding(.bottom, isExpanded ? 16 : 0)
-        .animation(nil, value: isExpanded)
+        .padding(.bottom, isExpanded ? 8 : 0)
         .onChange(of: isExpanded) { _, expanded in
             if expanded {
-                // Trigger content animation slightly after the container starts expanding
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) {
-                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                        showNotes = true
-                    }
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                        isTitleFocused = true
-                        isDescriptionFocused = false
-                    }
+                withAnimation(.easeOut(duration: 0.15)) {
+                    showIndicator = false
+                }
+                withAnimation(.easeInOut(duration: 0.2).delay(0.1)) {
+                    titleOffset = true
+                }
+                withAnimation(.easeOut(duration: 0.2).delay(0.25)) {
+                    showContent = true
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
+                    isTitleFocused = true
+                    isDescriptionFocused = false
                 }
             } else {
-                // Fade out content first, then container collapses
-                withAnimation(.spring(response: 0.2, dampingFraction: 0.9)) {
-                    showNotes = false
+                withAnimation(.easeIn(duration: 0.15)) {
+                    showContent = false
+                }
+                withAnimation(.easeInOut(duration: 0.2).delay(0.1)) {
+                    titleOffset = false
+                }
+                withAnimation(.easeOut(duration: 0.15).delay(0.25)) {
+                    showIndicator = true
                 }
                 isTitleFocused = false
                 isDescriptionFocused = false
@@ -1535,12 +1591,126 @@ struct TaskRow: View {
                 onStatusChange?()
             }
         }
+        .onAppear {
+            editedTitle = task.title
+            editedDescription = task.taskDescription ?? ""
+            showIndicator = !isExpanded
+            titleOffset = isExpanded
+            showContent = isExpanded
+        }
+        .onChange(of: task.title) { _, newValue in
+            if editedTitle != newValue {
+                editedTitle = newValue
+            }
+        }
+        .onChange(of: task.taskDescription) { _, newValue in
+            let newDesc = newValue ?? ""
+            if editedDescription != newDesc {
+                editedDescription = newDesc
+            }
+        }
         .onDrop(of: [.fileURL], isTargeted: $isFileDropTarget) { providers in
             guard !isReordering else { return false }
             return handleFileDrop(providers: providers)
         }
         .accessibilityIdentifier("TaskRow")
         .accessibilityLabel(task.title)
+    }
+
+    @ViewBuilder
+    private var statusIndicator: some View {
+        ZStack {
+            if isRunning {
+                RunningTaskIndicator(size: indicatorSize, isHovering: false, onMarkComplete: {
+                    onToggleComplete?()
+                })
+            } else if isCompleted {
+                Button(action: { onToggleComplete?() }) {
+                    ZStack {
+                        Circle()
+                            .fill(Color.green)
+                            .frame(width: indicatorSize, height: indicatorSize)
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 10, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .buttonStyle(.plain)
+            } else if isQueued {
+                QueuedTaskIndicator(
+                    size: indicatorSize,
+                    isHovering: false,
+                    position: position,
+                    onRun: onRun
+                )
+            } else {
+                Circle()
+                    .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1.5)
+                    .frame(width: indicatorSize, height: indicatorSize)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var expandedContent: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            TextField("Task title", text: $editedTitle, axis: .vertical)
+                .font(.system(size: 14, weight: .medium))
+                .foregroundStyle(isCompleted ? .tertiary : .primary)
+                .focused($isTitleFocused)
+                .onChange(of: editedTitle) { _, newValue in
+                    if newValue != task.title {
+                        task.updateTitle(newValue)
+                    }
+                }
+
+            TextField("Notes", text: $editedDescription, axis: .vertical)
+                .font(.system(size: 13))
+                .foregroundStyle(.secondary)
+                .focused($isDescriptionFocused)
+                .onChange(of: editedDescription) { _, newValue in
+                    let newDesc = newValue.isEmpty ? nil : newValue
+                    if newDesc != task.taskDescription {
+                        task.updateDescription(newDesc)
+                    }
+                }
+
+            HStack(spacing: 10) {
+                if isQueued, let onRun = onRun {
+                    Button {
+                        onRun()
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                            .font(.system(size: 12, weight: .medium))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.orange)
+                }
+
+                Button {
+                    onToggleComplete?()
+                } label: {
+                    Label(isCompleted ? "Reopen" : "Complete", systemImage: isCompleted ? "arrow.uturn.backward" : "checkmark")
+                        .font(.system(size: 12, weight: .medium))
+                }
+                .buttonStyle(.bordered)
+                .tint(isCompleted ? .secondary : .green)
+
+                Spacer()
+
+                Button(role: .destructive) {
+                    onDelete?()
+                } label: {
+                    Image(systemName: "trash")
+                        .font(.system(size: 12))
+                }
+                .buttonStyle(.bordered)
+                .tint(.red)
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.bottom, 12)
+        .padding(.top, 2)
     }
 
     private func handleFileDrop(providers: [NSItemProvider]) -> Bool {
@@ -1578,9 +1748,6 @@ struct RunningTaskIndicator: View {
     var provider: AIProvider = .claude
     var onMarkComplete: (() -> Void)?
 
-    @State private var rotation: Double = 0
-    @State private var isAnimating: Bool = false
-
     var body: some View {
         ZStack {
             if isHovering {
@@ -1599,42 +1766,27 @@ struct RunningTaskIndicator: View {
                 .buttonStyle(.plain)
                 .transition(.scale.combined(with: .opacity))
             } else {
-                // Animated spinning dashed circle
-                Circle()
-                    .strokeBorder(
-                        style: StrokeStyle(
-                            lineWidth: 1.5,
-                            lineCap: .round,
-                            dash: [2, 3]
+                // Animated spinning dashed circle using TimelineView for continuous animation
+                TimelineView(.animation) { timeline in
+                    let seconds = timeline.date.timeIntervalSinceReferenceDate
+                    let rotation = seconds.truncatingRemainder(dividingBy: 8) / 8 * 360
+
+                    Circle()
+                        .strokeBorder(
+                            style: StrokeStyle(
+                                lineWidth: 1.5,
+                                lineCap: .round,
+                                dash: [2, 3]
+                            )
                         )
-                    )
-                    .foregroundStyle(provider.color.opacity(0.6))
-                    .frame(width: size, height: size)
-                    .rotationEffect(.degrees(rotation))
-                    .transition(.scale.combined(with: .opacity))
+                        .foregroundStyle(Color.purple.opacity(0.6))
+                        .frame(width: size, height: size)
+                        .rotationEffect(.degrees(rotation))
+                }
+                .transition(.scale.combined(with: .opacity))
             }
         }
         .animation(.easeInOut(duration: 0.15), value: isHovering)
-        .onAppear {
-            startAnimation()
-        }
-        .onChange(of: isHovering) { _, hovering in
-            if hovering {
-                // Stop animation when hovering
-                isAnimating = false
-            } else {
-                // Resume animation when not hovering
-                startAnimation()
-            }
-        }
-    }
-
-    private func startAnimation() {
-        guard !isAnimating else { return }
-        isAnimating = true
-        withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
-            rotation += 360
-        }
     }
 }
 
@@ -1644,6 +1796,7 @@ struct QueuedTaskIndicator: View {
     let isHovering: Bool
     let position: Int?
     var onRun: (() -> Void)?
+    var accentColor: Color = .orange
 
     @State private var pulsePhase: CGFloat = 0
 
@@ -1654,16 +1807,16 @@ struct QueuedTaskIndicator: View {
                 Button(action: { onRun?() }) {
                     ZStack {
                         Circle()
-                            .fill(Color.orange.opacity(0.15))
+                            .fill(accentColor.opacity(0.15))
                             .frame(width: size, height: size)
 
                         Circle()
-                            .strokeBorder(Color.orange.opacity(0.6), lineWidth: 1.5)
+                            .strokeBorder(accentColor.opacity(0.6), lineWidth: 1.5)
                             .frame(width: size, height: size)
 
                         Image(systemName: "play.fill")
                             .font(.system(size: size * 0.4))
-                            .foregroundStyle(.orange)
+                            .foregroundStyle(accentColor)
                     }
                 }
                 .buttonStyle(.plain)
@@ -1672,7 +1825,7 @@ struct QueuedTaskIndicator: View {
                 // Subtle play indicator in a circle
                 ZStack {
                     Circle()
-                        .strokeBorder(Color.primary.opacity(0.15 + pulsePhase * 0.1), lineWidth: 1.5)
+                        .strokeBorder(accentColor.opacity(0.3 + pulsePhase * 0.2), lineWidth: 1.5)
                         .frame(width: size, height: size)
 
                     if let pos = position {
@@ -1682,7 +1835,7 @@ struct QueuedTaskIndicator: View {
                     } else {
                         Image(systemName: "play.fill")
                             .font(.system(size: size * 0.35))
-                            .foregroundStyle(.secondary.opacity(0.6))
+                            .foregroundStyle(accentColor.opacity(0.8))
                     }
                 }
                 .transition(.scale.combined(with: .opacity))

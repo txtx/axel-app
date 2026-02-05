@@ -36,7 +36,10 @@ struct WorkspaceContentView: View {
     @State private var selectedSession: TerminalSession?
     @State private var selectedInboxEvent: InboxEvent?
     @State private var selectedMember: OrganizationMember?
+    @State private var selectedRecoveredSession: RecoveredSession?
     @State private var showCloseTerminalConfirmation = false
+    @State private var closeTargetSession: TerminalSession?
+    @State private var closeKillTmuxSession = false
     @State private var showTerminalInspector = false
     @State private var showNewTerminalSheet = false
     @State private var pendingTaskForPicker: WorkTask?
@@ -52,6 +55,117 @@ struct WorkspaceContentView: View {
     /// Filtered to only show workers for this workspace
     private var availableWorkers: [TerminalSession] {
         sessionManager.sessions(for: workspace.id).filter { $0.taskId == nil }
+    }
+
+    private func requestCloseSession(_ session: TerminalSession) {
+        if session.status == .dormant {
+            closeSessionAndCleanup(session, killTmux: true)
+            return
+        }
+
+        closeTargetSession = session
+        closeKillTmuxSession = false
+        showCloseTerminalConfirmation = true
+    }
+
+    @MainActor
+    private func closeSessionAndCleanup(_ session: TerminalSession, killTmux: Bool) {
+        if let taskId = session.taskId,
+           let task = modelContext.model(for: taskId) as? WorkTask {
+            task.updateStatus(.backlog)
+        }
+
+        if let paneId = session.paneId {
+            let queuedTaskIds = TaskQueueService.shared.clearQueue(forTerminal: paneId)
+            for taskId in queuedTaskIds {
+                let taskDescriptor = FetchDescriptor<WorkTask>(predicate: #Predicate { $0.id == taskId })
+                if let task = try? modelContext.fetch(taskDescriptor).first {
+                    task.updateStatus(.backlog)
+                }
+            }
+
+            let terminalDescriptor = FetchDescriptor<Terminal>(
+                predicate: #Predicate { $0.paneId == paneId }
+            )
+            if let terminal = try? modelContext.fetch(terminalDescriptor).first {
+                terminal.task = nil
+
+                let hintDescriptor = FetchDescriptor<Hint>(
+                    predicate: #Predicate { hint in
+                        hint.status == "pending"
+                    }
+                )
+                if let hints = try? modelContext.fetch(hintDescriptor) {
+                    for hint in hints where hint.terminal?.paneId == paneId {
+                        hint.cancel()
+                    }
+                }
+            }
+
+            InboxService.shared.clearEventsForPane(paneId)
+
+            if killTmux {
+                Task { await killTmuxSession(paneId: paneId) }
+            }
+        }
+
+        let isClosingSelected = selectedSession?.id == session.id
+        let sessions = sessionManager.sessions(for: workspace.id)
+        let nextSession = isClosingSelected ? computeAdjacentSession(closing: session, in: sessions) : selectedSession
+
+        sessionManager.stopSession(session)
+        if isClosingSelected {
+            selectedSession = nextSession
+        }
+    }
+
+    private func computeAdjacentSession(closing session: TerminalSession, in sessions: [TerminalSession]) -> TerminalSession? {
+        guard let currentIndex = sessions.firstIndex(where: { $0.id == session.id }) else {
+            return nil
+        }
+
+        if currentIndex > 0 {
+            return sessions[currentIndex - 1]
+        } else if sessions.count > 1 {
+            return sessions[currentIndex + 1]
+        }
+        return nil
+    }
+
+    private func killTmuxSession(paneId: String) async {
+        _ = await AxelSetupService.shared.checkInstallation()
+        let sessionName = await resolveSessionName(for: paneId)
+        let axelPath = AxelSetupService.shared.executablePath
+
+        if await runProcess(["/usr/bin/env", axelPath, "session", "kill", sessionName, "--confirm"]) == 0 {
+            return
+        }
+
+        if await runProcess(["/usr/bin/env", "tmux", "kill-session", "-t", sessionName]) == 0 {
+            return
+        }
+
+        _ = await runProcess(["/usr/bin/env", "tmux", "kill-pane", "-t", paneId])
+    }
+
+    private func resolveSessionName(for paneId: String) async -> String {
+        await SessionRecoveryService.shared.discoverSessions()
+        return SessionRecoveryService.shared.recoveredSessions.first(where: { $0.axelPaneId == paneId })?.name ?? paneId
+    }
+
+    private func runProcess(_ args: [String]) async -> Int32 {
+        guard let executable = args.first else { return -1 }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = Array(args.dropFirst())
+        AxelSetupService.shared.configureAxelProcess(process)
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus
+        } catch {
+            return -1
+        }
     }
 
     /// Start a terminal session, optionally linked to a task
@@ -164,12 +278,16 @@ struct WorkspaceContentView: View {
 
         // Idempotency guard: if session already has a running task that's not completed,
         // skip this call (prevents race condition between dual notifications)
-        if let currentTaskId = session.taskId,
-           let currentTask = modelContext.model(for: currentTaskId) as? WorkTask,
-           currentTask.taskStatus == .running {
-            // Session is already running a task - this is a duplicate notification
-            print("[WorkspaceContentView] consumeNextQueuedTask: idempotency guard - task still running")
-            return
+        if session.taskId != nil {
+            // Fetch the current task from Terminal model, which is safer than model(for:)
+            // as model(for:) can crash with a stale PersistentIdentifier
+            if let terminal = workspace.terminals.first(where: { $0.paneId == paneId }),
+               let currentTask = terminal.task,
+               currentTask.taskStatus == .running {
+                // Session is already running a task - this is a duplicate notification
+                print("[WorkspaceContentView] consumeNextQueuedTask: idempotency guard - task still running")
+                return
+            }
         }
 
         // Pop the next task from the queue (via TaskQueueService)
@@ -206,7 +324,8 @@ struct WorkspaceContentView: View {
     /// - Parameters:
     ///   - task: Optional task to run on the new terminal
     ///   - worktreeBranch: Optional git worktree branch to use (nil = main workspace)
-    private func createNewTerminal(for task: WorkTask? = nil, worktreeBranch: String? = nil, provider: AIProvider = .claude) {
+    ///   - gridName: Optional grid name to launch (nil = single pane)
+    private func createNewTerminal(for task: WorkTask? = nil, worktreeBranch: String? = nil, provider: AIProvider = .claude, gridName: String? = nil) {
         // Update task status if provided
         task?.updateStatus(.running)
 
@@ -236,11 +355,22 @@ struct WorkspaceContentView: View {
         // Build command with pane-id and port
         // Use executablePath which prefers PATH version, falls back to bundled binary
         let axelPath = AxelSetupService.shared.executablePath
-        var command = "\(initPrefix)\(axelPath) \(provider.commandName) --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
+        var command: String
+
+        if let gridName = gridName {
+            // Launch a full grid layout
+            // Format: axel session new --grid <name> --session-name ... --pane-id ... --port ... [--worktree ...]
+            // Note: No --tmux needed (grids are always tmux)
+            command = "\(initPrefix)\(axelPath) session new --grid \(gridName) --session-name \(paneId) --pane-id \(paneId) --port \(port)"
+        } else {
+            // Launch a single pane
+            // Format: axel session new <pane> --tmux --session-name ... --pane-id ... --port ... [--worktree ...]
+            command = "\(initPrefix)\(axelPath) session new \(provider.commandName) --tmux --session-name \(paneId) --pane-id \(paneId) --port \(port)"
+        }
 
         // Add worktree flag if specified (axel-cli will create worktree if needed)
         if let branch = worktreeBranch {
-            command += " -w \(branch.shellEscaped)"
+            command += " --worktree \(branch.shellEscaped)"
         }
 
         if let task = task {
@@ -399,7 +529,16 @@ struct WorkspaceContentView: View {
         case .optimizations(.context):
             WorkspaceContextListView(workspace: workspace, selection: $selectedContext)
         case .terminals:
-            RunningListView(selection: $selectedSession, workspaceId: workspace.id)
+            RunningListView(
+                selection: $selectedSession,
+                workspaceId: workspace.id,
+                onRequestClose: requestCloseSession
+            )
+        case .recovered:
+            RecoveredSessionsListView(
+                workspacePath: workspace.path,
+                selection: $selectedRecoveredSession
+            )
         case .team:
             TeamListView(selectedMember: $selectedMember)
         case .inbox, .none:
@@ -426,9 +565,27 @@ struct WorkspaceContentView: View {
             }
         case .terminals:
             if let session = selectedSession {
-                RunningDetailView(session: session, selection: $selectedSession)
+                RunningDetailView(
+                    session: session,
+                    selection: $selectedSession,
+                    onRequestClose: requestCloseSession
+                )
             } else {
                 EmptyRunningSelectionView()
+            }
+        case .recovered:
+            if let session = selectedRecoveredSession {
+                RecoveredSessionDetailView(
+                    session: session,
+                    workspaceId: workspace.id,
+                    workspacePath: workspace.path
+                )
+            } else {
+                ContentUnavailableView {
+                    Label("Recovered Sessions", systemImage: "arrow.clockwise.circle")
+                } description: {
+                    Text("Select a session to view details")
+                }
             }
         case .team:
             if let member = selectedMember {
@@ -530,21 +687,20 @@ struct WorkspaceContentView: View {
         mainContent
             .modifier(WorkspaceKeyboardShortcuts(
                 selectedTask: selectedTask,
-                workspaceId: workspace.id,
                 sidebarSelection: $sidebarSelection,
                 selectedSession: $selectedSession,
-                showCloseTerminalConfirmation: $showCloseTerminalConfirmation,
                 showTerminalInspector: $showTerminalInspector,
-                sessionManager: sessionManager,
                 onStartTerminal: { startTerminal() },
-                onStartTerminalForTask: { if let task = selectedTask { startTerminal(for: task) } }
+                onStartTerminalForTask: { if let task = selectedTask { startTerminal(for: task) } },
+                onRequestClose: requestCloseSession
             ))
             .modifier(WorkspaceAlertModifier(
                 showCloseTerminalConfirmation: $showCloseTerminalConfirmation,
+                closeTargetSession: $closeTargetSession,
+                closeKillTmuxSession: $closeKillTmuxSession,
                 showTerminalInspector: $showTerminalInspector,
                 selectedSession: $selectedSession,
-                workspaceId: workspace.id,
-                sessionManager: sessionManager
+                onCloseSession: closeSessionAndCleanup
             ))
             .modifier(WorkspaceSheetModifier(
                 workspace: workspace,
@@ -554,8 +710,8 @@ struct WorkspaceContentView: View {
                 selectedTask: $selectedTask,
                 onStartTerminal: { task in startTerminal(for: task) },
                 onAssignTask: assignTaskToWorker,
-                onCreateNewTerminal: { task, provider in createNewTerminal(for: task, provider: provider) },
-                onCreateWorktreeTerminal: { task, branch, provider in createNewTerminal(for: task, worktreeBranch: branch, provider: provider) }
+                onCreateNewTerminal: { task, provider, gridName in createNewTerminal(for: task, provider: provider, gridName: gridName) },
+                onCreateWorktreeTerminal: { task, branch, provider, gridName in createNewTerminal(for: task, worktreeBranch: branch, provider: provider, gridName: gridName) }
             ))
             .overlay(alignment: .bottomTrailing) { floatingTerminalOverlay }
             .modifier(WorkspaceLifecycleModifier(
@@ -564,6 +720,7 @@ struct WorkspaceContentView: View {
                 showTerminal: $showTerminal,
                 authService: authService,
                 syncService: syncService,
+                sessionManager: sessionManager,
                 modelContext: modelContext,
                 scenePhase: scenePhase,
                 performSync: performSync
@@ -606,14 +763,12 @@ struct WorkspaceContentView: View {
 
 private struct WorkspaceKeyboardShortcuts: ViewModifier {
     let selectedTask: WorkTask?
-    let workspaceId: UUID
     @Binding var sidebarSelection: SidebarSection?
     @Binding var selectedSession: TerminalSession?
-    @Binding var showCloseTerminalConfirmation: Bool
     @Binding var showTerminalInspector: Bool
-    let sessionManager: TerminalSessionManager
     let onStartTerminal: () -> Void
     let onStartTerminalForTask: () -> Void
+    let onRequestClose: (TerminalSession) -> Void
 
     func body(content: Content) -> some View {
         content
@@ -622,18 +777,7 @@ private struct WorkspaceKeyboardShortcuts: ViewModifier {
             .keyboardShortcut(for: .closePane) {
                 // Cmd+W only works on terminals screen
                 guard case .terminals = sidebarSelection, let session = selectedSession else { return }
-
-                // If terminal has an associated task, ask for confirmation
-                if session.taskId != nil {
-                    showCloseTerminalConfirmation = true
-                } else {
-                    // No task associated, stop the terminal directly
-                    // Compute adjacent session BEFORE stopping (session will be removed from list)
-                    let sessions = sessionManager.sessions(for: workspaceId)
-                    let nextSession = computeAdjacentSession(closing: session, in: sessions)
-                    sessionManager.stopSession(session)
-                    selectedSession = nextSession
-                }
+                onRequestClose(session)
             }
             .keyboardShortcut(for: .inspectTerminal) {
                 // Cmd+I only works on terminals screen with a selected session
@@ -647,30 +791,29 @@ private struct WorkspaceKeyboardShortcuts: ViewModifier {
             .keyboardShortcut(for: .undo) { TaskUndoManager.shared.undo() }
             .keyboardShortcut(for: .redo) { TaskUndoManager.shared.redo() }
     }
-
-    /// Compute which session to select after closing the given session
-    private func computeAdjacentSession(closing session: TerminalSession, in sessions: [TerminalSession]) -> TerminalSession? {
-        guard let currentIndex = sessions.firstIndex(where: { $0.id == session.id }) else {
-            return nil
-        }
-
-        if currentIndex > 0 {
-            return sessions[currentIndex - 1]
-        } else if sessions.count > 1 {
-            return sessions[currentIndex + 1]
-        }
-        return nil
-    }
 }
 
 private struct WorkspaceAlertModifier: ViewModifier {
     @Binding var showCloseTerminalConfirmation: Bool
+    @Binding var closeTargetSession: TerminalSession?
+    @Binding var closeKillTmuxSession: Bool
     @Binding var showTerminalInspector: Bool
     @Binding var selectedSession: TerminalSession?
-    let workspaceId: UUID
-    let sessionManager: TerminalSessionManager
-    @Environment(\.modelContext) private var modelContext
-    @State private var keepTmuxSession: Bool = false
+    let onCloseSession: (TerminalSession, Bool) -> Void
+
+    private var sessionForClose: TerminalSession? {
+        closeTargetSession ?? selectedSession
+    }
+
+    private var pendingPermissionRequests: Int {
+        guard let paneId = sessionForClose?.paneId else { return 0 }
+        return InboxService.shared.unresolvedPermissionRequestCount(forPaneId: paneId)
+    }
+
+    private var queuedTaskCount: Int {
+        guard let paneId = sessionForClose?.paneId else { return 0 }
+        return TaskQueueService.shared.tasksQueued(onTerminal: paneId).count
+    }
 
     func body(content: Content) -> some View {
         content
@@ -680,146 +823,25 @@ private struct WorkspaceAlertModifier: ViewModifier {
                 }
             }
             .sheet(isPresented: $showCloseTerminalConfirmation) {
-                CloseTerminalConfirmationSheet(
-                    keepTmuxSession: $keepTmuxSession,
+                TerminalCloseConfirmationSheet(
+                    killTmuxSession: $closeKillTmuxSession,
+                    pendingPermissionRequests: pendingPermissionRequests,
+                    queuedTaskCount: queuedTaskCount,
                     onCancel: {
+                        closeKillTmuxSession = false
+                        closeTargetSession = nil
                         showCloseTerminalConfirmation = false
                     },
                     onConfirm: {
-                        if let session = selectedSession {
-                            // Reset the associated task to queued status
-                            // Reset the running task to backlog
-                            if let taskId = session.taskId,
-                               let task = modelContext.model(for: taskId) as? WorkTask {
-                                task.updateStatus(.backlog)
-                            }
-
-                            // Clear queued tasks from this terminal and reset them to backlog
-                            if let paneId = session.paneId {
-                                let queuedTaskIds = TaskQueueService.shared.clearQueue(forTerminal: paneId)
-                                for taskId in queuedTaskIds {
-                                    let taskDescriptor = FetchDescriptor<WorkTask>(predicate: #Predicate { $0.id == taskId })
-                                    if let task = try? modelContext.fetch(taskDescriptor).first {
-                                        task.updateStatus(.backlog)
-                                    }
-                                }
-
-                                // Clear from Terminal model as well
-                                let terminalDescriptor = FetchDescriptor<Terminal>(
-                                    predicate: #Predicate { $0.paneId == paneId }
-                                )
-                                if let terminal = try? modelContext.fetch(terminalDescriptor).first {
-                                    terminal.task = nil
-                                }
-                            }
-
-                            // Compute adjacent session BEFORE stopping
-                            let sessions = sessionManager.sessions(for: workspaceId)
-                            let nextSession = computeAdjacentSession(closing: session, in: sessions)
-
-                            if keepTmuxSession {
-                                // Just remove from UI without killing tmux
-                                sessionManager.stopSession(session)
-                            } else {
-                                // Kill the tmux session as well
-                                if let paneId = session.paneId {
-                                    Task {
-                                        // Kill the tmux pane
-                                        let process = Process()
-                                        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-                                        process.arguments = ["tmux", "kill-pane", "-t", paneId]
-                                        try? process.run()
-                                        process.waitUntilExit()
-                                    }
-                                }
-                                sessionManager.stopSession(session)
-                            }
-                            selectedSession = nextSession
+                        if let session = sessionForClose {
+                            onCloseSession(session, closeKillTmuxSession)
                         }
+                        closeKillTmuxSession = false
+                        closeTargetSession = nil
                         showCloseTerminalConfirmation = false
                     }
                 )
             }
-    }
-
-    /// Compute which session to select after closing the given session
-    private func computeAdjacentSession(closing session: TerminalSession, in sessions: [TerminalSession]) -> TerminalSession? {
-        guard let currentIndex = sessions.firstIndex(where: { $0.id == session.id }) else {
-            return nil
-        }
-
-        if currentIndex > 0 {
-            return sessions[currentIndex - 1]
-        } else if sessions.count > 1 {
-            return sessions[currentIndex + 1]
-        }
-        return nil
-    }
-}
-
-private struct CloseTerminalConfirmationSheet: View {
-    @Binding var keepTmuxSession: Bool
-    let onCancel: () -> Void
-    let onConfirm: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            // Header
-            VStack(spacing: 8) {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 32))
-                    .foregroundStyle(.orange)
-
-                Text("Stop Terminal?")
-                    .font(.headline)
-
-                Text("This will stop the terminal and put the associated task back in the queue.")
-                    .font(.callout)
-                    .foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
-            .padding(.horizontal, 24)
-            .padding(.top, 24)
-            .padding(.bottom, 16)
-
-            Divider()
-
-            // Checkbox option
-            Toggle(isOn: $keepTmuxSession) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("Keep tmux session running")
-                        .font(.body)
-                    Text("The terminal process will continue in the background")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            .toggleStyle(.checkbox)
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-
-            Divider()
-
-            // Buttons
-            HStack(spacing: 12) {
-                Button("Cancel") {
-                    onCancel()
-                }
-                .keyboardShortcut(.escape, modifiers: [])
-                .buttonStyle(.bordered)
-
-                Button("Stop & Re-queue") {
-                    onConfirm()
-                }
-                .keyboardShortcut(.return, modifiers: [])
-                .buttonStyle(.borderedProminent)
-                .tint(.red)
-            }
-            .padding(.horizontal, 24)
-            .padding(.vertical, 16)
-        }
-        .frame(width: 340)
-        .background(.background)
     }
 }
 
@@ -831,8 +853,8 @@ private struct WorkspaceSheetModifier: ViewModifier {
     @Binding var selectedTask: WorkTask?
     let onStartTerminal: (WorkTask) -> Void
     let onAssignTask: (WorkTask, TerminalSession) -> Void
-    let onCreateNewTerminal: (WorkTask?, AIProvider) -> Void
-    let onCreateWorktreeTerminal: (WorkTask?, String, AIProvider) -> Void
+    let onCreateNewTerminal: (WorkTask?, AIProvider, String?) -> Void
+    let onCreateWorktreeTerminal: (WorkTask?, String, AIProvider, String?) -> Void
 
     func body(content: Content) -> some View {
         content
@@ -845,11 +867,11 @@ private struct WorkspaceSheetModifier: ViewModifier {
                 )
             }
             .sheet(isPresented: $showNewTerminalSheet) {
-                NewTerminalSheet(workspacePath: workspace.path ?? "") { branchName, provider in
+                NewTerminalSheet(workspacePath: workspace.path ?? "") { branchName, provider, gridName in
                     if let branchName {
-                        onCreateWorktreeTerminal(nil, branchName, provider)
+                        onCreateWorktreeTerminal(nil, branchName, provider, gridName)
                     } else {
-                        onCreateNewTerminal(nil, provider)
+                        onCreateNewTerminal(nil, provider, gridName)
                     }
                 }
             }
@@ -859,24 +881,25 @@ private struct WorkspaceSheetModifier: ViewModifier {
                 WorkerPickerPanel(
                     workspaceId: workspace.id,
                     workspacePath: workspace.path,
-                    onSelect: { selectedWorker, provider in
-                        print("[WorkerPicker] Callback fired - task: \(task.title), selectedWorker: \(selectedWorker?.taskTitle ?? "nil (new agent)")")
+                    onSelect: { selectedWorker, provider, gridName in
+                        print("[WorkerPicker] Callback fired - task: \(task.title), selectedWorker: \(selectedWorker?.taskTitle ?? "nil (new agent)"), grid: \(gridName ?? "nil")")
                         if let worker = selectedWorker {
                             print("[WorkerPicker] → Assigning task '\(task.title)' to worker, hasTask: \(worker.hasTask), paneId: \(worker.paneId ?? "nil")")
                             onAssignTask(task, worker)
                         } else {
                             print("[WorkerPicker] → Creating new terminal for task '\(task.title)'")
-                            onCreateNewTerminal(task, provider)
+                            onCreateNewTerminal(task, provider, gridName)
                         }
                     },
-                    onCreateWorktreeAgent: { branch, provider in
-                        print("[WorkerPicker] → Creating worktree terminal for task '\(task.title)' on branch '\(branch)'")
-                        onCreateWorktreeTerminal(task, branch, provider)
+                    onCreateWorktreeAgent: { branch, provider, gridName in
+                        print("[WorkerPicker] → Creating worktree terminal for task '\(task.title)' on branch '\(branch)', grid: \(gridName ?? "nil")")
+                        onCreateWorktreeTerminal(task, branch, provider, gridName)
                     }
                 )
             }
     }
 }
+
 
 private struct WorkspaceLifecycleModifier: ViewModifier {
     let workspace: Workspace
@@ -884,6 +907,7 @@ private struct WorkspaceLifecycleModifier: ViewModifier {
     @Binding var showTerminal: Bool
     let authService: AuthService
     let syncService: SyncService
+    let sessionManager: TerminalSessionManager
     let modelContext: ModelContext
     let scenePhase: ScenePhase
     let performSync: () -> Void
@@ -901,6 +925,16 @@ private struct WorkspaceLifecycleModifier: ViewModifier {
                 if authService.isAuthenticated {
                     await syncService.startRealtimeSync(context: modelContext, workspaceId: workspaceId)
                 }
+            }
+            .task {
+                // Discover and recover existing tmux sessions for this workspace
+                // Run independently of sync to avoid blocking on slow/failed connections
+                await SessionRecoveryService.shared.discoverSessions()
+                SessionRecoveryService.shared.recoverUntrackedSessions(
+                    for: workspace.path,
+                    workspaceId: workspace.id,
+                    sessionManager: sessionManager
+                )
             }
             .onDisappear {
                 let workspaceId = workspace.syncId ?? workspace.id
@@ -999,27 +1033,35 @@ private struct WorkspaceNotificationModifier: ViewModifier {
                     return
                 }
 
-                print("[WorkspaceNotificationModifier] .taskNoLongerRunning: taskId=\(taskId), workspace=\(workspace.name), terminals=\(workspace.terminals.count)")
+                print("[WorkspaceNotificationModifier] .taskNoLongerRunning: taskId=\(taskId), workspace=\(workspace.name)")
 
-                // Try to find paneId via Terminal model first
-                if let terminal = workspace.terminals.first(where: { $0.task?.id == taskId }),
+                // First fetch the task from current context to get its persistent ID
+                let taskDescriptor = FetchDescriptor<WorkTask>(predicate: #Predicate { $0.id == taskId })
+                guard let task = try? modelContext.fetch(taskDescriptor).first else {
+                    print("[WorkspaceNotificationModifier] .taskNoLongerRunning: task not found in context")
+                    return
+                }
+
+                // Query for terminal with this task using predicate (safer than relationship traversal)
+                let workspaceId = workspace.id
+                let terminalDescriptor = FetchDescriptor<Terminal>(predicate: #Predicate<Terminal> { terminal in
+                    terminal.workspace?.id == workspaceId && terminal.task?.id == taskId
+                })
+
+                if let terminal = try? modelContext.fetch(terminalDescriptor).first,
                    let paneId = terminal.paneId {
-                    print("[WorkspaceNotificationModifier] .taskNoLongerRunning: found via Terminal model, paneId=\(paneId)")
+                    print("[WorkspaceNotificationModifier] .taskNoLongerRunning: found via Terminal query, paneId=\(paneId)")
                     onConsumeNextTask(paneId)
                     return
                 }
 
                 // Fallback: Try to find paneId via TerminalSession
-                // The session tracks taskId as PersistentIdentifier, so we need to fetch the task first
-                let taskDescriptor = FetchDescriptor<WorkTask>(predicate: #Predicate { $0.id == taskId })
-                if let task = try? modelContext.fetch(taskDescriptor).first {
-                    let persistentId = task.persistentModelID
-                    if let session = sessionManager.sessions(for: workspace.id).first(where: { $0.taskId == persistentId }),
-                       let paneId = session.paneId {
-                        print("[WorkspaceNotificationModifier] .taskNoLongerRunning: found via TerminalSession fallback, paneId=\(paneId)")
-                        onConsumeNextTask(paneId)
-                        return
-                    }
+                let persistentId = task.persistentModelID
+                if let session = sessionManager.sessions(for: workspace.id).first(where: { $0.taskId == persistentId }),
+                   let paneId = session.paneId {
+                    print("[WorkspaceNotificationModifier] .taskNoLongerRunning: found via TerminalSession fallback, paneId=\(paneId)")
+                    onConsumeNextTask(paneId)
+                    return
                 }
 
                 print("[WorkspaceNotificationModifier] .taskNoLongerRunning: no terminal/session found for task \(taskId)")
@@ -1129,6 +1171,7 @@ struct WorkspaceSidebarView: View {
     @State private var authService = AuthService.shared
     @State private var syncService = SyncService.shared
     @State private var inboxService = InboxService.shared
+    @State private var recoveryService = SessionRecoveryService.shared
     @Environment(\.modelContext) private var modelContext
     @Environment(\.terminalSessionManager) private var sessionManager
 
@@ -1158,6 +1201,16 @@ struct WorkspaceSidebarView: View {
         runningCount - blockedCount
     }
 
+    /// Set of pane IDs currently being tracked by TerminalSessionManager
+    private var trackedPaneIds: Set<String> {
+        Set(sessionManager.sessions(for: workspace.id).compactMap { $0.paneId })
+    }
+
+    /// Number of recovered (untracked) sessions for this workspace
+    private var recoveredCount: Int {
+        recoveryService.untrackedCount(for: workspace.path, trackedPaneIds: trackedPaneIds)
+    }
+
     /// Number of pending inbox events (permission requests)
     private var pendingInboxCount: Int {
         inboxService.events.filter { event in
@@ -1181,10 +1234,10 @@ struct WorkspaceSidebarView: View {
                         if queuedTasksCount > 0 {
                             Text("\(queuedTasksCount)")
                                 .font(.callout.monospacedDigit())
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(.white)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
-                                .background(Color.blue.opacity(0.15))
+                                .background(Color.white.opacity(0.15))
                                 .clipShape(Capsule())
                         }
                     }
@@ -1203,7 +1256,7 @@ struct WorkspaceSidebarView: View {
                             HStack(spacing: 0) {
                                 Text("\(notBlockedCount)")
                                     .font(.callout.monospacedDigit())
-                                    .foregroundStyle(.orange)
+                                    .foregroundStyle(.white)
                                     .padding(.leading, 8)
                                     .padding(.trailing, blockedCount > 0 ? 6 : 8)
                                     .padding(.vertical, 2)
@@ -1225,12 +1278,12 @@ struct WorkspaceSidebarView: View {
                                     .fill(
                                         blockedCount > 0
                                             ? LinearGradient(
-                                                colors: [Color.orange.opacity(0.15), Color.red.opacity(0.15)],
+                                                colors: [Color.white.opacity(0.15), Color.red.opacity(0.15)],
                                                 startPoint: .leading,
                                                 endPoint: .trailing
                                             )
                                             : LinearGradient(
-                                                colors: [Color.orange.opacity(0.15)],
+                                                colors: [Color.white.opacity(0.15)],
                                                 startPoint: .leading,
                                                 endPoint: .trailing
                                             )
@@ -1244,6 +1297,28 @@ struct WorkspaceSidebarView: View {
                 }
                 .tag(SidebarSection.terminals)
 
+                // Recovered Sessions (only show if there are any)
+                if recoveredCount > 0 {
+                    Label {
+                        HStack {
+                            Text("Recovered")
+                            Spacer()
+                            Text("\(recoveredCount)")
+                                .font(.callout.monospacedDigit())
+                                .foregroundStyle(.white)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 2)
+                                .background(Color.white.opacity(0.15))
+                                .clipShape(Capsule())
+                        }
+                    } icon: {
+                        Image(systemName: "arrow.clockwise.circle")
+                            .foregroundStyle(.yellow)
+                    }
+                    .padding(.leading, 16)
+                    .tag(SidebarSection.recovered)
+                }
+
                 // Inbox
                 Label {
                     HStack {
@@ -1252,10 +1327,10 @@ struct WorkspaceSidebarView: View {
                         if pendingInboxCount > 0 {
                             Text("\(pendingInboxCount)")
                                 .font(.callout.monospacedDigit())
-                                .foregroundStyle(Color(red: 249.0/255, green: 25.0/255, blue: 85.0/255))
+                                .foregroundStyle(.white)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 2)
-                                .background(Color(red: 249.0/255, green: 25.0/255, blue: 85.0/255).opacity(0.15))
+                                .background(Color.white.opacity(0.15))
                                 .clipShape(Capsule())
                         }
                     }

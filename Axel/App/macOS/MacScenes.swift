@@ -79,7 +79,15 @@ final class SparkleUpdater {
 }
 
 class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
+    /// Flag to suppress window opening when handling notification actions
+    private var isHandlingNotificationAction = false
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        // Don't open workspace picker when handling notification actions
+        if isHandlingNotificationAction {
+            return false
+        }
+
         // If no windows are visible, open the workspace picker
         if !flag {
             // Will be handled by SwiftUI's window restoration
@@ -118,6 +126,9 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
         let actionIdentifier = response.actionIdentifier
         let userInfo = response.notification.request.content.userInfo
 
+        // Suppress workspace picker from opening when handling notification actions
+        isHandlingNotificationAction = true
+
         // Handle approve/reject actions
         if actionIdentifier == "APPROVE_ACTION" || actionIdentifier == "REJECT_ACTION" {
             Task { @MainActor in
@@ -126,6 +137,11 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                     userInfo: userInfo
                 )
             }
+        }
+
+        // Reset flag after a short delay to ensure app activation has completed
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.isHandlingNotificationAction = false
         }
 
         completionHandler()

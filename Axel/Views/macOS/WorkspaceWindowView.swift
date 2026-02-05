@@ -294,11 +294,36 @@ final class AxelSetupService {
 
     /// Locations to check for axel binary
     private let searchPaths = [
+        "\(NSHomeDirectory())/.cargo/bin/axel",
         "\(NSHomeDirectory())/.local/bin/axel",
-        "/usr/local/bin/axel",
         "/opt/homebrew/bin/axel",
-        "\(NSHomeDirectory())/.cargo/bin/axel"
+        "/usr/local/bin/axel"
     ]
+
+    /// Environment used for running axel/tmux commands from the app
+    func axelCommandEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        let additionalPaths = [
+            NSHomeDirectory() + "/.cargo/bin",
+            NSHomeDirectory() + "/.local/bin",
+            "/opt/homebrew/bin",
+            "/usr/local/bin",
+            "/usr/bin",
+            "/bin"
+        ]
+        let currentPath = env["PATH"] ?? "/usr/bin:/bin"
+        env["PATH"] = additionalPaths.joined(separator: ":") + ":" + currentPath
+        env["TMPDIR"] = "/tmp"
+        if env["LANG"] == nil {
+            env["LANG"] = "en_US.UTF-8"
+        }
+        return env
+    }
+
+    /// Apply standard environment to a Process running axel/tmux
+    func configureAxelProcess(_ process: Process) {
+        process.environment = axelCommandEnvironment()
+    }
 
     // MARK: - Initialization
 
@@ -434,19 +459,34 @@ final class AxelSetupService {
         return FileManager.default.fileExists(atPath: manifestPath)
     }
 
+    /// Check if a directory is a git repository
+    func isGitRepository(at workspacePath: String?) -> Bool {
+        guard let path = workspacePath else { return false }
+        let gitPath = (path as NSString).appendingPathComponent(".git")
+        return FileManager.default.fileExists(atPath: gitPath)
+    }
+
     /// Get the command prefix to initialize workspace if needed
-    /// Returns empty string if no init needed, or "<axelPath> init --workspace <name> && " if init is needed
+    /// Returns empty string if no init needed, or the appropriate init commands
+    /// - If not a git repo: prepend "git init && "
+    /// - If no AXEL.md: prepend "axel init --workspace <name> && "
     func getInitCommandPrefix(workspacePath: String?, workspaceName: String) -> String {
         guard let path = workspacePath else { return "" }
 
-        if hasAxelManifest(at: path) {
-            return ""
+        var prefix = ""
+
+        // If not a git repo, initialize git first
+        if !isGitRepository(at: path) {
+            prefix += "git init && "
         }
 
-        // Need to initialize the workspace first
-        // Shell-escape the workspace name
-        let escaped = workspaceName.replacingOccurrences(of: "'", with: "'\\''")
-        return "\(executablePath) init --workspace '\(escaped)' && "
+        // If no AXEL.md, initialize axel workspace
+        if !hasAxelManifest(at: path) {
+            let escaped = workspaceName.replacingOccurrences(of: "'", with: "'\\''")
+            prefix += "\(executablePath) init --workspace '\(escaped)' && "
+        }
+
+        return prefix
     }
 
     // MARK: - Private

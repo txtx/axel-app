@@ -407,6 +407,7 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
 struct RunningListView: View {
     @Binding var selection: TerminalSession?
     var workspaceId: UUID? = nil
+    let onRequestClose: (TerminalSession) -> Void
     @Environment(\.terminalSessionManager) private var sessionManager
     @FocusState private var isFocused: Bool
 
@@ -522,7 +523,7 @@ struct RunningListView: View {
                                     columnCount: columnCount,
                                     itemWidth: itemWidth,
                                     spacing: spacing,
-                                    sessionManager: sessionManager
+                                    onRequestClose: onRequestClose
                                 )
                             }
                         }
@@ -651,7 +652,7 @@ struct TerminalSectionView: View {
     let columnCount: Int
     let itemWidth: CGFloat
     let spacing: CGFloat
-    let sessionManager: TerminalSessionManager
+    let onRequestClose: (TerminalSession) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
@@ -692,10 +693,7 @@ struct TerminalSectionView: View {
                     }
                     .contextMenu {
                         Button(role: .destructive) {
-                            if selection?.id == session.id {
-                                selection = nil
-                            }
-                            sessionManager.stopSession(session)
+                            onRequestClose(session)
                         } label: {
                             Label("Stop", systemImage: "stop.fill")
                         }
@@ -991,8 +989,7 @@ struct TerminalApp: Identifiable {
 struct RunningDetailView: View {
     let session: TerminalSession
     @Binding var selection: TerminalSession?
-    @Environment(\.terminalSessionManager) private var sessionManager
-    @State private var showStopConfirmation = false
+    let onRequestClose: (TerminalSession) -> Void
     @State private var installedTerminals: [TerminalApp] = []
     @State private var isHoveringPill = false
 
@@ -1014,7 +1011,7 @@ struct RunningDetailView: View {
                     session: session,
                     installedTerminals: installedTerminals,
                     isHovering: $isHoveringPill,
-                    onStop: { showStopConfirmation = true }
+                    onStop: { onRequestClose(session) }
                 )
                 .frame(maxWidth: geometry.size.width / 3)
                 .padding(.top, 12)
@@ -1025,33 +1022,8 @@ struct RunningDetailView: View {
         .onAppear {
             installedTerminals = TerminalApp.installedApps
         }
-        .confirmationDialog(
-            "Stop Terminal",
-            isPresented: $showStopConfirmation,
-            titleVisibility: .visible
-        ) {
-            Button("Stop Terminal", role: .destructive) {
-                stopAndSelectPrevious()
-            }
-            Button("Cancel", role: .cancel) {}
-        } message: {
-            Text("Are you sure you want to stop this terminal session?")
-        }
     }
 
-    private func stopAndSelectPrevious() {
-        let sessions = sessionManager.sessions
-        if let currentIndex = sessions.firstIndex(where: { $0.id == session.id }) {
-            if currentIndex > 0 {
-                selection = sessions[currentIndex - 1]
-            } else if sessions.count > 1 {
-                selection = sessions[currentIndex + 1]
-            } else {
-                selection = nil
-            }
-        }
-        sessionManager.stopSession(session)
-    }
 }
 
 // MARK: - Floating Glass Pill Toolbar
@@ -1085,7 +1057,7 @@ struct TerminalGlassPill: View {
                 .frame(width: 1, height: 20)
 
             // Right section: Actions
-            HStack(spacing: 2) {
+            HStack(spacing: 0) {
                 // Open in external terminal
                 if !installedTerminals.isEmpty, let paneId = session.paneId {
                     Menu {
@@ -1098,45 +1070,28 @@ struct TerminalGlassPill: View {
                             }
                         }
                     } label: {
-                        HStack(spacing: 4) {
-                            Image(systemName: "arrow.up.forward.app")
-                                .font(.system(size: 11, weight: .medium))
-                            Text("Join tmux")
-                                .font(.system(size: 11, weight: .medium))
-                        }
-                        .foregroundStyle(.white.opacity(0.8))
-                        .padding(.horizontal, 10)
-                        .padding(.vertical, 6)
-                        .contentShape(Rectangle())
+                        Image(systemName: "arrow.up.forward.app")
+                            .font(.system(size: 12, weight: .medium))
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(width: 28, height: 28)
+                            .contentShape(Rectangle())
                     }
                     .buttonStyle(.plain)
-                    .background(
-                        RoundedRectangle(cornerRadius: 6)
-                            .fill(.white.opacity(0.08))
-                    )
                 }
 
                 // Stop button
                 Button {
                     onStop()
                 } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: "stop.fill")
-                            .font(.system(size: 9, weight: .bold))
-                        Text("Stop")
-                            .font(.system(size: 11, weight: .medium))
-                    }
-                    .foregroundStyle(.red.opacity(0.9))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 6)
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .bold))
+                        .foregroundStyle(.white.opacity(0.7))
+                        .frame(width: 28, height: 28)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .background(
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(.red.opacity(0.15))
-                )
             }
-            .padding(.horizontal, 8)
+            .padding(.trailing, 4)
         }
         .padding(.vertical, 6)
         .frame(height: 32)
@@ -1199,8 +1154,28 @@ struct TerminalFullView: View {
             TerminalEmulator.SurfaceRepresentable(view: surfaceView, size: geo.size)
                 .frame(width: geo.size.width, height: geo.size.height)
                 .onTapGesture {
-                surfaceView.window?.makeFirstResponder(surfaceView)
+                    surfaceView.window?.makeFirstResponder(surfaceView)
                 }
+        }
+        .onAppear {
+            // Auto-focus the terminal when it appears (e.g., when selected via keyboard)
+            focusTerminal(surfaceView: surfaceView, retryCount: 0)
+        }
+    }
+
+    /// Attempts to focus the terminal, retrying if the window isn't ready yet
+    private func focusTerminal(surfaceView: TerminalEmulator.SurfaceView, retryCount: Int) {
+        let maxRetries = 5
+        let delay = 0.05 // 50ms between retries
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+            if let window = surfaceView.window {
+                window.makeFirstResponder(surfaceView)
+                surfaceView.focus()
+            } else if retryCount < maxRetries {
+                // Window not ready yet, retry
+                focusTerminal(surfaceView: surfaceView, retryCount: retryCount + 1)
+            }
         }
     }
 }
@@ -1329,8 +1304,8 @@ enum SessionPickerSelection: Equatable {
 struct WorkerPickerPanel: View {
     let workspaceId: UUID?
     let workspacePath: String?
-    let onSelect: (TerminalSession?, AIProvider) -> Void  // nil = create new agent
-    let onCreateWorktreeAgent: ((String, AIProvider) -> Void)?  // Branch name for worktree agent
+    let onSelect: (TerminalSession?, AIProvider, String?) -> Void  // nil = create new agent, String? = grid name
+    let onCreateWorktreeAgent: ((String, AIProvider, String?) -> Void)?  // Branch name for worktree agent, String? = grid name
     @Environment(\.dismiss) private var dismiss
     @Environment(\.terminalSessionManager) private var sessionManager
     @State private var selection: SessionPickerSelection = .newSession
@@ -1338,7 +1313,10 @@ struct WorkerPickerPanel: View {
     @State private var availableWorktrees: [WorktreeInfo] = []
     @State private var selectedWorktreeIndex: Int = 0  // 0 = main, then existing worktrees
     @State private var panes: [PaneInfo] = []
+    @State private var grids: [GridInfo] = []
     @State private var selectedPaneIndex: Int = 0
+    @State private var selectedGridIndex: Int = 0
+    @State private var isGridModeSelected: Bool = false
     @FocusState private var isFocused: Bool
     @FocusState private var isWorktreeFieldFocused: Bool
 
@@ -1348,6 +1326,17 @@ struct WorkerPickerPanel: View {
     private var selectedPane: PaneInfo? {
         guard selectedPaneIndex < panes.count else { return nil }
         return panes[selectedPaneIndex]
+    }
+
+    private var selectedGrid: GridInfo? {
+        guard selectedGridIndex < grids.count else { return nil }
+        return grids[selectedGridIndex]
+    }
+
+    /// The grid name to pass (nil means single pane mode)
+    private var selectedGridName: String? {
+        guard isGridModeSelected, let grid = selectedGrid else { return nil }
+        return grid.name
     }
 
     private var selectedProvider: AIProvider {
@@ -1365,7 +1354,7 @@ struct WorkerPickerPanel: View {
         allSessions.count
     }
 
-    init(workspaceId: UUID?, workspacePath: String? = nil, onSelect: @escaping (TerminalSession?, AIProvider) -> Void, onCreateWorktreeAgent: ((String, AIProvider) -> Void)? = nil) {
+    init(workspaceId: UUID?, workspacePath: String? = nil, onSelect: @escaping (TerminalSession?, AIProvider, String?) -> Void, onCreateWorktreeAgent: ((String, AIProvider, String?) -> Void)? = nil) {
         self.workspaceId = workspaceId
         self.workspacePath = workspacePath
         self.onSelect = onSelect
@@ -1373,7 +1362,7 @@ struct WorkerPickerPanel: View {
     }
 
     // Backwards compatibility initializer
-    init(workspaceId: UUID?, onSelect: @escaping (TerminalSession?, AIProvider) -> Void) {
+    init(workspaceId: UUID?, onSelect: @escaping (TerminalSession?, AIProvider, String?) -> Void) {
         self.workspaceId = workspaceId
         self.workspacePath = nil
         self.onSelect = onSelect
@@ -1422,13 +1411,15 @@ struct WorkerPickerPanel: View {
         .focusEffectDisabled()
         .onAppear {
             isFocused = true
-            // Load available worktrees and panes
+            // Load available worktrees, panes, and grids (only AI panes for assignment)
             if let path = workspacePath {
                 Task {
                     async let worktreesTask = WorktreeService.shared.listWorktrees(in: path)
                     async let panesTask = LayoutService.shared.listPanes(in: path)
+                    async let gridsTask = LayoutService.shared.listGrids(in: path)
                     availableWorktrees = await worktreesTask
-                    panes = await panesTask
+                    panes = await panesTask.filter { $0.isAi }
+                    grids = await gridsTask
                 }
             }
         }
@@ -1608,26 +1599,53 @@ struct WorkerPickerPanel: View {
 
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
-                    // Pane selection
+                    // Layout selection - panes on left, grids on right
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Pane")
+                        Text("Layout")
                             .font(.subheadline.weight(.medium))
                             .foregroundStyle(.secondary)
 
-                        if panes.isEmpty {
-                            Text("Loading panes...")
+                        if panes.isEmpty && grids.isEmpty {
+                            Text("Loading...")
                                 .font(.caption)
                                 .foregroundStyle(.tertiary)
                         } else {
-                            HStack(spacing: 8) {
-                                ForEach(Array(panes.enumerated()), id: \.element.id) { index, pane in
-                                    CompactPaneChip(
-                                        pane: pane,
-                                        isSelected: index == selectedPaneIndex,
-                                        isFocused: true
-                                    )
-                                    .onTapGesture {
-                                        selectedPaneIndex = index
+                            HStack(spacing: 16) {
+                                // Panes on the left
+                                HStack(spacing: 8) {
+                                    ForEach(Array(panes.enumerated()), id: \.element.id) { index, pane in
+                                        CompactPaneChip(
+                                            pane: pane,
+                                            isSelected: !isGridModeSelected && index == selectedPaneIndex,
+                                            isFocused: !isGridModeSelected
+                                        )
+                                        .onTapGesture {
+                                            selectedPaneIndex = index
+                                            isGridModeSelected = false
+                                        }
+                                    }
+                                }
+
+                                // Separator and grid visualizations
+                                if !grids.isEmpty {
+                                    Rectangle()
+                                        .fill(Color.secondary.opacity(0.3))
+                                        .frame(width: 1)
+                                        .frame(height: 40)
+
+                                    // Grid visualizations on the right
+                                    HStack(spacing: 12) {
+                                        ForEach(Array(grids.enumerated()), id: \.element.id) { index, grid in
+                                            GridVisualization(
+                                                grid: grid,
+                                                isSelected: isGridModeSelected && (grids.count == 1 || index == selectedGridIndex),
+                                                isFocused: isGridModeSelected
+                                            )
+                                            .onTapGesture {
+                                                selectedGridIndex = index
+                                                isGridModeSelected = true
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -1701,13 +1719,13 @@ struct WorkerPickerPanel: View {
                         createWorktreeAgent()
                     } else if selectedWorktreeIndex == 0 {
                         // Main worktree - create new session
-                        onSelect(nil, selectedProvider)
+                        onSelect(nil, selectedProvider, selectedGridName)
                         dismiss()
                     } else {
                         // Existing worktree - create worktree agent
                         let worktrees = availableWorktrees.filter { !$0.isMain }
                         if selectedWorktreeIndex - 1 < worktrees.count {
-                            onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName, selectedProvider)
+                            onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName, selectedProvider, selectedGridName)
                             dismiss()
                         }
                     }
@@ -1918,7 +1936,7 @@ struct WorkerPickerPanel: View {
             HStack {
                 Spacer()
                 Button {
-                    onSelect(session, selectedProvider)
+                    onSelect(session, selectedProvider, nil)
                     dismiss()
                 } label: {
                     HStack(spacing: 6) {
@@ -1975,22 +1993,46 @@ struct WorkerPickerPanel: View {
     }
 
     private func navigateLeft() {
-        // Only cycle panes when "New Session" is selected
-        guard case .newSession = selection, !panes.isEmpty else { return }
-        if selectedPaneIndex > 0 {
-            selectedPaneIndex -= 1
+        // Only cycle panes/grids when "New Session" is selected
+        guard case .newSession = selection else { return }
+        let totalItems = panes.count + grids.count
+        guard totalItems > 0 else { return }
+
+        // Calculate current position across panes and grids
+        let currentPosition = isGridModeSelected ? panes.count + selectedGridIndex : selectedPaneIndex
+
+        // Move left (with wrap around)
+        let newPosition = currentPosition > 0 ? currentPosition - 1 : totalItems - 1
+
+        // Update selection based on new position
+        if newPosition < panes.count {
+            isGridModeSelected = false
+            selectedPaneIndex = newPosition
         } else {
-            selectedPaneIndex = panes.count - 1  // Wrap around to last
+            isGridModeSelected = true
+            selectedGridIndex = newPosition - panes.count
         }
     }
 
     private func navigateRight() {
-        // Only cycle panes when "New Session" is selected
-        guard case .newSession = selection, !panes.isEmpty else { return }
-        if selectedPaneIndex < panes.count - 1 {
-            selectedPaneIndex += 1
+        // Only cycle panes/grids when "New Session" is selected
+        guard case .newSession = selection else { return }
+        let totalItems = panes.count + grids.count
+        guard totalItems > 0 else { return }
+
+        // Calculate current position across panes and grids
+        let currentPosition = isGridModeSelected ? panes.count + selectedGridIndex : selectedPaneIndex
+
+        // Move right (with wrap around)
+        let newPosition = currentPosition < totalItems - 1 ? currentPosition + 1 : 0
+
+        // Update selection based on new position
+        if newPosition < panes.count {
+            isGridModeSelected = false
+            selectedPaneIndex = newPosition
         } else {
-            selectedPaneIndex = 0  // Wrap around to first
+            isGridModeSelected = true
+            selectedGridIndex = newPosition - panes.count
         }
     }
 
@@ -2000,17 +2042,17 @@ struct WorkerPickerPanel: View {
             if !newWorktreeBranch.isEmpty {
                 createWorktreeAgent()
             } else if selectedWorktreeIndex == 0 {
-                onSelect(nil, selectedProvider)
+                onSelect(nil, selectedProvider, selectedGridName)
                 dismiss()
             } else {
                 let worktrees = availableWorktrees.filter { !$0.isMain }
                 if selectedWorktreeIndex - 1 < worktrees.count {
-                    onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName, selectedProvider)
+                    onCreateWorktreeAgent?(worktrees[selectedWorktreeIndex - 1].displayName, selectedProvider, selectedGridName)
                     dismiss()
                 }
             }
         case .existingSession(let session):
-            onSelect(session, selectedProvider)
+            onSelect(session, selectedProvider, nil)
             dismiss()
         }
     }
@@ -2018,7 +2060,7 @@ struct WorkerPickerPanel: View {
     private func createWorktreeAgent() {
         let branch = newWorktreeBranch.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !branch.isEmpty else { return }
-        onCreateWorktreeAgent?(branch, selectedProvider)
+        onCreateWorktreeAgent?(branch, selectedProvider, selectedGridName)
         dismiss()
     }
 }
@@ -2270,6 +2312,91 @@ struct PaneInfo: Codable, Identifiable, Equatable {
     }
 }
 
+/// Grid cell information from axel CLI
+struct GridCellInfo: Codable, Equatable {
+    let paneType: String
+    let col: Int
+    let row: Int
+    let width: Int?
+    let height: Int?
+    let color: String?
+
+    enum CodingKeys: String, CodingKey {
+        case paneType = "pane_type"
+        case col, row, width, height, color
+    }
+
+    /// Get the color for this cell, falling back to a default
+    var swiftUIColor: Color {
+        guard let colorName = color else { return .gray }
+        switch colorName.lowercased() {
+        case "purple": return .purple
+        case "yellow": return .yellow
+        case "red": return .red
+        case "green": return .green
+        case "blue": return .blue
+        case "orange": return .orange
+        case "gray", "grey": return .gray
+        default: return .gray
+        }
+    }
+}
+
+/// Grid layout information from axel CLI
+struct GridInfo: Codable, Identifiable, Equatable {
+    let name: String
+    let type: String  // tmux, tmux_cc, shell
+    let paneCount: Int
+    let cells: [GridCellInfo]
+
+    var id: String { name }
+
+    var displayName: String {
+        name == "default" ? "Default" : name.capitalized
+    }
+
+    var typeLabel: String {
+        switch type {
+        case "tmux_cc": return "iTerm2"
+        case "shell": return "No tmux"
+        default: return "tmux"
+        }
+    }
+
+    /// Number of columns in this grid
+    var columnCount: Int {
+        (cells.map(\.col).max() ?? 0) + 1
+    }
+
+    /// Number of rows in this grid
+    var rowCount: Int {
+        (cells.map(\.row).max() ?? 0) + 1
+    }
+
+    /// Get cells organized by column
+    var cellsByColumn: [[GridCellInfo]] {
+        var columns: [[GridCellInfo]] = Array(repeating: [], count: columnCount)
+        for cell in cells {
+            if cell.col < columns.count {
+                columns[cell.col].append(cell)
+            }
+        }
+        // Sort each column by row
+        return columns.map { $0.sorted { $0.row < $1.row } }
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case name, type, cells
+        case paneCount = "pane_count"
+    }
+}
+
+/// Combined layout output from axel CLI
+struct LayoutOutput: Codable {
+    let panes: [PaneInfo]
+    let grids: [GridInfo]
+}
+
 // MARK: - Layout Service
 
 /// Service to fetch layout configurations from axel CLI
@@ -2278,8 +2405,16 @@ final class LayoutService {
     static let shared = LayoutService()
     private init() {}
 
-    /// Fetch panes from AXEL.md via axel CLI
-    func listPanes(in workspacePath: String) async -> [PaneInfo] {
+    /// Cached layout output to avoid redundant CLI calls
+    private var cachedLayout: (path: String, output: LayoutOutput)?
+
+    /// Fetch layout from axel CLI (cached)
+    private func fetchLayout(in workspacePath: String) async -> LayoutOutput? {
+        // Return cached if same path
+        if let cached = cachedLayout, cached.path == workspacePath {
+            return cached.output
+        }
+
         let axelPath = AxelSetupService.shared.executablePath
         let manifestPath = (workspacePath as NSString).appendingPathComponent("AXEL.md")
 
@@ -2297,17 +2432,48 @@ final class LayoutService {
             process.waitUntilExit()
 
             let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let panes = try JSONDecoder().decode([PaneInfo].self, from: data)
-            return panes
+            let layout = try JSONDecoder().decode(LayoutOutput.self, from: data)
+            cachedLayout = (workspacePath, layout)
+            return layout
         } catch {
-            print("[LayoutService] Failed to list panes: \(error)")
-            // Return default panes as fallback
-            return [
-                PaneInfo(type: "claude", name: "Claude", color: "orange", isAi: true),
-                PaneInfo(type: "codex", name: "Codex", color: "green", isAi: true),
-                PaneInfo(type: "shell", name: "Shell", color: "gray", isAi: false)
-            ]
+            print("[LayoutService] Failed to fetch layout: \(error)")
+            return nil
         }
+    }
+
+    /// Clear cached layout (call when AXEL.md changes)
+    func clearCache() {
+        cachedLayout = nil
+    }
+
+    /// Fetch panes from AXEL.md via axel CLI
+    func listPanes(in workspacePath: String) async -> [PaneInfo] {
+        if let layout = await fetchLayout(in: workspacePath) {
+            return layout.panes
+        }
+        // Return default panes as fallback
+        return [
+            PaneInfo(type: "claude", name: "Claude", color: "orange", isAi: true),
+            PaneInfo(type: "codex", name: "Codex", color: "green", isAi: true),
+            PaneInfo(type: "shell", name: "Shell", color: "gray", isAi: false)
+        ]
+    }
+
+    /// Fetch grids from AXEL.md via axel CLI
+    func listGrids(in workspacePath: String) async -> [GridInfo] {
+        if let layout = await fetchLayout(in: workspacePath) {
+            return layout.grids
+        }
+        // Return default grid as fallback
+        return [GridInfo(
+            name: "default",
+            type: "tmux",
+            paneCount: 2,
+            cells: [
+                GridCellInfo(paneType: "claude", col: 0, row: 0, width: 50, height: nil, color: "orange"),
+                GridCellInfo(paneType: "shell", col: 1, row: 0, width: 50, height: nil, color: "gray")
+            ]
+        )]
     }
 }
 
@@ -2317,14 +2483,17 @@ final class LayoutService {
 /// Supports keyboard navigation: arrow keys to move, Enter to confirm, Escape to cancel
 struct NewTerminalSheet: View {
     let workspacePath: String
-    let onCreateTerminal: (String?, AIProvider) -> Void  // branch name (nil = main)
+    let onCreateTerminal: (String?, AIProvider, String?) -> Void  // branch name (nil = main), provider, grid name (nil = default)
     @Environment(\.dismiss) private var dismiss
 
     @State private var worktrees: [WorktreeInfo] = []
     @State private var panes: [PaneInfo] = []
+    @State private var grids: [GridInfo] = []
     @State private var selectedWorktreeIndex: Int = 0
     @State private var selectedPaneIndex: Int = 0
-    @State private var focusedRow: Int = 0  // 0 = worktrees, 1 = panes, 2 = new branch input
+    @State private var selectedGridIndex: Int = 0
+    @State private var focusedRow: Int = 0  // 0 = worktrees, 1 = layout, 2 = new branch input
+    @State private var isGridModeSelected: Bool = false  // false = pane mode, true = grid mode
     @State private var isLoading = true
     @State private var newBranchName: String = ""
     @FocusState private var isNewBranchFieldFocused: Bool
@@ -2351,6 +2520,30 @@ struct NewTerminalSheet: View {
     private var selectedPane: PaneInfo? {
         guard selectedPaneIndex < panes.count else { return nil }
         return panes[selectedPaneIndex]
+    }
+
+    private var selectedGrid: GridInfo? {
+        guard selectedGridIndex < grids.count else { return nil }
+        return grids[selectedGridIndex]
+    }
+
+    /// The grid name to pass (nil means single pane mode)
+    private var selectedGridName: String? {
+        // Only return grid name when user has selected grid mode
+        guard isGridModeSelected, let grid = selectedGrid else { return nil }
+        return grid.name
+    }
+
+    /// Whether the Create button should be disabled
+    private var cannotConfirm: Bool {
+        // For new worktree, require a branch name
+        if isNewWorktreeSelected && newBranchName.isEmpty { return true }
+        // Either a pane or a grid must be selected
+        if isGridModeSelected {
+            return selectedGrid == nil
+        } else {
+            return selectedPane == nil
+        }
     }
 
     var body: some View {
@@ -2425,22 +2618,50 @@ struct NewTerminalSheet: View {
                     }
                     .animation(.spring(response: 0.35, dampingFraction: 0.8), value: isNewWorktreeSelected)
 
-                    // Pane selection
+                    // Layout selection - panes on left, grids on right
                     VStack(spacing: 8) {
-                        Label("Pane", systemImage: "terminal")
+                        Label("Layout", systemImage: "rectangle.split.2x1")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
 
-                        HStack(spacing: 8) {
-                            ForEach(Array(panes.enumerated()), id: \.element.id) { index, pane in
-                                CompactPaneChip(
-                                    pane: pane,
-                                    isSelected: index == selectedPaneIndex,
-                                    isFocused: focusedRow == 1
-                                )
-                                .onTapGesture {
-                                    selectedPaneIndex = index
-                                    focusedRow = 1
+                        HStack(spacing: 16) {
+                            // Panes on the left
+                            HStack(spacing: 8) {
+                                ForEach(Array(panes.enumerated()), id: \.element.id) { index, pane in
+                                    CompactPaneChip(
+                                        pane: pane,
+                                        isSelected: !isGridModeSelected && index == selectedPaneIndex,
+                                        isFocused: focusedRow == 1 && !isGridModeSelected
+                                    )
+                                    .onTapGesture {
+                                        selectedPaneIndex = index
+                                        isGridModeSelected = false
+                                        focusedRow = 1
+                                    }
+                                }
+                            }
+
+                            // Separator and grid visualizations (always show)
+                            if !grids.isEmpty {
+                                Rectangle()
+                                    .fill(Color.secondary.opacity(0.3))
+                                    .frame(width: 1)
+                                    .frame(height: 40)
+
+                                // Grid visualizations on the right
+                                HStack(spacing: 12) {
+                                    ForEach(Array(grids.enumerated()), id: \.element.id) { index, grid in
+                                        GridVisualization(
+                                            grid: grid,
+                                            isSelected: isGridModeSelected && (grids.count == 1 || index == selectedGridIndex),
+                                            isFocused: focusedRow == 1 && isGridModeSelected
+                                        )
+                                        .onTapGesture {
+                                            selectedGridIndex = index
+                                            isGridModeSelected = true
+                                            focusedRow = 1
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -2471,7 +2692,7 @@ struct NewTerminalSheet: View {
                     Text("Create")
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(selectedPane == nil || (isNewWorktreeSelected && newBranchName.isEmpty))
+                .disabled(cannotConfirm)
                 .keyboardShortcut(.defaultAction)
             }
             .padding(.horizontal, 20)
@@ -2494,9 +2715,11 @@ struct NewTerminalSheet: View {
         .task {
             async let worktreesTask = WorktreeService.shared.listWorktrees(in: workspacePath)
             async let panesTask = LayoutService.shared.listPanes(in: workspacePath)
+            async let gridsTask = LayoutService.shared.listGrids(in: workspacePath)
 
             worktrees = await worktreesTask
-            panes = await panesTask
+            panes = await panesTask.filter { $0.isAi }  // Only show AI panes
+            grids = await gridsTask
             isLoading = false
         }
     }
@@ -2536,16 +2759,45 @@ struct NewTerminalSheet: View {
                 isNewBranchFieldFocused = true
             }
         } else if focusedRow == 1 {
-            selectedPaneIndex = max(0, min(panes.count - 1, selectedPaneIndex + delta))
+            // Row 1 has both panes and grids
+            // Total items = panes.count + grids.count
+            let totalItems = panes.count + grids.count
+
+            // Current position depends on whether we're in grid mode or pane mode
+            let currentPosition: Int
+            if isGridModeSelected {
+                currentPosition = panes.count + selectedGridIndex
+            } else {
+                currentPosition = selectedPaneIndex
+            }
+            let newPosition = max(0, min(totalItems - 1, currentPosition + delta))
+
+            if newPosition < panes.count {
+                // Moving to pane
+                selectedPaneIndex = newPosition
+                isGridModeSelected = false
+            } else {
+                // Moving to grid
+                selectedGridIndex = newPosition - panes.count
+                isGridModeSelected = true
+            }
         }
         // Row 2 (input field) doesn't have left/right selection
     }
 
     private func confirmSelection() {
-        guard let pane = selectedPane else { return }
         // For new worktree, require a branch name
         if isNewWorktreeSelected && newBranchName.isEmpty { return }
-        onCreateTerminal(selectedBranchName, pane.provider)
+
+        if isGridModeSelected, let grid = selectedGrid {
+            // Grid mode - launch the full grid
+            // Use the first pane's provider for tracking, or default to .claude
+            let provider = panes.first?.provider ?? .claude
+            onCreateTerminal(selectedBranchName, provider, grid.name)
+        } else if let pane = selectedPane {
+            // Pane mode - launch single pane
+            onCreateTerminal(selectedBranchName, pane.provider, nil)
+        }
         dismiss()
     }
 }
@@ -2690,13 +2942,16 @@ struct CompactPaneChip: View {
 
     var body: some View {
         VStack(spacing: 8) {
-            if pane.isAi {
-                AIProviderIcon(provider: pane.provider, size: 36)
-            } else {
-                Image(systemName: "terminal.fill")
-                    .font(.system(size: 36))
-                    .foregroundStyle(pane.swiftUIColor)
+            Group {
+                if pane.isAi {
+                    AIProviderIcon(provider: pane.provider, size: 40)
+                } else {
+                    Image(systemName: "terminal.fill")
+                        .font(.system(size: 40))
+                        .foregroundStyle(pane.swiftUIColor)
+                }
             }
+            .frame(height: 50)  // Match grid visualization height
 
             Text(pane.name)
                 .font(.callout)
@@ -2712,6 +2967,69 @@ struct CompactPaneChip: View {
             RoundedRectangle(cornerRadius: 16)
                 .strokeBorder(borderColor, lineWidth: isSelected && isFocused ? 2 : 1)
         )
+    }
+}
+
+// MARK: - Grid Visualization
+
+/// Visual representation of a grid layout (same size as CompactPaneChip: 112x104)
+struct GridVisualization: View {
+    let grid: GridInfo
+    let isSelected: Bool
+    let isFocused: Bool
+
+    private var borderColor: Color {
+        if isSelected && isFocused {
+            return .accentColor
+        } else if isSelected {
+            return .accentColor.opacity(0.5)
+        }
+        return Color.primary.opacity(0.1)
+    }
+
+    var body: some View {
+        VStack(spacing: 8) {
+            // Grid visualization - larger to fill the cell
+            HStack(alignment: .top, spacing: 3) {
+                ForEach(Array(grid.cellsByColumn.enumerated()), id: \.offset) { colIndex, columnCells in
+                    let colWidth = columnCells.first?.width ?? (100 / grid.columnCount)
+
+                    VStack(spacing: 3) {
+                        ForEach(Array(columnCells.enumerated()), id: \.offset) { rowIndex, cell in
+                            // Calculate height as proportion of total column height (47 = 50 - 3 spacing)
+                            let totalHeight: CGFloat = 47
+                            let spacing: CGFloat = CGFloat(columnCells.count - 1) * 3
+                            let availableHeight = totalHeight - spacing
+                            let rowHeight = cell.height ?? (100 / columnCells.count)
+                            let cellHeight = availableHeight * CGFloat(rowHeight) / 100
+
+                            RoundedRectangle(cornerRadius: 4)
+                                .fill(cell.swiftUIColor.opacity(isSelected ? 0.7 : 0.4))
+                                .frame(
+                                    width: CGFloat(colWidth) * 0.8,
+                                    height: cellHeight
+                                )
+                        }
+                    }
+                }
+            }
+            .frame(width: 80, height: 50)
+
+            Text(grid.displayName)
+                .font(.callout)
+                .lineLimit(1)
+                .foregroundStyle(isSelected ? .primary : .secondary)
+        }
+        .frame(width: 112, height: 104)
+        .background(
+            RoundedRectangle(cornerRadius: 16)
+                .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.04))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 16)
+                .strokeBorder(borderColor, lineWidth: isSelected && isFocused ? 2 : 1)
+        )
+        .contentShape(Rectangle())
     }
 }
 #endif

@@ -6,6 +6,7 @@ enum SidebarSection: Hashable {
     case optimizations(OptimizationsFilter)
     case team
     case terminals
+    case recovered
 }
 
 enum OptimizationsFilter: String, CaseIterable, Identifiable {

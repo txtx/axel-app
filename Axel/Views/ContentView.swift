@@ -20,11 +20,139 @@ struct ContentView: View {
     @State private var showWorkerPicker = false
     @State private var pendingTask: WorkTask?
     @State private var floatingSession: TerminalSession?
+    @State private var showCloseTerminalConfirmation = false
+    @State private var closeTargetSession: TerminalSession?
+    @State private var closeKillTmuxSession = false
     @Environment(\.terminalSessionManager) private var sessionManager
 
     /// Workers that are not linked to any task (standalone terminals available for assignment)
     private var availableWorkers: [TerminalSession] {
         sessionManager.sessions.filter { $0.taskId == nil }
+    }
+
+    private func requestCloseSession(_ session: TerminalSession) {
+        if session.status == .dormant {
+            closeSessionAndCleanup(session, killTmux: true)
+            return
+        }
+
+        closeTargetSession = session
+        closeKillTmuxSession = false
+        showCloseTerminalConfirmation = true
+    }
+
+    @MainActor
+    private func closeSessionAndCleanup(_ session: TerminalSession, killTmux: Bool) {
+        if let taskId = session.taskId,
+           let task = modelContext.model(for: taskId) as? WorkTask {
+            task.updateStatus(.backlog)
+        }
+
+        if let paneId = session.paneId {
+            let queuedTaskIds = TaskQueueService.shared.clearQueue(forTerminal: paneId)
+            for taskId in queuedTaskIds {
+                let taskDescriptor = FetchDescriptor<WorkTask>(predicate: #Predicate { $0.id == taskId })
+                if let task = try? modelContext.fetch(taskDescriptor).first {
+                    task.updateStatus(.backlog)
+                }
+            }
+
+            let terminalDescriptor = FetchDescriptor<Terminal>(
+                predicate: #Predicate { $0.paneId == paneId }
+            )
+            if let terminal = try? modelContext.fetch(terminalDescriptor).first {
+                terminal.task = nil
+
+                let hintDescriptor = FetchDescriptor<Hint>(
+                    predicate: #Predicate { hint in
+                        hint.status == "pending"
+                    }
+                )
+                if let hints = try? modelContext.fetch(hintDescriptor) {
+                    for hint in hints where hint.terminal?.paneId == paneId {
+                        hint.cancel()
+                    }
+                }
+            }
+
+            InboxService.shared.clearEventsForPane(paneId)
+
+            if killTmux {
+                Task { await killTmuxSession(paneId: paneId) }
+            }
+        }
+
+        let isClosingSelected = selectedSession?.id == session.id
+        let sessions = sessionManager.sessions
+        let nextSession = isClosingSelected ? computeAdjacentSession(closing: session, in: sessions) : selectedSession
+
+        sessionManager.stopSession(session)
+        if isClosingSelected {
+            selectedSession = nextSession
+        }
+    }
+
+    private func computeAdjacentSession(closing session: TerminalSession, in sessions: [TerminalSession]) -> TerminalSession? {
+        guard let currentIndex = sessions.firstIndex(where: { $0.id == session.id }) else {
+            return nil
+        }
+
+        if currentIndex > 0 {
+            return sessions[currentIndex - 1]
+        } else if sessions.count > 1 {
+            return sessions[currentIndex + 1]
+        }
+        return nil
+    }
+
+    private func killTmuxSession(paneId: String) async {
+        _ = await AxelSetupService.shared.checkInstallation()
+        let sessionName = await resolveSessionName(for: paneId)
+        let axelPath = AxelSetupService.shared.executablePath
+
+        if await runProcess(["/usr/bin/env", axelPath, "session", "kill", sessionName, "--confirm"]) == 0 {
+            return
+        }
+
+        if await runProcess(["/usr/bin/env", "tmux", "kill-session", "-t", sessionName]) == 0 {
+            return
+        }
+
+        _ = await runProcess(["/usr/bin/env", "tmux", "kill-pane", "-t", paneId])
+    }
+
+    private func resolveSessionName(for paneId: String) async -> String {
+        await SessionRecoveryService.shared.discoverSessions()
+        return SessionRecoveryService.shared.recoveredSessions.first(where: { $0.axelPaneId == paneId })?.name ?? paneId
+    }
+
+    private func runProcess(_ args: [String]) async -> Int32 {
+        guard let executable = args.first else { return -1 }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: executable)
+        process.arguments = Array(args.dropFirst())
+        AxelSetupService.shared.configureAxelProcess(process)
+        do {
+            try process.run()
+            process.waitUntilExit()
+            return process.terminationStatus
+        } catch {
+            return -1
+        }
+    }
+
+    private var sessionForClose: TerminalSession? {
+        closeTargetSession ?? selectedSession
+    }
+
+    private var pendingPermissionRequests: Int {
+        guard let paneId = sessionForClose?.paneId else { return 0 }
+        return InboxService.shared.unresolvedPermissionRequestCount(forPaneId: paneId)
+    }
+
+    private var queuedTaskCount: Int {
+        guard let paneId = sessionForClose?.paneId else { return 0 }
+        return TaskQueueService.shared.tasksQueued(onTerminal: paneId).count
     }
 
     /// Content column ID used to force width recalculation when switching sections
@@ -33,6 +161,7 @@ struct ContentView: View {
         case .inbox: return "inbox"
         case .queue: return "queue"
         case .terminals: return "terminals"
+        case .recovered: return "recovered"
         case .optimizations(.overview): return "optimizations"
         case .optimizations(.skills): return "skills"
         case .optimizations(.context): return "context"
@@ -168,8 +297,9 @@ struct ContentView: View {
 
         // Build command with pane-id and port
         // Use executablePath which prefers PATH version, falls back to bundled binary
+        // Format: axel session new <pane> --tmux --session-name ... --pane-id ... --port ...
         let axelPath = AxelSetupService.shared.executablePath
-        var command = "\(axelPath) \(provider.commandName) --tmux --session-name \(paneId) --pane-id=\(paneId) --port=\(port)"
+        var command = "\(axelPath) session new \(provider.commandName) --tmux --session-name \(paneId) --pane-id \(paneId) --port \(port)"
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
@@ -275,7 +405,10 @@ struct ContentView: View {
                 selection: $selectedHint
             )
         case .terminals:
-            RunningListView(selection: $selectedSession)
+            RunningListView(selection: $selectedSession, onRequestClose: requestCloseSession)
+        case .recovered:
+            // Recovered sessions not shown in global view (workspace-specific)
+            EmptyView()
         }
     }
 
@@ -298,7 +431,11 @@ struct ContentView: View {
             }
         case .terminals:
             if let session = selectedSession {
-                RunningDetailView(session: session, selection: $selectedSession)
+                RunningDetailView(
+                    session: session,
+                    selection: $selectedSession,
+                    onRequestClose: requestCloseSession
+                )
             } else {
                 EmptyRunningSelectionView()
             }
@@ -398,7 +535,7 @@ struct ContentView: View {
         .keyboardShortcut(for: .undo) { TaskUndoManager.shared.undo() }
         .keyboardShortcut(for: .redo) { TaskUndoManager.shared.redo() }
         .sheet(isPresented: $showWorkerPicker) {
-            WorkerPickerPanel(workspaceId: nil) { selectedWorker, provider in
+            WorkerPickerPanel(workspaceId: nil) { selectedWorker, provider, _ in
                 if let task = pendingTask {
                     if let worker = selectedWorker {
                         // User selected an existing worker
@@ -411,6 +548,26 @@ struct ContentView: View {
                 pendingTask = nil
             }
             .presentationDetents([.medium])
+        }
+        .sheet(isPresented: $showCloseTerminalConfirmation) {
+            TerminalCloseConfirmationSheet(
+                killTmuxSession: $closeKillTmuxSession,
+                pendingPermissionRequests: pendingPermissionRequests,
+                queuedTaskCount: queuedTaskCount,
+                onCancel: {
+                    closeKillTmuxSession = false
+                    closeTargetSession = nil
+                    showCloseTerminalConfirmation = false
+                },
+                onConfirm: {
+                    if let session = sessionForClose {
+                        closeSessionAndCleanup(session, killTmux: closeKillTmuxSession)
+                    }
+                    closeKillTmuxSession = false
+                    closeTargetSession = nil
+                    showCloseTerminalConfirmation = false
+                }
+            )
         }
         .overlay(alignment: .bottomTrailing) {
             if let session = floatingSession {

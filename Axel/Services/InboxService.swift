@@ -115,7 +115,7 @@ final class InboxService {
         let approveAction = UNNotificationAction(
             identifier: "APPROVE_ACTION",
             title: "Approve",
-            options: [.foreground]
+            options: []
         )
 
         // Reject action
@@ -385,6 +385,40 @@ final class InboxService {
             }
         }
         return blocked
+    }
+
+    /// Count of unresolved events for a specific pane
+    func unresolvedEventCount(forPaneId paneId: String) -> Int {
+        events.filter { $0.paneId == paneId && !resolvedEventIds.contains($0.id) }.count
+    }
+
+    /// Count of unresolved permission requests for a specific pane
+    func unresolvedPermissionRequestCount(forPaneId paneId: String) -> Int {
+        events.filter {
+            $0.paneId == paneId &&
+            $0.event.hookEventName == "PermissionRequest" &&
+            !resolvedEventIds.contains($0.id)
+        }.count
+    }
+
+    /// Clear all events for a specific pane (resolve them and remove from list)
+    func clearEventsForPane(_ paneId: String) {
+        // Mark all events for this pane as resolved
+        for event in events where event.paneId == paneId {
+            resolvedEventIds.insert(event.id)
+        }
+        // Remove events for this pane from the list
+        events.removeAll { $0.paneId == paneId }
+        // Clean up related tracking state
+        lastStopEventPerSession = lastStopEventPerSession.filter { _, eventId in
+            !events.contains { $0.id == eventId && $0.paneId == paneId }
+        }
+        lastPermissionRequestPerSession = lastPermissionRequestPerSession.filter { _, eventId in
+            !events.contains { $0.id == eventId && $0.paneId == paneId }
+        }
+        permissionRequestTokenSnapshot.removeValue(forKey: paneId)
+        permissionRequestTimestamp.removeValue(forKey: paneId)
+        print("[InboxService] Cleared all events for pane \(paneId.prefix(8))...")
     }
 
     /// Legacy connect() for backwards compatibility - does nothing now

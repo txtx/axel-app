@@ -197,6 +197,9 @@ final class WorkspaceContainerManager {
                 }
             }
         }
+
+        // Create "Initialize workspace" task if no AXEL.md exists
+        try createInitializeWorkspaceTaskIfNeeded(workspace, container: container)
     }
 
     /// Get workspace from workspace-specific container
@@ -207,6 +210,290 @@ final class WorkspaceContainerManager {
         )
         return try context.fetch(descriptor).first
     }
+
+    /// Check if AXEL.md exists at the workspace path
+    private func hasAxelManifest(at workspacePath: String?) -> Bool {
+        guard let path = workspacePath else { return false }
+        let manifestPath = (path as NSString).appendingPathComponent("AXEL.md")
+        return FileManager.default.fileExists(atPath: manifestPath)
+    }
+
+    /// Create the default "Initialize workspace" task when no AXEL.md exists
+    /// This task provides instructions for the AI agent to analyze the repo and create an appropriate AXEL.md
+    func createInitializeWorkspaceTaskIfNeeded(_ workspace: Workspace, container: ModelContainer) throws {
+        // Helper to write debug logs
+        func debugLog(_ message: String) {
+            let debugMsg = "[DEBUG \(Date())] \(message)\n"
+            let debugPath = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".config/axel/init-task-debug.log")
+            if let data = debugMsg.data(using: .utf8) {
+                if FileManager.default.fileExists(atPath: debugPath.path) {
+                    if let handle = try? FileHandle(forWritingTo: debugPath) {
+                        handle.seekToEndOfFile()
+                        handle.write(data)
+                        handle.closeFile()
+                    }
+                } else {
+                    try? data.write(to: debugPath)
+                }
+            }
+            print("[WorkspaceContainerManager] \(message)")
+        }
+
+        debugLog("Checking init task for: \(workspace.name), path: \(workspace.path ?? "nil")")
+
+        // Skip if workspace has no path
+        guard let workspacePath = workspace.path else {
+            debugLog("SKIP: no workspace path")
+            return
+        }
+
+        // Skip if AXEL.md already exists
+        if hasAxelManifest(at: workspacePath) {
+            debugLog("SKIP: AXEL.md exists at \(workspacePath)")
+            return
+        }
+
+        debugLog("No AXEL.md found, checking for existing task...")
+
+        let context = container.mainContext
+
+        // Check if we already have an active "Initialize workspace" task to avoid duplicates
+        // Only skip if there's a pending/queued/running init task
+        // If the task was completed/aborted but AXEL.md is missing, create a new one
+        let descriptor = FetchDescriptor<WorkTask>()
+        let existingTasks = try context.fetch(descriptor)
+        debugLog("Found \(existingTasks.count) existing tasks")
+
+        let activeInitTask = existingTasks.first { task in
+            let isInitTask = task.title.lowercased().contains("initialize workspace")
+            let isActive = task.status != TaskStatus.completed.rawValue && task.status != TaskStatus.aborted.rawValue
+            return isInitTask && isActive
+        }
+        if activeInitTask != nil {
+            debugLog("SKIP: active init task already exists (status: \(activeInitTask?.status ?? "unknown"))")
+            return
+        }
+
+        debugLog("No init task exists, fetching local workspace...")
+
+        // Get the local workspace from this container (not the shared container's workspace)
+        let workspaceId = workspace.id
+        let workspaceDescriptor = FetchDescriptor<Workspace>(
+            predicate: #Predicate { $0.id == workspaceId }
+        )
+        guard let localWorkspace = try context.fetch(workspaceDescriptor).first else {
+            debugLog("SKIP: local workspace not found for id \(workspaceId)")
+            return
+        }
+
+        debugLog("Creating init task...")
+
+        // Create the task with comprehensive instructions
+        let task = WorkTask(
+            title: "Initialize workspace",
+            description: Self.initializeWorkspaceDescription
+        )
+        task.workspace = localWorkspace
+        context.insert(task)
+        try context.save()
+        debugLog("✓ Created 'Initialize workspace' task for: \(workspace.name)")
+    }
+
+    /// The description/instructions for the "Initialize workspace" task
+    private static let initializeWorkspaceDescription = """
+## Task: Create an AXEL.md workspace configuration
+
+This workspace doesn't have an `AXEL.md` file yet. Analyze the repository to understand its structure and create an appropriate workspace layout configuration.
+
+### What is AXEL.md?
+
+AXEL.md is a markdown file with YAML frontmatter that defines the workspace layout for the Axel terminal manager. It configures:
+- **Panes**: AI agents (Claude, Codex, etc.) and shell terminals
+- **Grids**: How panes are arranged in tmux sessions
+
+### AXEL.md Schema
+
+```yaml
+---
+workspace: my-project-name
+
+layouts:
+  panes:
+    # AI agent types: claude, codex, opencode, antigravity
+    - type: claude
+      color: gray           # UI color: purple, yellow, red, green, blue, gray, orange
+      skills: ["*"]         # Skills to load, "*" for all
+      # model: sonnet       # Optional: sonnet, opus, haiku
+      # prompt: "..."       # Optional: initial system prompt
+
+    # Custom panes (shells, commands) - use unique names!
+    - type: custom
+      name: shell           # Unique name for referencing in grids
+      notes:
+        - "$ npm run dev"   # Startup notes/commands
+
+    # Custom command pane example
+    # - type: custom
+    #   name: logs
+    #   command: "tail -f logs/app.log"
+    #   color: red
+
+  grids:
+    default:
+      type: tmux            # tmux, tmux_cc (iTerm2), or shell (no tmux)
+      claude:               # References pane with name "claude"
+        col: 0              # Column position (0, 1, 2...)
+        row: 0              # Row position within column
+        # width: 50         # Column width percentage
+        # height: 50        # Row height percentage
+      shell:                # References pane with name "shell"
+        col: 1
+        row: 0
+        color: yellow
+---
+
+# my-project-name
+
+Workspace description here.
+```
+
+### Steps to Complete This Task
+
+1. **Analyze the repository**:
+   - Check for `package.json` (Node.js), `Cargo.toml` (Rust), `pyproject.toml`/`requirements.txt` (Python), etc.
+   - Look at existing scripts (dev servers, build commands, test runners)
+   - Identify what commands developers typically run
+
+2. **Choose an appropriate layout**:
+
+   **For a Node.js/Frontend app:**
+   ```yaml
+   workspace: my-nodejs-app
+
+   layouts:
+     panes:
+       - type: claude
+         color: gray
+         skills: ["*"]
+       - type: custom
+         name: shell
+         notes:
+           - "$ npm run dev"
+
+     grids:
+       default:
+         type: tmux
+         claude:
+           col: 0
+           row: 0
+           width: 50
+         shell:
+           col: 1
+           row: 0
+   ```
+
+   **For a Rust project:**
+   ```yaml
+   workspace: my-rust-project
+
+   layouts:
+     panes:
+       - type: claude
+         color: gray
+         skills: ["*"]
+       - type: custom
+         name: shell
+         notes:
+           - "$ cargo watch -x run"
+
+     grids:
+       default:
+         type: tmux
+         claude:
+           col: 0
+           row: 0
+         shell:
+           col: 1
+           row: 0
+   ```
+
+   **For a Python project:**
+   ```yaml
+   workspace: my-python-project
+
+   layouts:
+     panes:
+       - type: claude
+         color: gray
+         skills: ["*"]
+       - type: custom
+         name: shell
+         notes:
+           - "$ python -m pytest --watch"
+
+     grids:
+       default:
+         type: tmux
+         claude:
+           col: 0
+           row: 0
+         shell:
+           col: 1
+           row: 0
+   ```
+
+   **Popular layout (Claude left, shell + app on right) - RECOMMENDED:**
+
+   Many developers prefer Claude on the left half of the screen, with the right side split vertically: a free shell on top for ad-hoc commands, and the app/dev server running beneath.
+
+   ```yaml
+   workspace: my-project
+
+   layouts:
+     panes:
+       - type: claude
+         color: gray
+         skills: ["*"]
+       - type: custom
+         name: shell
+         notes:
+           - "Free shell for commands"
+       - type: custom
+         name: dev_server
+         notes:
+           - "$ npm run dev"  # or your dev server command
+
+     grids:
+       default:
+         type: tmux
+         claude:
+           col: 0
+           row: 0
+           width: 50
+         shell:
+           col: 1
+           row: 0
+           height: 40
+         dev_server:
+           col: 1
+           row: 1
+           height: 60
+   ```
+
+3. **Create the AXEL.md file** at the repository root with your chosen configuration.
+
+4. **Add a brief description** below the frontmatter explaining the workspace purpose.
+
+### Tips
+
+- **Most popular layout**: Claude on left (50%), right side split with free shell on top (40%) and dev server below (60%)
+- Keep layouts simple - 2-3 panes is usually enough
+- Put the AI agent (claude) on the left half of the screen
+- Stack shells vertically on the right side
+- Use `notes` to remind users what commands to run in each shell
+- **Use unique names**: For multiple custom panes, use `type: custom` with unique `name` values (e.g., "shell", "dev_server", "logs")
+- Color-code panes for easy identification
+"""
 
     /// Get the database URL for a workspace (for debugging/diagnostics)
     func databaseUrl(for workspaceId: UUID) -> URL {

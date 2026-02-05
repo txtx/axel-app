@@ -322,16 +322,16 @@ struct SidebarView: View {
                         if backlogTasksCount + upNextTasksCount > 0 {
                             Text("\(backlogTasksCount + upNextTasksCount)")
                                 .font(.callout.monospacedDigit())
-                                .foregroundStyle(.blue)
+                                .foregroundStyle(Color(hex: "693EFE")!)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(.blue.opacity(0.15))
+                                .background(Color(hex: "693EFE")!.opacity(0.15))
                                 .clipShape(Capsule())
                         }
                     }
                 } icon: {
                     Image(systemName: "rectangle.stack")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(Color(hex: "693EFE")!)
                 }
                 .tag(SidebarSection.queue(.backlog))
 
