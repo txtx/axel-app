@@ -233,13 +233,41 @@ jobs:
           KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+
+          # Create and configure keychain
           security create-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
           security set-keychain-settings -lut 21600 $KEYCHAIN_PATH
           security unlock-keychain -p "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Import certificate
           echo "$MACOS_CERTIFICATE" | base64 --decode > certificate.p12
           security import certificate.p12 -P "$MACOS_CERTIFICATE_PWD" -A -t cert -f pkcs12 -k $KEYCHAIN_PATH
-          security list-keychain -d user -s $KEYCHAIN_PATH
-          codesign --force --deep --sign "Developer ID Application" "dist/${{ env.PRODUCT_NAME }}.app"
+
+          # Allow codesign to access the key without prompting
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" $KEYCHAIN_PATH
+
+          # Add to search list
+          security list-keychain -d user -s $KEYCHAIN_PATH login.keychain
+
+          # Debug: list available signing identities
+          echo "Available signing identities:"
+          security find-identity -v -p codesigning $KEYCHAIN_PATH
+
+          # Find and use the Developer ID Application identity
+          IDENTITY=$(security find-identity -v -p codesigning $KEYCHAIN_PATH | grep "Developer ID Application" | head -1 | sed 's/.*"\(.*\)".*/\1/')
+          if [ -z "$IDENTITY" ]; then
+            echo "Error: No Developer ID Application identity found"
+            echo "All identities in keychain:"
+            security find-identity -v $KEYCHAIN_PATH
+            exit 1
+          fi
+
+          echo "Signing with identity: $IDENTITY"
+          codesign --force --options runtime --sign "$IDENTITY" "dist/${{ env.PRODUCT_NAME }}.app/Contents/Resources/axel"
+          codesign --force --options runtime --deep --sign "$IDENTITY" "dist/${{ env.PRODUCT_NAME }}.app"
+
+          # Verify signature
+          codesign -vvv --deep --strict "dist/${{ env.PRODUCT_NAME }}.app"
 
       - name: Create DMG
         if: steps.check_release.outputs.should_release == 'true'
