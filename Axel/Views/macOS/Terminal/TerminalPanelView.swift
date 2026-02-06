@@ -71,23 +71,25 @@ struct SimpleSurfaceWrapper: View {
 
     // Must match TerminalEmulator.TerminalTheme.dark.background
     private let terminalBackground = Color.black
-    private let padding: CGFloat = 12
+    private let padding: CGFloat = 8
 
     var body: some View {
         GeometryReader { geo in
             let innerSize = CGSize(
-                width: max(0, geo.size.width - padding * 2),
+                width: max(0, geo.size.width - padding),
                 height: max(0, geo.size.height - padding * 2)
             )
 
             TerminalEmulator.SurfaceRepresentable(view: surfaceView, size: innerSize)
                 .frame(width: innerSize.width, height: innerSize.height)
-                .padding(padding)
+                .padding(.top, padding)
+                .padding(.bottom, padding)
+                .padding(.trailing, padding)
         }
         .background(terminalBackground)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
+        .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
                 .stroke(Color.primary.opacity(0.2), lineWidth: 1)
         )
         .onAppear {

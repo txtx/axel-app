@@ -50,6 +50,7 @@ struct WorkspaceContentView: View {
     @State private var teamColumnWidth: CGFloat = 280
     @State private var contextColumnWidth: CGFloat = 280
     @Environment(\.terminalSessionManager) private var sessionManager
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Workers that are not linked to any task (standalone terminals available for assignment)
     /// Filtered to only show workers for this workspace
@@ -518,7 +519,12 @@ struct WorkspaceContentView: View {
             .transaction { transaction in
                 transaction.animation = nil
             }
+            .background(sidebarSelection == .terminals ? agentsBackgroundColor : Color.clear)
         }
+    }
+
+    private var agentsBackgroundColor: Color {
+        colorScheme == .dark ? Color(hex: "292F30")! : Color.white
     }
 
     @ViewBuilder
@@ -565,7 +571,7 @@ struct WorkspaceContentView: View {
             }
         case .terminals:
             if let session = selectedSession {
-                RunningDetailView(
+                AgentsScene(
                     session: session,
                     selection: $selectedSession,
                     onRequestClose: requestCloseSession
@@ -2127,15 +2133,16 @@ struct ResizableDivider: View {
 
     @State private var isDragging = false
     @State private var dragStartWidth: CGFloat = 0
+    @Environment(\.colorScheme) private var colorScheme
 
     private var dividerWidth: CGFloat {
-        style == .terminal ? 5 : 1
+        style == .terminal ? 1 : 1
     }
 
     private var dividerColor: Color {
         switch style {
         case .terminal:
-            return Color(hex: "141414")!
+            return colorScheme == .dark ? Color(hex: "292F30")! : Color.white
         case .standard:
             return Color.primary.opacity(isDragging ? 0.2 : 0.08)
         }

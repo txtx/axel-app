@@ -410,6 +410,7 @@ struct RunningListView: View {
     let onRequestClose: (TerminalSession) -> Void
     @Environment(\.terminalSessionManager) private var sessionManager
     @FocusState private var isFocused: Bool
+    @Environment(\.colorScheme) private var colorScheme
 
     // Centralized status service - replaces scattered status logic
     private let statusService = SessionStatusService.shared
@@ -543,11 +544,15 @@ struct RunningListView: View {
                 }
             }
         }
-        .background(.background)
+        .background(backgroundColor)
         .modifier(GridKeyboardNavigation(
             navigate: navigateSelection,
             isFocused: $isFocused
         ))
+    }
+
+    private var backgroundColor: Color {
+        colorScheme == .dark ? Color(hex: "292F30")! : Color.white
     }
 
     private var emptyState: some View {
@@ -692,10 +697,29 @@ struct TerminalSectionView: View {
                         selection = session
                     }
                     .contextMenu {
+                        let installedTerminals = TerminalApp.installedApps
+                        if let paneId = session.paneId, !installedTerminals.isEmpty {
+                            Menu {
+                                ForEach(installedTerminals) { terminal in
+                                    Button {
+                                        let axelPath = AxelSetupService.shared.executablePath
+                                        terminal.open(withCommand: "\(axelPath) session join \(paneId)")
+                                    } label: {
+                                        Label(terminal.name, systemImage: terminal.iconName)
+                                    }
+                                }
+                            } label: {
+                                Label("Open in terminal", systemImage: "arrow.up.forward.app")
+                            }
+                        } else {
+                            Label("Open in terminal", systemImage: "arrow.up.forward.app")
+                                .disabled(true)
+                        }
+
                         Button(role: .destructive) {
                             onRequestClose(session)
                         } label: {
-                            Label("Stop", systemImage: "stop.fill")
+                            Label("Kill session", systemImage: "xmark.circle.fill")
                         }
                     }
                 }
@@ -753,54 +777,53 @@ struct TerminalMiniatureView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
-                // Token histogram overlay (bottom-right) - hide for shell panes
-                if session.provider != .shell && session.provider != .custom {
-                    TokenHistogramOverlay(paneId: session.paneId)
-                        .padding(8)
-                }
             }
             .frame(height: previewHeight)
-            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            .padding(2)
+            .overlay(
+                RoundedRectangle(cornerRadius: 16, style: .continuous)
+                    .stroke(isSelected ? Self.selectionBorderColor : Color.clear, lineWidth: isSelected ? 5 : 0)
+            )
+            .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 0)
             .padding(12)
 
-            // Task info with status indicator
-            HStack(spacing: 6) {
-                // Status indicator - shows current session state
-                StatusIndicator(status: session.status)
+            // Worktree + histogram capsule (centered)
+            HStack {
+                Spacer(minLength: 0)
+                HStack(spacing: 6) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.caption2)
+                    Text(session.worktreeBranch ?? "no worktree")
+                        .font(.caption2.weight(.medium))
+                        .lineLimit(1)
 
-                Text(session.taskTitle)
-                    .font(.caption.weight(.medium))
-                    .lineLimit(1)
-
-                Spacer()
-
-                // Worktree badge - only show if in a worktree (not main)
-                if session.worktreeBranch != nil {
-                    HStack(spacing: 3) {
-                        Image(systemName: "arrow.triangle.branch")
-                            .font(.caption2)
-                        Text(session.worktreeDisplayName)
-                            .font(.caption2)
+                    if session.provider != .shell && session.provider != .custom {
+                        Rectangle()
+                            .fill(isSelected ? Color.white.opacity(0.6) : Color.secondary.opacity(0.3))
+                            .frame(width: 1, height: 10)
+                        TokenHistogramOverlay(paneId: session.paneId, foregroundColor: isSelected ? .white : .secondary)
                     }
-                    .foregroundStyle(.purple)
-                    .padding(.horizontal, 6)
-                    .padding(.vertical, 2)
-                    .background(Color.purple.opacity(0.15))
-                    .clipShape(Capsule())
                 }
+                .foregroundStyle(isSelected ? Color.white : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 3)
+                .background(
+                    Capsule()
+                        .fill(isSelected ? Self.selectionBorderColor : Color.primary.opacity(0.06))
+                )
+                .overlay(
+                    Capsule()
+                        .stroke(isSelected ? Color.white.opacity(0.15) : Color.clear, lineWidth: isSelected ? 1 : 0)
+                )
+                Spacer(minLength: 0)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 12)
+            .padding(.bottom, 8)
         }
-        .background(
-            RoundedRectangle(cornerRadius: 8)
-                .fill(isSelected ? Color.orange.opacity(0.15) : Color.primary.opacity(0.05))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(isSelected ? Color.orange.opacity(0.5) : Color.clear, lineWidth: 2)
-        )
     }
+
+    private static let selectionBorderColor = Color(hex: "693EFE")!
 }
 
 
@@ -984,27 +1007,22 @@ struct TerminalApp: Identifiable {
     }
 }
 
-// MARK: - Running Detail View (Right Panel)
+// MARK: - Agents Scene (Right Panel)
 
-struct RunningDetailView: View {
+struct AgentsScene: View {
     let session: TerminalSession
     @Binding var selection: TerminalSession?
     let onRequestClose: (TerminalSession) -> Void
     @State private var installedTerminals: [TerminalApp] = []
     @State private var isHoveringPill = false
+    @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topTrailing) {
                 // Full terminal view
-                if let surfaceView = session.surfaceView {
-                    TerminalFullView(surfaceView: surfaceView)
-                        .id(session.id)
-                } else {
-                    Color(red: 0x18/255.0, green: 0x26/255.0, blue: 0x2F/255.0)
-                    Text("Terminal not available")
-                        .foregroundStyle(.secondary)
-                }
+                terminalSurface
+                    .id(session.id)
 
                 // Floating glass pill toolbar
                 TerminalGlassPill(
@@ -1018,9 +1036,36 @@ struct RunningDetailView: View {
                 .padding(.trailing, 12)
             }
         }
-        .background(Color(red: 0x18/255.0, green: 0x26/255.0, blue: 0x2F/255.0))
+        .background(backgroundColor)
         .onAppear {
             installedTerminals = TerminalApp.installedApps
+        }
+    }
+
+    private var backgroundColor: Color {
+        colorScheme == .dark ? Color(hex: "292F30")! : Color.white
+    }
+
+    @ViewBuilder
+    private var terminalSurface: some View {
+        if let surfaceView = session.surfaceView {
+            TerminalFullView(surfaceView: surfaceView)
+                .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+                .padding(.top, 8)
+                .padding(.bottom, 8)
+                .padding(.trailing, 8)
+                .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 0)
+        } else {
+            ZStack {
+                backgroundColor
+                Text("Terminal not available")
+                    .foregroundStyle(.secondary)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+            .padding(.top, 8)
+            .padding(.bottom, 8)
+            .padding(.trailing, 8)
+            .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 0)
         }
     }
 
@@ -1213,6 +1258,7 @@ struct EmptyRunningSelectionView: View {
 
 struct TokenHistogramOverlay: View {
     let paneId: String?
+    var foregroundColor: Color = .secondary
     @State private var costTracker = CostTracker.shared
 
     private var provider: AIProvider {
@@ -1235,34 +1281,27 @@ struct TokenHistogramOverlay: View {
     var body: some View {
         HStack(spacing: 6) {
             AIProviderIcon(provider: provider, size: 14)
-                .opacity(0.7)
+                .opacity(foregroundColor == .secondary ? 0.7 : 1.0)
 
             // Histogram bars
             HStack(alignment: .bottom, spacing: 1.5) {
                 ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
                     UnevenRoundedRectangle(topLeadingRadius: 1, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 1)
-                        .fill(provider.color)
-                        .frame(width: 5, height: max(2, value * 12))
+                        .fill(foregroundColor == .secondary ? provider.color : foregroundColor)
+                        .frame(width: 5, height: max(2, value * 10))
                 }
             }
-            .frame(height: 12)
+            .frame(height: 10)
 
             Text(formatTokenCount(totalTokens))
                 .font(.system(size: 9, weight: .medium, design: .monospaced))
-                .foregroundStyle(.white.opacity(0.9))
+                .foregroundStyle(foregroundColor)
                 .lineLimit(1)
                 .fixedSize()
         }
         .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 6)
-                .fill(.black.opacity(0.75))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 6)
-                        .strokeBorder(.white.opacity(0.1), lineWidth: 0.5)
-                )
-        )
+        .padding(.vertical, 0)
+        .foregroundStyle(foregroundColor)
     }
 
     private func formatTokenCount(_ count: Int) -> String {
@@ -2184,11 +2223,11 @@ struct WorkerPickerRow: View {
         }
         .padding(10)
         .background(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .fill(isSelected ? Color.accentColor.opacity(0.15) : Color.primary.opacity(0.05))
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 8)
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
                 .strokeBorder(isSelected ? Color.accentColor : Color.primary.opacity(0.1), lineWidth: isSelected ? 2 : 1)
         )
     }
@@ -2247,12 +2286,12 @@ struct FloatingTerminalMiniature: View {
                 .buttonStyle(.plain)
             }
             .background(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .fill(.background)
                     .shadow(color: .black.opacity(0.2), radius: 16, x: 0, y: 8)
             )
             .overlay(
-                RoundedRectangle(cornerRadius: 12)
+                RoundedRectangle(cornerRadius: 24, style: .continuous)
                     .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
             )
             .frame(width: 280)

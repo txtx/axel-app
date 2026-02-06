@@ -34,7 +34,7 @@ import Foundation
 // 2. **Delta calculation happens here**: TerminalCostTracker tracks
 //    "lastSession" values to compute deltas. This handles:
 //    - Out-of-order OTEL batches (max(0, delta) prevents negatives)
-//    - Session resets (detected via 50% drop threshold)
+//    - Session resets (detected via sessionId change in registerSession)
 //    - Multiple calls with same values (delta = 0)
 //
 // 3. **Session ID mapping**: OTEL uses Claude's internal sessionId, but
@@ -143,9 +143,9 @@ struct TaskSegment: Identifiable, Equatable {
 /// ## Session Reset Detection
 ///
 /// When a new Claude session starts, OTEL counters reset to 0. We detect this
-/// via a "50% drop" heuristic: if incoming total < lastSession total / 2
-/// (and lastSession had >100 tokens), we reset lastSession tracking values
-/// but preserve all-time cumulative totals.
+/// primarily via sessionId changes: CostTracker.registerSession() tracks the
+/// current sessionId per pane and calls resetSessionTracking() when it changes.
+/// A fallback heuristic (incoming < lastSession/3) catches edge cases.
 ///
 /// ## Thread Safety
 ///
@@ -205,6 +205,18 @@ final class TerminalCostTracker: Identifiable {
         self.provider = provider
     }
 
+    /// Reset session tracking values (called when a new Claude session is detected).
+    /// Preserves all-time totals but resets the delta calculation baseline so that
+    /// the new session's cumulative values are correctly interpreted from 0.
+    func resetSessionTracking() {
+        print("[CostTracker:\(id.prefix(8))] resetSessionTracking: resetting lastSession values (totals preserved: \(totalTokens))")
+        lastSessionInputTokens = 0
+        lastSessionOutputTokens = 0
+        lastSessionCacheReadTokens = 0
+        lastSessionCacheCreationTokens = 0
+        lastSessionCostUSD = 0
+    }
+
     /// Record a metrics update from OTEL data.
     ///
     /// - Parameters:
@@ -218,9 +230,9 @@ final class TerminalCostTracker: Identifiable {
     ///
     /// ## Algorithm
     ///
-    /// 1. **Session reset detection**: If incoming total < 50% of last session
-    ///    (and last session had >100 tokens), assume new Claude session started.
-    ///    Reset lastSession tracking but preserve all-time totals.
+    /// 1. **Session reset detection**: Primarily handled upstream via sessionId
+    ///    tracking in CostTracker.registerSession(). Fallback: if incoming total
+    ///    < 1/3 of last session, assume new session started.
     ///
     /// 2. **Delta calculation**: `delta = incoming - lastSession`. Uses `max(0, ...)`
     ///    to handle out-of-order OTEL batches that might report slightly lower values.
@@ -242,30 +254,18 @@ final class TerminalCostTracker: Identifiable {
     /// ```
     @discardableResult
     func recordMetrics(inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int, costUSD: Double) -> (deltaInput: Int, deltaOutput: Int, deltaCacheRead: Int, deltaCacheCreation: Int, deltaCost: Double) {
-        // Step 1: Detect session reset
-        // OTEL counters reset when a new Claude session starts. We detect this
-        // by checking if the incoming total is NEAR ZERO (not just lower than before).
+        // Session reset detection is now handled upstream via sessionId tracking
+        // in CostTracker.registerSession(). When a new sessionId is detected for
+        // a pane, resetSessionTracking() is called before recordMetrics, so
+        // lastSession* values are already 0 for new sessions.
         //
-        // IMPORTANT: We can NOT use "incoming < lastSession/2" because OTEL batches
-        // don't always include all models. When a subagent (haiku) is used alongside
-        // the main model (sonnet), we sum their cumulative counters. But if one batch
-        // only contains one model's data, the sum drops significantly - this is NOT
-        // a session reset, just incomplete data.
-        //
-        // A REAL session reset would have incoming values near 0 (fresh session).
+        // Fallback: detect reset if incoming values are much lower than tracked values.
+        // This catches edge cases where registerSession wasn't called first.
         let incomingTotal = inputTokens + outputTokens + cacheReadTokens + cacheCreationTokens
         let lastSessionTotal = lastSessionInputTokens + lastSessionOutputTokens + lastSessionCacheReadTokens + lastSessionCacheCreationTokens
 
-        // Only reset if incoming is near zero AND we had significant previous data
-        // This catches real session resets while ignoring incomplete OTEL batches
-        let sessionReset = lastSessionTotal > 1000 && incomingTotal < 100
-
-        // DEBUG: Log incoming values and session state
-        print("[CostTracker:\(id.prefix(8))] recordMetrics: incoming(in:\(inputTokens) out:\(outputTokens) cacheR:\(cacheReadTokens) cacheC:\(cacheCreationTokens)) lastSession(in:\(lastSessionInputTokens) out:\(lastSessionOutputTokens)) total:\(totalInputTokens + totalOutputTokens)")
-
-        if sessionReset {
-            print("[CostTracker:\(id.prefix(8))] SESSION RESET detected: incoming=\(incomingTotal) near zero, lastSession=\(lastSessionTotal)")
-            // New Claude session started - reset tracking but keep all-time totals
+        if lastSessionTotal > 1000 && incomingTotal < lastSessionTotal / 3 {
+            print("[CostTracker:\(id.prefix(8))] SESSION RESET (fallback): incoming=\(incomingTotal) << lastSession=\(lastSessionTotal)")
             lastSessionInputTokens = 0
             lastSessionOutputTokens = 0
             lastSessionCacheReadTokens = 0
@@ -461,6 +461,11 @@ final class CostTracker {
     /// Maps paneId to taskId for linking terminal metrics to task trackers.
     private var paneToTask: [String: UUID] = [:]
 
+    /// Tracks the current sessionId for each pane, used to detect session changes.
+    /// When a new sessionId appears for an existing pane, we reset the terminal
+    /// tracker's lastSession values so the new session's tokens are counted correctly.
+    private var paneIdToCurrentSessionId: [String: String] = [:]
+
     /// Maximum data points to keep in globalTimeSeries
     private let maxGlobalDataPoints = 120
 
@@ -497,10 +502,23 @@ final class CostTracker {
 
     // MARK: - Session Mapping
 
-    /// Register a mapping from claudeSessionId to paneId (called when hook events arrive)
-    /// This allows us to find the right terminal when OTEL metrics arrive with sessionId
+    /// Register a mapping from claudeSessionId to paneId (called when hook events arrive).
+    /// This allows us to find the right terminal when OTEL metrics arrive with sessionId.
+    ///
+    /// Also detects session changes: when a new sessionId appears for an existing pane,
+    /// the terminal tracker's lastSession values are reset so the new session's OTEL
+    /// cumulative counters (which start from 0) are correctly interpreted as deltas.
     func registerSession(paneId: String, sessionId: String) {
         sessionIdToPaneId[sessionId] = paneId
+
+        // Detect session change for this pane
+        let previousSessionId = paneIdToCurrentSessionId[paneId]
+        if let prev = previousSessionId, prev != sessionId {
+            // New session detected for this pane - reset delta tracking
+            print("[CostTracker] Session change detected for pane \(paneId.prefix(8)): \(prev.prefix(8)) → \(sessionId.prefix(8))")
+            terminalTrackers[paneId]?.resetSessionTracking()
+        }
+        paneIdToCurrentSessionId[paneId] = sessionId
     }
 
     /// Get paneId for a sessionId (used when OTEL metrics arrive)
@@ -707,6 +725,7 @@ final class CostTracker {
         terminalTrackers.removeAll()
         taskTrackers.removeAll()
         sessionIdToPaneId.removeAll()
+        paneIdToCurrentSessionId.removeAll()
         paneToTask.removeAll()
     }
 
@@ -714,6 +733,7 @@ final class CostTracker {
     func removeTerminal(_ paneId: String) {
         terminalTrackers.removeValue(forKey: paneId)
         paneToTask.removeValue(forKey: paneId)
+        paneIdToCurrentSessionId.removeValue(forKey: paneId)
         // Also remove sessionId mappings that point to this paneId
         sessionIdToPaneId = sessionIdToPaneId.filter { $0.value != paneId }
     }

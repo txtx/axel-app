@@ -24,6 +24,14 @@ extension WorkTask: ExpandableListItem, Equatable {
     }
 }
 
+struct TaskTableSection {
+    let title: String
+    let color: NSColor?
+    let status: TaskStatus
+    let tasks: [WorkTask]
+    let placeholderText: String?
+}
+
 // MARK: - Tasks Scene View
 // Extracted from WorkspaceContentView.swift
 
@@ -35,8 +43,6 @@ struct WorkspaceQueueListView: View {
     var onNewTask: () -> Void
     var onStartTerminal: ((WorkTask) -> Void)?
     var onDeleteTasks: (([WorkTask]) -> Void)?
-    @State private var lastTapTime: Date = .distantPast
-    @State private var lastTapTaskId: UUID?
     @State private var viewModel = TasksSceneViewModel()
     @State private var showDeleteConfirmation = false
     @State private var isSyncingHighlightedBinding = false
@@ -327,10 +333,9 @@ struct WorkspaceQueueListView: View {
             }
         }
 
-        let now = Date()
-        let isDoubleTap = lastTapTaskId == task.id && now.timeIntervalSince(lastTapTime) < 0.3
+        let clickCount = NSApp.currentEvent?.clickCount ?? 1
 
-        if isDoubleTap {
+        if clickCount > 1 {
             // Double-click: toggle expansion
             withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                 if viewModel.expandedTaskId == task.id {
@@ -339,23 +344,21 @@ struct WorkspaceQueueListView: View {
                     viewModel.expandedTaskId = task.id
                 }
             }
-            lastTapTime = .distantPast
-            lastTapTaskId = nil
         } else if modifiers.contains(.shift) {
-            // Shift+click: extend selection
-            extendSelectionTo(task)
-            lastTapTime = now
-            lastTapTaskId = task.id
+            // Shift+click: extend selection (no animation)
+            withTransaction(Transaction(animation: nil)) {
+                extendSelectionTo(task)
+            }
         } else if modifiers.contains(.command) {
-            // Cmd+click: toggle selection
-            toggleTaskSelection(task)
-            lastTapTime = now
-            lastTapTaskId = task.id
+            // Cmd+click: toggle selection (no animation)
+            withTransaction(Transaction(animation: nil)) {
+                toggleTaskSelection(task)
+            }
         } else {
-            // Single click: select
-            selectTask(task)
-            lastTapTime = now
-            lastTapTaskId = task.id
+            // Single click: select (no animation)
+            withTransaction(Transaction(animation: nil)) {
+                selectTask(task)
+            }
         }
     }
 
@@ -394,7 +397,8 @@ struct WorkspaceQueueListView: View {
             onMarkComplete: markSelectedComplete,
             onMarkCancelled: markSelectedCancelled,
             onMovePriorityUp: moveSelectedPriorityUp,
-            onMovePriorityDown: moveSelectedPriorityDown
+            onMovePriorityDown: moveSelectedPriorityDown,
+            onRunSelected: runHighlightedTask
         ))
         .alert("Delete Tasks?", isPresented: $showDeleteConfirmation) {
             Button("Cancel", role: .cancel) { }
@@ -454,11 +458,11 @@ struct WorkspaceQueueListView: View {
     private var headerView: some View {
         HStack(alignment: .center) {
             Image(systemName: "rectangle.stack")
-                .font(.system(size: 16))
+                .font(.system(size: 19))
                 .foregroundStyle(secondListAccentColor)
 
             Text(headerTitle)
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 24, weight: .bold))
 
             Text("\(allFilteredTasks.count)")
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
@@ -476,10 +480,11 @@ struct WorkspaceQueueListView: View {
             .contentShape(Rectangle())
         }
         .frame(maxWidth: 1000)
-        .padding(.horizontal, 40)
+        .padding(.leading, 64)
+        .padding(.trailing, 40)
         .frame(maxWidth: .infinity, alignment: .center)
         .padding(.top, 32)
-        .padding(.bottom, 24)
+        .padding(.bottom, 12)
     }
 
     @ViewBuilder
@@ -510,7 +515,14 @@ struct WorkspaceQueueListView: View {
                 .frame(maxWidth: 1000)
                 .padding(.horizontal, 40)
                 .padding(.bottom, 20)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .background(
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            clearSelection()
+                        }
+                )
             }
             .animation(.easeInOut(duration: 0.2), value: visibleTasksInOrder.map(\.id))
         } else {
@@ -535,7 +547,14 @@ struct WorkspaceQueueListView: View {
                 .frame(maxWidth: 1000)
                 .padding(.horizontal, 40)
                 .padding(.bottom, 20)
-                .frame(maxWidth: .infinity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+                .background(
+                    Color.clear
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            clearSelection()
+                        }
+                )
             }
             .animation(.easeInOut(duration: 0.2), value: allFilteredTasks.map(\.id))
         }
@@ -601,7 +620,19 @@ struct WorkspaceQueueListView: View {
                                 }
                             ),
                             position: section.status == .queued ? index + 1 : nil,
-                            onRun: task.taskStatus.isPending ? { onStartTerminal?(task) } : nil
+                            onRun: task.taskStatus.isPending ? { onStartTerminal?(task) } : nil,
+                            onDelete: {
+                                selectTask(task)
+                                showDeleteConfirmation = true
+                            },
+                            onMarkCancelled: {
+                                handleTaskStatusChange(task)
+                                task.updateStatusWithUndo(.aborted)
+                            },
+                            onMarkCompleted: {
+                                handleTaskStatusChange(task)
+                                task.updateStatusWithUndo(.completed)
+                            }
                         ) {
                             TextField(
                                 "Note details",
@@ -645,7 +676,19 @@ struct WorkspaceQueueListView: View {
                             }
                         }
                     ),
-                    onRun: task.taskStatus.isPending ? { onStartTerminal?(task) } : nil
+                    onRun: task.taskStatus.isPending ? { onStartTerminal?(task) } : nil,
+                    onDelete: {
+                        selectTask(task)
+                        showDeleteConfirmation = true
+                    },
+                    onMarkCancelled: {
+                        handleTaskStatusChange(task)
+                        task.updateStatusWithUndo(.aborted)
+                    },
+                    onMarkCompleted: {
+                        handleTaskStatusChange(task)
+                        task.updateStatusWithUndo(.completed)
+                    }
                 ) {
                     TextField(
                         "Note details",
@@ -871,26 +914,40 @@ struct WorkspaceQueueListView: View {
         }
     }
 
+    private func runHighlightedTask() {
+        guard let task = viewModel.highlightedTask(in: visibleTasksInOrder) else { return }
+        guard task.taskStatus.isPending else { return }
+        onStartTerminal?(task)
+    }
+
     private func sectionHeader(_ title: String, count: Int? = nil, color: Color? = nil) -> some View {
-        HStack {
-            Text(title)
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(color ?? Color.secondary.opacity(0.7))
-                .textCase(.uppercase)
-                .tracking(0.5)
-            if let count, count > 0 {
-                Text("\(count)")
-                    .font(.system(size: 10, weight: .medium).monospacedDigit())
-                    .foregroundStyle(color ?? .secondary)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background((color ?? .secondary).opacity(0.15))
-                    .clipShape(Capsule())
+        VStack(spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 13, weight: .semibold))
+                    .foregroundStyle(secondListAccentColor)
+                    .textCase(.uppercase)
+                    .tracking(0.5)
+                if let count, count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 12, weight: .medium).monospacedDigit())
+                        .foregroundStyle(secondListAccentColor)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(secondListAccentColor.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+                Spacer()
             }
-            Spacer()
+            .padding(.leading, 16)
+            .padding(.trailing, 12)
+
+            Rectangle()
+                .fill(secondListAccentColor.opacity(0.25))
+                .frame(height: 1)
         }
         .padding(.horizontal, 12)
-        .padding(.top, 24)
+        .padding(.top, 18)
         .padding(.bottom, 8)
     }
 
@@ -1121,6 +1178,7 @@ struct TaskListKeyboardModifier: ViewModifier {
     var onMarkCancelled: () -> Void
     var onMovePriorityUp: () -> Void
     var onMovePriorityDown: () -> Void
+    var onRunSelected: () -> Void
 
     func body(content: Content) -> some View {
         content
@@ -1189,11 +1247,8 @@ struct TaskListKeyboardModifier: ViewModifier {
                 return .ignored
             }
             .onKeyPress(keys: [KeyEquivalent("r")], phases: .down) { keyPress in
-                // Cmd+R: collapse expanded task (run will be handled by menu command)
-                if keyPress.modifiers == .command && expandedTaskId != nil {
-                    withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
-                        expandedTaskId = nil
-                    }
+                if keyPress.modifiers == .command {
+                    onRunSelected()
                     return .handled
                 }
                 return .ignored
@@ -1237,6 +1292,9 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
 
     var position: Int? = nil
     var onRun: (() -> Void)? = nil
+    var onDelete: (() -> Void)? = nil
+    var onMarkCancelled: (() -> Void)? = nil
+    var onMarkCompleted: (() -> Void)? = nil
     let style: ExpandableRowStyle
     let expandedContent: () -> ExpandedContent
     @State private var isStatusHovering: Bool = false
@@ -1249,6 +1307,9 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
         isSelected: Binding<Bool>,
         position: Int? = nil,
         onRun: (() -> Void)? = nil,
+        onDelete: (() -> Void)? = nil,
+        onMarkCancelled: (() -> Void)? = nil,
+        onMarkCompleted: (() -> Void)? = nil,
         style: ExpandableRowStyle = .default,
         @ViewBuilder expandedContent: @escaping () -> ExpandedContent
     ) {
@@ -1257,6 +1318,9 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
         self._isSelected = isSelected
         self.position = position
         self.onRun = onRun
+        self.onDelete = onDelete
+        self.onMarkCancelled = onMarkCancelled
+        self.onMarkCompleted = onMarkCompleted
         self.style = style
         self.expandedContent = expandedContent
     }
@@ -1276,7 +1340,14 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
     }
 
     private var indicatorAccent: Color {
-        isExpanded ? secondListAccentColor : selectedForeground
+        selectedForeground
+    }
+
+    private var indicatorTextColor: Color {
+        if isSelected {
+            return indicatorAccent
+        }
+        return .secondary
     }
 
     var body: some View {
@@ -1291,7 +1362,8 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
                             isHovering: isStatusHovering,
                             position: task.taskStatus == .queued ? position : nil,
                             onRun: onRun,
-                            accentColor: indicatorAccent
+                            accentColor: indicatorAccent,
+                            textColor: indicatorTextColor
                         )
                     } else {
                         Button(action: {
@@ -1300,7 +1372,7 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
                             }
                         }) {
                             Image(systemName: item.isChecked ? "checkmark.circle.fill" : "circle")
-                                .foregroundColor(isExpanded ? secondListAccentColor : (isSelected ? Color.white.opacity(0.90) : (item.isChecked ? .blue : .gray)))
+                                .foregroundColor(selectedForeground)
                                 .imageScale(.large)
                         }
                         .buttonStyle(.plain)
@@ -1344,7 +1416,7 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
                         }
                     }
                     .onEnded { _ in
-                        if !isExpanded && (wasSelectedOnMouseDown ?? false) {
+                        if !isExpanded && (wasSelectedOnMouseDown ?? false) && !isStatusHovering {
                             withAnimation(.easeInOut(duration: style.expandAnimationDuration)) {
                                 isExpanded = true
                                 isSelected = false
@@ -1353,13 +1425,63 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
                         wasSelectedOnMouseDown = nil
                     }
             )
-            .highPriorityGesture(TapGesture().onEnded {
+            .highPriorityGesture(
+                TapGesture(count: 2).onEnded {
+                    withAnimation(.easeInOut(duration: style.expandAnimationDuration)) {
+                        isExpanded = true
+                        isSelected = false
+                    }
+                }
+            )
+            .simultaneousGesture(TapGesture().onEnded {
                 if !isExpanded && !isSelected {
                     withAnimation(.easeInOut(duration: style.selectAnimationDuration)) {
                         isSelected = true
                     }
                 }
             })
+            .contextMenu {
+                if let onRun {
+                    Button {
+                        onRun()
+                    } label: {
+                        Label("Run", systemImage: "play.fill")
+                    }
+                    .keyboardShortcut("r", modifiers: .command)
+                    Divider()
+                }
+
+                if let onMarkCompleted {
+                    Button {
+                        onMarkCompleted()
+                    } label: {
+                        Label("Mark as Completed", systemImage: "checkmark.circle.fill")
+                    }
+                    .keyboardShortcut("k", modifiers: .command)
+                }
+
+                if let onMarkCancelled {
+                    Button {
+                        onMarkCancelled()
+                    } label: {
+                        Label("Mark as Cancelled", systemImage: "xmark.circle")
+                    }
+                    .keyboardShortcut("k", modifiers: [.command, .option])
+                }
+
+                if onRun != nil || onMarkCompleted != nil || onMarkCancelled != nil {
+                    Divider()
+                }
+
+                if let onDelete {
+                    Button(role: .destructive) {
+                        onDelete()
+                    } label: {
+                        Label("Delete", systemImage: "trash")
+                    }
+                    .keyboardShortcut(.delete, modifiers: .command)
+                }
+            }
 
             if isExpanded {
                 expandedContent()
@@ -1386,24 +1508,49 @@ struct RunningDotIndicator: View {
     let color: Color
 
     @State private var rotation: Double = 0
+    @State private var isHovering: Bool = false
 
     var body: some View {
-        Circle()
-            .strokeBorder(
-                style: StrokeStyle(
-                    lineWidth: 1.5,
-                    lineCap: .round,
-                    dash: [2, 3]
-                )
-            )
-            .foregroundStyle(color)
-            .frame(width: size, height: size)
-            .rotationEffect(.degrees(rotation))
-            .onAppear {
-                withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
-                    rotation = 360
+        ZStack {
+            if isHovering {
+                ZStack {
+                    Circle()
+                        .fill(color.opacity(0.15))
+                        .frame(width: size, height: size)
+
+                    Circle()
+                        .strokeBorder(color.opacity(0.6), lineWidth: 1.5)
+                        .frame(width: size, height: size)
+
+                    Image(systemName: "checkmark")
+                        .font(.system(size: size * 0.4, weight: .semibold))
+                        .foregroundStyle(color)
                 }
+                .transition(.scale.combined(with: .opacity))
+            } else {
+                Circle()
+                    .strokeBorder(
+                        style: StrokeStyle(
+                            lineWidth: 1.5,
+                            lineCap: .round,
+                            dash: [2, 3]
+                        )
+                    )
+                    .foregroundStyle(color)
+                    .frame(width: size, height: size)
+                    .rotationEffect(.degrees(rotation))
             }
+        }
+        .onHover { hovering in
+            withAnimation(.easeInOut(duration: 0.15)) {
+                isHovering = hovering
+            }
+        }
+        .onAppear {
+            withAnimation(.linear(duration: 8).repeatForever(autoreverses: false)) {
+                rotation = 360
+            }
+        }
     }
 }
 
@@ -1470,6 +1617,7 @@ struct ExpandableTaskRow: View {
     @State private var titleOffset: Bool = false
     @State private var showContent: Bool = false
     @State private var isFileDropTarget: Bool = false
+    @State private var isStatusHovering: Bool = false
 
     private var isRunning: Bool {
         task.taskStatus == .running
@@ -1583,6 +1731,7 @@ struct ExpandableTaskRow: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) {
                     isTitleFocused = true
                     isDescriptionFocused = false
+                    placeTitleCursorAtEnd()
                 }
             } else {
                 withAnimation(.easeIn(duration: 0.15)) {
@@ -1622,12 +1771,30 @@ struct ExpandableTaskRow: View {
                 editedDescription = newDesc
             }
         }
+        .onChange(of: isTitleFocused) { _, focused in
+            if focused {
+                placeTitleCursorAtEnd()
+            }
+        }
         .onDrop(of: [.fileURL], isTargeted: $isFileDropTarget) { providers in
             guard !isReordering else { return false }
             return handleFileDrop(providers: providers)
         }
         .accessibilityIdentifier("TaskRow")
         .accessibilityLabel(task.title)
+    }
+
+    private func placeTitleCursorAtEnd(retryCount: Int = 0) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.02) {
+            if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+                let end = textView.string.count
+                textView.selectedRange = NSRange(location: end, length: 0)
+                return
+            }
+            if retryCount < 6 {
+                placeTitleCursorAtEnd(retryCount: retryCount + 1)
+            }
+        }
     }
 
     @ViewBuilder
@@ -1677,16 +1844,26 @@ struct ExpandableTaskRow: View {
                     }
                 }
 
-            TextField("Notes", text: $editedDescription, axis: .vertical)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .focused($isDescriptionFocused)
-                .onChange(of: editedDescription) { _, newValue in
-                    let newDesc = newValue.isEmpty ? nil : newValue
-                    if newDesc != task.taskDescription {
-                        task.updateDescription(newDesc)
-                    }
+            ZStack(alignment: .topLeading) {
+                if editedDescription.isEmpty {
+                    Text("Notes")
+                        .font(.system(size: 13))
+                        .foregroundStyle(.secondary.opacity(0.7))
+                        .padding(.top, 4)
+                        .padding(.leading, 2)
                 }
+                TextEditor(text: $editedDescription)
+                    .font(.system(size: 13))
+                    .foregroundStyle(.secondary)
+                    .focused($isDescriptionFocused)
+                    .frame(minHeight: 60)
+                    .onChange(of: editedDescription) { _, newValue in
+                        let newDesc = newValue.isEmpty ? nil : newValue
+                        if newDesc != task.taskDescription {
+                            task.updateDescription(newDesc)
+                        }
+                    }
+            }
 
             HStack(spacing: 10) {
                 if isQueued, let onRun = onRun {
@@ -1810,6 +1987,7 @@ struct QueuedTaskIndicator: View {
     let position: Int?
     var onRun: (() -> Void)?
     var accentColor: Color = .orange
+    var textColor: Color = .secondary
 
     @State private var pulsePhase: CGFloat = 0
 
@@ -1844,7 +2022,8 @@ struct QueuedTaskIndicator: View {
                     if let pos = position {
                         Text("\(pos)")
                             .font(.system(size: 10, weight: .semibold).monospacedDigit())
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(textColor)
+                            .frame(width: size, height: size, alignment: .center)
                     } else {
                         Image(systemName: "play.fill")
                             .font(.system(size: size * 0.35))

@@ -431,7 +431,7 @@ struct ContentView: View {
             }
         case .terminals:
             if let session = selectedSession {
-                RunningDetailView(
+                AgentsScene(
                     session: session,
                     selection: $selectedSession,
                     onRequestClose: requestCloseSession
