@@ -200,6 +200,16 @@ final class TerminalCostTracker: Identifiable {
         return values
     }
 
+    /// Current session cumulative totals (since last session reset)
+    var currentSessionInputTokens: Int { lastSessionInputTokens }
+    var currentSessionOutputTokens: Int { lastSessionOutputTokens }
+    var currentSessionCacheReadTokens: Int { lastSessionCacheReadTokens }
+    var currentSessionCacheCreationTokens: Int { lastSessionCacheCreationTokens }
+    var currentSessionCostUSD: Double { lastSessionCostUSD }
+    var currentSessionTotalTokens: Int {
+        lastSessionInputTokens + lastSessionOutputTokens + lastSessionCacheReadTokens + lastSessionCacheCreationTokens
+    }
+
     init(id: String, provider: AIProvider = .claude) {
         self.id = id
         self.provider = provider
@@ -475,8 +485,19 @@ final class CostTracker {
         terminalTrackers.values.reduce(0) { $0 + $1.totalTokens }
     }
 
+    /// Global totals for the current OTEL session counters (per terminal)
+    /// This resets when a provider sessionId changes for a pane.
+    var globalCurrentSessionTokens: Int {
+        terminalTrackers.values.reduce(0) { $0 + $1.currentSessionTotalTokens }
+    }
+
     var globalTotalCostUSD: Double {
         terminalTrackers.values.reduce(0) { $0 + $1.totalCostUSD }
+    }
+
+    /// Global current-session cost across all terminals
+    var globalCurrentSessionCostUSD: Double {
+        terminalTrackers.values.reduce(0) { $0 + $1.currentSessionCostUSD }
     }
 
     var formattedGlobalCost: String {
@@ -704,6 +725,16 @@ final class CostTracker {
     /// Get total tokens for a specific terminal (by paneId)
     func totalTokens(forTerminal paneId: String) -> Int {
         terminalTrackers[paneId]?.totalTokens ?? 0
+    }
+
+    /// Get current session total tokens for a specific terminal (by paneId)
+    func currentSessionTokens(forTerminal paneId: String) -> Int {
+        terminalTrackers[paneId]?.currentSessionTotalTokens ?? 0
+    }
+
+    /// Get current session total cost for a specific terminal (by paneId)
+    func currentSessionCost(forTerminal paneId: String) -> Double {
+        terminalTrackers[paneId]?.currentSessionCostUSD ?? 0
     }
 
     /// Get task tracker for a paneId

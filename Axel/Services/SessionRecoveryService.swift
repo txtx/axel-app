@@ -1,5 +1,7 @@
 import Foundation
 
+#if os(macOS)
+
 /// Represents a tmux session discovered via `axel sessions ls --json`
 struct RecoveredSession: Identifiable, Codable, Hashable {
     let name: String
@@ -225,3 +227,42 @@ final class SessionRecoveryService {
         print("[SessionRecovery] Recovery complete. SessionManager now has \(sessionManager.sessions(for: workspaceId).count) session(s) for this workspace")
     }
 }
+
+#else
+
+/// Minimal iOS/visionOS stubs to satisfy shared references.
+struct TerminalSessionManager {}
+
+struct RecoveredSession: Identifiable, Codable, Hashable {
+    let name: String
+    let axelPaneId: String?
+
+    var id: String { name }
+}
+
+@MainActor
+@Observable
+final class SessionRecoveryService {
+    static let shared = SessionRecoveryService()
+
+    private(set) var recoveredSessions: [RecoveredSession] = []
+    private(set) var isDiscovering: Bool = false
+    private(set) var lastError: String?
+    private(set) var lastDiscoveryTime: Date?
+
+    private init() {}
+
+    func discoverSessions() async {
+        // No-op on iOS/visionOS
+    }
+
+    func untrackedSessions(for workspacePath: String?, trackedPaneIds: Set<String>) -> [RecoveredSession] {
+        []
+    }
+
+    func recoverUntrackedSessions(for workspacePath: String?, workspaceId: UUID, sessionManager: TerminalSessionManager) {
+        // No-op on iOS/visionOS
+    }
+}
+
+#endif

@@ -39,27 +39,27 @@ struct TerminalInspectorView: View {
     }
 
     private var inputTokens: Int {
-        terminalTracker?.totalInputTokens ?? 0
+        terminalTracker?.currentSessionInputTokens ?? 0
     }
 
     private var outputTokens: Int {
-        terminalTracker?.totalOutputTokens ?? 0
+        terminalTracker?.currentSessionOutputTokens ?? 0
     }
 
     private var cacheReadTokens: Int {
-        terminalTracker?.totalCacheReadTokens ?? 0
+        terminalTracker?.currentSessionCacheReadTokens ?? 0
     }
 
     private var cacheCreationTokens: Int {
-        terminalTracker?.totalCacheCreationTokens ?? 0
+        terminalTracker?.currentSessionCacheCreationTokens ?? 0
     }
 
     private var totalTokens: Int {
-        terminalTracker?.totalTokens ?? 0
+        terminalTracker?.currentSessionTotalTokens ?? 0
     }
 
     private var totalCost: Double {
-        terminalTracker?.totalCostUSD ?? 0
+        terminalTracker?.currentSessionCostUSD ?? 0
     }
 
     private var histogramValues: [Double] {
@@ -226,7 +226,7 @@ struct TerminalInspectorView: View {
     // MARK: - Token Metrics Section
 
     private var tokenMetricsSection: some View {
-        InspectorSection(title: "Token Metrics", icon: "chart.bar.fill", iconColor: .purple) {
+        InspectorSection(title: "Token Metrics", icon: "chart.bar.fill", iconColor: .accentPurple) {
             VStack(spacing: 12) {
                 // Mini histogram
                 HStack(alignment: .bottom, spacing: 2) {
@@ -247,7 +247,7 @@ struct TerminalInspectorView: View {
                     TokenMetricRow(label: "Input", value: inputTokens, color: .blue)
                     TokenMetricRow(label: "Output", value: outputTokens, color: .green)
                     TokenMetricRow(label: "Cache Read", value: cacheReadTokens, color: .orange)
-                    TokenMetricRow(label: "Cache Write", value: cacheCreationTokens, color: .purple)
+                    TokenMetricRow(label: "Cache Write", value: cacheCreationTokens, color: .accentPurple)
                 }
 
                 Divider()

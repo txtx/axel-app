@@ -3,14 +3,6 @@ import Foundation
 import AppKit
 import SwiftData
 
-// MARK: - Scripting Notifications
-
-extension Notification.Name {
-    /// Posted when AppleScript requests starting a new agent
-    /// userInfo: ["workspaceId": UUID, "worktree": String?, "provider": AIProvider, "taskId": UUID?]
-    static let scriptingStartAgent = Notification.Name("scriptingStartAgent")
-}
-
 // MARK: - Scriptable Objects
 
 /// Scriptable wrapper for Workspace

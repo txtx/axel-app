@@ -207,7 +207,7 @@ struct InboxPanelRow: View {
     private var color: Color {
         switch event.eventType {
         case .permission: return .orange
-        case .hint: return .purple
+        case .hint: return .accentPurple
         default: return .secondary
         }
     }

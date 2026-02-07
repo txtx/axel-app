@@ -96,7 +96,7 @@ struct PermissionCardContent: View {
         switch toolName {
         case "Edit", "Write": return .orange
         case "Read": return .blue
-        case "Bash": return .purple
+        case "Bash": return .accentPurple
         case "Glob", "Grep": return .cyan
         case "WebFetch", "WebSearch": return .green
         default: return .secondary
@@ -412,7 +412,7 @@ struct PermissionCardContentCompact: View {
         switch toolName {
         case "Edit", "Write": return .orange
         case "Read": return .blue
-        case "Bash": return .purple
+        case "Bash": return .accentPurple
         case "Glob", "Grep": return .cyan
         case "WebFetch", "WebSearch": return .green
         default: return .secondary

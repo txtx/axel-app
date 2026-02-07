@@ -1098,11 +1098,11 @@ struct WorkspaceToolbarHeader: View {
     }
 
     private var totalTokens: Int {
-        costTracker.globalTotalTokens
+        costTracker.globalCurrentSessionTokens
     }
 
     private var totalCost: Double {
-        costTracker.globalTotalCostUSD
+        costTracker.globalCurrentSessionCostUSD
     }
 
     private var formattedTokenCount: String {
@@ -1249,7 +1249,7 @@ struct WorkspaceSidebarView: View {
                     }
                 } icon: {
                     Image(systemName: "rectangle.stack")
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(.accentPurple)
                 }
                 .tag(SidebarSection.queue(.backlog))
 
@@ -1349,34 +1349,43 @@ struct WorkspaceSidebarView: View {
                 Divider()
                     .padding(.vertical, 8)
 
-                // Optimizations
+                // Optimizations (coming soon)
                 Label {
-                    Text("Optimizations")
+                    HStack {
+                        Text("Optimizations")
+                        Spacer()
+                        Text("Soon")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 } icon: {
                     Image(systemName: "gauge.with.dots.needle.50percent")
-                        .foregroundStyle(.blue)
+                        .foregroundStyle(.tertiary)
                 }
-                .tag(SidebarSection.optimizations(.overview))
+                .foregroundStyle(.tertiary)
+                .allowsHitTesting(false)
 
                 // Skills (indented under Optimizations)
                 Label {
                     Text("Skills")
                 } icon: {
                     Image(systemName: "hammer.fill")
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.tertiary)
                 }
+                .foregroundStyle(.tertiary)
                 .padding(.leading, 16)
-                .tag(SidebarSection.optimizations(.skills))
+                .allowsHitTesting(false)
 
                 // Context (indented under Optimizations)
                 Label {
                     Text("Context")
                 } icon: {
                     Image(systemName: "briefcase.fill")
-                        .foregroundStyle(.primary)
+                        .foregroundStyle(.tertiary)
                 }
+                .foregroundStyle(.tertiary)
                 .padding(.leading, 16)
-                .tag(SidebarSection.optimizations(.context))
+                .allowsHitTesting(false)
 
                 Divider()
                     .padding(.vertical, 8)
@@ -1757,7 +1766,7 @@ struct ContextRow: View {
         HStack(spacing: 12) {
             Image(systemName: "briefcase.fill")
                 .font(.title3)
-                .foregroundStyle(.purple)
+                .foregroundStyle(.accentPurple)
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(context.name)

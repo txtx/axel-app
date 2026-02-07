@@ -262,32 +262,41 @@ struct VisionSidebarView: View {
             }
 
             Section("Optimizations") {
-                // Overview
+                // Overview (coming soon)
                 Label {
-                    Text("Overview")
+                    HStack {
+                        Text("Overview")
+                        Spacer()
+                        Text("Soon")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
+                    }
                 } icon: {
                     Image(systemName: "gauge.with.dots.needle.50percent")
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(.tertiary)
                 }
-                .tag(SidebarSection.optimizations(.overview))
+                .foregroundStyle(.tertiary)
+                .allowsHitTesting(false)
 
                 // Skills
                 Label {
                     Text("Skills")
                 } icon: {
                     Image(systemName: "hammer.fill")
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.tertiary)
                 }
-                .tag(SidebarSection.optimizations(.skills))
+                .foregroundStyle(.tertiary)
+                .allowsHitTesting(false)
 
                 // Context
                 Label {
                     Text("Context")
                 } icon: {
                     Image(systemName: "briefcase.fill")
-                        .foregroundStyle(.white)
+                        .foregroundStyle(.tertiary)
                 }
-                .tag(SidebarSection.optimizations(.context))
+                .foregroundStyle(.tertiary)
+                .allowsHitTesting(false)
             }
 
             Section("Organization") {
@@ -313,11 +322,11 @@ struct VisionStatusOrnament: View {
     @State private var authService = AuthService.shared
 
     private var totalTokens: Int {
-        costTracker.globalTotalTokens
+        costTracker.globalCurrentSessionTokens
     }
 
     private var totalCost: Double {
-        costTracker.globalTotalCostUSD
+        costTracker.globalCurrentSessionCostUSD
     }
 
     private var formattedTokenCount: String {
@@ -745,7 +754,7 @@ struct VisionInboxEventRow: View {
         case .toolUse: return .blue
         case .toolResult: return .green
         case .permission: return .orange
-        case .hint: return .purple
+        case .hint: return .accentPurple
         case .taskStart: return .green
         case .taskStop: return .red
         case .taskMetrics: return .cyan
@@ -858,7 +867,7 @@ struct VisionOptimizationsOverview: View {
                 VStack(spacing: 8) {
                     Image(systemName: "gauge.with.dots.needle.50percent")
                         .font(.system(size: 48))
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(.accentPurple)
 
                     Text("Optimizations")
                         .font(.largeTitle.weight(.bold))

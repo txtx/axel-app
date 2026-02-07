@@ -108,6 +108,12 @@ public struct DiffTheme: Sendable {
     )
 }
 
+// MARK: - Adaptive Purple
+
+extension Color {
+    static let diffPurple = Color(red: 0x69/255.0, green: 0x3E/255.0, blue: 0xFE/255.0)
+}
+
 // MARK: - Environment Key
 
 private struct DiffThemeKey: EnvironmentKey {

@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftUI
 import SwiftData
 
 /// Check if running UI tests
@@ -116,7 +117,11 @@ struct AxelApp: App {
         #if os(macOS)
         MacScenes(appState: $appState, sharedContainer: sharedContainer)
         #else
-        MobileScene(appState: $appState, modelContainer: modelContainer)
+        // iOS and visionOS Scene
+        WindowGroup {
+            ContentView(appState: appState)
+        }
+        .modelContainer(modelContainer)
         #endif
     }
 }

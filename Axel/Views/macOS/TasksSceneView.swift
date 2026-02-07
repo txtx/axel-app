@@ -5,8 +5,6 @@ import UniformTypeIdentifiers
 #if os(macOS)
 import AppKit
 
-private let secondListAccentColor = Color(hex: "693EFE")!
-
 extension WorkTask: ExpandableListItem, Equatable {
     static func == (lhs: WorkTask, rhs: WorkTask) -> Bool {
         lhs.id == rhs.id
@@ -459,7 +457,7 @@ struct WorkspaceQueueListView: View {
         HStack(alignment: .center) {
             Image(systemName: "rectangle.stack")
                 .font(.system(size: 19))
-                .foregroundStyle(secondListAccentColor)
+                .foregroundStyle(Color.accentPurple)
 
             Text(headerTitle)
                 .font(.system(size: 24, weight: .bold))
@@ -591,7 +589,7 @@ struct WorkspaceQueueListView: View {
                         section.title,
                         count: section.tasks.count,
                         color: section.status == .running
-                            ? secondListAccentColor
+                            ? Color.accentPurple
                             : section.color.map { Color(nsColor: $0) }
                     )
 
@@ -925,16 +923,16 @@ struct WorkspaceQueueListView: View {
             HStack {
                 Text(title)
                     .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(secondListAccentColor)
+                    .foregroundStyle(Color.accentPurple)
                     .textCase(.uppercase)
                     .tracking(0.5)
                 if let count, count > 0 {
                     Text("\(count)")
                         .font(.system(size: 12, weight: .medium).monospacedDigit())
-                        .foregroundStyle(secondListAccentColor)
+                        .foregroundStyle(Color.accentPurple)
                         .padding(.horizontal, 5)
                         .padding(.vertical, 2)
-                        .background(secondListAccentColor.opacity(0.15))
+                        .background(Color.accentPurple.opacity(0.15))
                         .clipShape(Capsule())
                 }
                 Spacer()
@@ -943,7 +941,7 @@ struct WorkspaceQueueListView: View {
             .padding(.trailing, 12)
 
             Rectangle()
-                .fill(secondListAccentColor.opacity(0.25))
+                .fill(Color.accentPurple.opacity(0.25))
                 .frame(height: 1)
         }
         .padding(.horizontal, 12)
@@ -1074,7 +1072,7 @@ struct WorkspaceQueueListView: View {
                     Circle()
                         .fill(
                             RadialGradient(
-                                colors: [Color.purple.opacity(0.15), Color.clear],
+                                colors: [Color.accentPurple.opacity(0.15), Color.clear],
                                 center: .center,
                                 startRadius: 20,
                                 endRadius: 60
@@ -1086,7 +1084,7 @@ struct WorkspaceQueueListView: View {
                         .font(.system(size: 44, weight: .light))
                         .foregroundStyle(
                             LinearGradient(
-                                colors: [.purple, .purple.opacity(0.7)],
+                                colors: [.accentPurple, .accentPurple.opacity(0.7)],
                                 startPoint: .topLeading,
                                 endPoint: .bottomTrailing
                             )
@@ -1151,7 +1149,7 @@ struct WorkspaceQueueListView: View {
                 .padding(.vertical, 10)
                 .background(
                     Capsule()
-                        .fill(Color.purple.opacity(0.9))
+                        .fill(Color.accentPurple.opacity(0.9))
                 )
             }
             .buttonStyle(.plain)
@@ -1329,7 +1327,7 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
         if isExpanded {
             return colorScheme == .dark ? Color(hex: "33383A")! : Color.white
         } else if isSelected {
-            return secondListAccentColor
+            return Color.accentPurple
         } else {
             return .clear
         }
@@ -1339,31 +1337,28 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
         isSelected ? Color.white.opacity(0.90) : .primary
     }
 
-    private var indicatorAccent: Color {
-        selectedForeground
+    private var gadgetAccent: Color {
+        isSelected ? .white : Color.accentPurple
     }
 
-    private var indicatorTextColor: Color {
-        if isSelected {
-            return indicatorAccent
-        }
-        return .secondary
+    private var gadgetTextColor: Color {
+        isSelected ? .white : Color.accentPurple
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             HStack(alignment: .top) {
                 Group {
-                    if let task = item as? WorkTask, task.taskStatus == .running {
-                        RunningDotIndicator(size: indicatorSize, color: indicatorAccent)
-                    } else if let task = item as? WorkTask, task.taskStatus == .queued || task.taskStatus == .backlog {
-                        QueuedTaskIndicator(
+                    if let task = item as? WorkTask {
+                        TaskGadget(
+                            status: task.taskStatus,
                             size: indicatorSize,
                             isHovering: isStatusHovering,
                             position: task.taskStatus == .queued ? position : nil,
                             onRun: onRun,
-                            accentColor: indicatorAccent,
-                            textColor: indicatorTextColor
+                            onToggleComplete: onMarkCompleted,
+                            accentColor: gadgetAccent,
+                            textColor: gadgetTextColor
                         )
                     } else {
                         Button(action: {
@@ -1506,6 +1501,7 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
 struct RunningDotIndicator: View {
     let size: CGFloat
     let color: Color
+    var onMarkComplete: (() -> Void)?
 
     @State private var rotation: Double = 0
     @State private var isHovering: Bool = false
@@ -1513,19 +1509,22 @@ struct RunningDotIndicator: View {
     var body: some View {
         ZStack {
             if isHovering {
-                ZStack {
-                    Circle()
-                        .fill(color.opacity(0.15))
-                        .frame(width: size, height: size)
+                Button(action: { onMarkComplete?() }) {
+                    ZStack {
+                        Circle()
+                            .fill(color.opacity(0.15))
+                            .frame(width: size, height: size)
 
-                    Circle()
-                        .strokeBorder(color.opacity(0.6), lineWidth: 1.5)
-                        .frame(width: size, height: size)
+                        Circle()
+                            .strokeBorder(color.opacity(0.6), lineWidth: 1.5)
+                            .frame(width: size, height: size)
 
-                    Image(systemName: "checkmark")
-                        .font(.system(size: size * 0.4, weight: .semibold))
-                        .foregroundStyle(color)
+                        Image(systemName: "checkmark")
+                            .font(.system(size: size * 0.4, weight: .semibold))
+                            .foregroundStyle(color)
+                    }
                 }
+                .buttonStyle(.plain)
                 .transition(.scale.combined(with: .opacity))
             } else {
                 Circle()
@@ -1799,35 +1798,18 @@ struct ExpandableTaskRow: View {
 
     @ViewBuilder
     private var statusIndicator: some View {
-        ZStack {
-            if isRunning {
-                RunningTaskIndicator(size: indicatorSize, isHovering: false, onMarkComplete: {
-                    onToggleComplete?()
-                })
-            } else if isCompleted {
-                Button(action: { onToggleComplete?() }) {
-                    ZStack {
-                        Circle()
-                            .fill(Color.green)
-                            .frame(width: indicatorSize, height: indicatorSize)
-                        Image(systemName: "checkmark")
-                            .font(.system(size: 10, weight: .bold))
-                            .foregroundStyle(.white)
-                    }
-                }
-                .buttonStyle(.plain)
-            } else if isQueued {
-                QueuedTaskIndicator(
-                    size: indicatorSize,
-                    isHovering: false,
-                    position: position,
-                    onRun: onRun
-                )
-            } else {
-                Circle()
-                    .strokeBorder(Color.primary.opacity(0.2), lineWidth: 1.5)
-                    .frame(width: indicatorSize, height: indicatorSize)
-            }
+        TaskGadget(
+            status: task.taskStatus,
+            size: indicatorSize,
+            isHovering: isStatusHovering,
+            position: isQueued ? position : nil,
+            onRun: onRun,
+            onToggleComplete: onToggleComplete,
+            accentColor: isHighlighted ? .white : Color.accentPurple,
+            textColor: isHighlighted ? .white : Color.accentPurple
+        )
+        .onHover { hovering in
+            isStatusHovering = hovering
         }
     }
 
@@ -1937,6 +1919,7 @@ struct RunningTaskIndicator: View {
     let isHovering: Bool
     var provider: AIProvider = .claude
     var onMarkComplete: (() -> Void)?
+    var accentColor: Color = Color.accentPurple
 
     var body: some View {
         ZStack {
@@ -1969,7 +1952,7 @@ struct RunningTaskIndicator: View {
                                 dash: [2, 3]
                             )
                         )
-                        .foregroundStyle(Color.purple.opacity(0.6))
+                        .foregroundStyle(accentColor.opacity(0.6))
                         .frame(width: size, height: size)
                         .rotationEffect(.degrees(rotation))
                 }
@@ -1977,6 +1960,60 @@ struct RunningTaskIndicator: View {
             }
         }
         .animation(.easeInOut(duration: 0.15), value: isHovering)
+    }
+}
+
+// MARK: - Task Gadget
+
+/// Unified task status gadget used in task rows.
+struct TaskGadget: View {
+    let status: TaskStatus
+    let size: CGFloat
+    let isHovering: Bool
+    let position: Int?
+    var onRun: (() -> Void)?
+    var onToggleComplete: (() -> Void)?
+    var accentColor: Color = Color.accentPurple
+    var textColor: Color = Color.accentPurple
+
+    private var ringColor: Color {
+        accentColor.opacity(0.35)
+    }
+
+    var body: some View {
+        ZStack {
+            switch status {
+            case .running:
+                RunningTaskIndicator(size: size, isHovering: isHovering, onMarkComplete: {
+                    onToggleComplete?()
+                }, accentColor: accentColor)
+            case .completed:
+                Button(action: { onToggleComplete?() }) {
+                    ZStack {
+                        Circle()
+                            .fill(accentColor)
+                            .frame(width: size, height: size)
+                        Image(systemName: "checkmark")
+                            .font(.system(size: size * 0.45, weight: .bold))
+                            .foregroundStyle(.white)
+                    }
+                }
+                .buttonStyle(.plain)
+            case .queued, .backlog:
+                QueuedTaskIndicator(
+                    size: size,
+                    isHovering: isHovering,
+                    position: status == .queued ? position : nil,
+                    onRun: onRun,
+                    accentColor: accentColor,
+                    textColor: textColor
+                )
+            case .inReview, .aborted:
+                Circle()
+                    .strokeBorder(ringColor, lineWidth: 1.5)
+                    .frame(width: size, height: size)
+            }
+        }
     }
 }
 

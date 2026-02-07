@@ -13,6 +13,8 @@
 		224F4D7EECEE1287AF701CE6 /* TaskAssignmentCoordinatorTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CE485CA04822282FDD056DFB /* TaskAssignmentCoordinatorTests.swift */; };
 		3724AAF9F7B57FC2766507ED /* SyncEngineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BE366A3151FDDA78680EDF0C /* SyncEngineTests.swift */; };
 		39E9C6A3C0CAA85B4B8993D8 /* Axel.app in Frameworks */ = {isa = PBXBuildFile; fileRef = A1000001001A0001 /* Axel.app */; };
+		4312E5D82F366B6A0093897C /* PlatformServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4312E5D72F366B6A0093897C /* PlatformServices.swift */; };
+		4312E5DA2F366B730093897C /* PreviewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4312E5D92F366B730093897C /* PreviewContainer.swift */; };
 		43BD82722F1D63F40092A96C /* Supabase in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82712F1D63F40092A96C /* Supabase */; };
 		43BD82732F1D63F40092A96C /* AutomergeWrapper in Frameworks */ = {isa = PBXBuildFile; productRef = 43BD82742F1D63F40092A96C /* AutomergeWrapper */; };
 		43BD82802F1D70000092A96C /* Sparkle in Frameworks */ = {isa = PBXBuildFile; platformFilters = (macos, ); productRef = 43BD827F2F1D70000092A96C /* Sparkle */; };
@@ -23,7 +25,6 @@
 		A1000001201A0002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0002 /* ContentView.swift */; };
 		A1000001201A0003 /* Task.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0003 /* Task.swift */; };
 		A1000001201A0004 /* TodoViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0004 /* TodoViewModel.swift */; };
-		A1000001201A0008 /* PreviewContainer.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0008 /* PreviewContainer.swift */; };
 		A1000001201A0009 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = A1000001101A0009 /* Assets.xcassets */; };
 		A1000001201A0010 /* TerminalPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0010 /* TerminalPanelView.swift */; };
 		A1000001201A0011 /* SwiftTermWrapper.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0011 /* SwiftTermWrapper.swift */; };
@@ -66,7 +67,6 @@
 		A1000001201A0084 /* SwipeCardsKit.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0084 /* SwipeCardsKit.swift */; };
 		A1000001201A0090 /* URLOpening.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0090 /* URLOpening.swift */; };
 		A1000001201A0091 /* SyncMode.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0091 /* SyncMode.swift */; };
-		A1000001201A0092 /* PlatformServices.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0092 /* PlatformServices.swift */; };
 		A1000001201A0093 /* KeyboardShortcuts.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0093 /* KeyboardShortcuts.swift */; };
 		A1000001201A0094 /* NavigationTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0094 /* NavigationTypes.swift */; };
 		A1000001201A0095 /* IOSContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0095 /* IOSContentView.swift */; };
@@ -133,6 +133,12 @@
 		0178D0EB98540F719EB6D5CE /* TaskAssignmentCoordinator.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TaskAssignmentCoordinator.swift; sourceTree = "<group>"; };
 		04E9C8657F1187F40A1EC1DB /* AutomergeModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutomergeModelTests.swift; sourceTree = "<group>"; };
 		23797E4E4415996BCCFE8E45 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		4312E5CD2F3668720093897C /* IOSContentView_Simple.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSContentView_Simple.swift; sourceTree = "<group>"; };
+		4312E5CF2F36695D0093897C /* IOSContentView_Clean.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSContentView_Clean.swift; sourceTree = "<group>"; };
+		4312E5D12F3669DB0093897C /* IOSContentView_Fixed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSContentView_Fixed.swift; sourceTree = "<group>"; };
+		4312E5D52F366B5D0093897C /* ContentView_Unified.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView_Unified.swift; sourceTree = "<group>"; };
+		4312E5D72F366B6A0093897C /* PlatformServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformServices.swift; sourceTree = "<group>"; };
+		4312E5D92F366B730093897C /* PreviewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewContainer.swift; sourceTree = "<group>"; };
 		43D900F12F3060FF00323371 /* Axel.icon */ = {isa = PBXFileReference; lastKnownFileType = folder.iconcomposer.icon; path = Axel.icon; sourceTree = "<group>"; };
 		43E774722F298D900093DEC6 /* AxelUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = AxelUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		6238124A78A2C3A74FCFEDBB /* WorktreeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeService.swift; sourceTree = "<group>"; };
@@ -143,7 +149,6 @@
 		A1000001101A0002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		A1000001101A0003 /* Task.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Task.swift; sourceTree = "<group>"; };
 		A1000001101A0004 /* TodoViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TodoViewModel.swift; sourceTree = "<group>"; };
-		A1000001101A0008 /* PreviewContainer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PreviewContainer.swift; sourceTree = "<group>"; };
 		A1000001101A0009 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		A1000001101A000A /* Axel.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Axel.entitlements; sourceTree = "<group>"; };
 		A1000001101A0010 /* TerminalPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalPanelView.swift; sourceTree = "<group>"; };
@@ -188,7 +193,6 @@
 		A1000001101A0084 /* SwipeCardsKit.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SwipeCardsKit.swift; sourceTree = "<group>"; };
 		A1000001101A0090 /* URLOpening.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = URLOpening.swift; sourceTree = "<group>"; };
 		A1000001101A0091 /* SyncMode.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SyncMode.swift; sourceTree = "<group>"; };
-		A1000001101A0092 /* PlatformServices.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PlatformServices.swift; sourceTree = "<group>"; };
 		A1000001101A0093 /* KeyboardShortcuts.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = KeyboardShortcuts.swift; sourceTree = "<group>"; };
 		A1000001101A0094 /* NavigationTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationTypes.swift; sourceTree = "<group>"; };
 		A1000001101A0095 /* IOSContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSContentView.swift; sourceTree = "<group>"; };
@@ -329,6 +333,9 @@
 				A1000001101A0014 /* Context.swift */,
 				A1000001101A0040 /* InboxEvent.swift */,
 				A1000001101A0043 /* TaskMetrics.swift */,
+				4312E5CD2F3668720093897C /* IOSContentView_Simple.swift */,
+				4312E5CF2F36695D0093897C /* IOSContentView_Clean.swift */,
+				4312E5D12F3669DB0093897C /* IOSContentView_Fixed.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -350,6 +357,8 @@
 				A1000001401A0013 /* macOS */,
 				A1000001401A0014 /* iOS */,
 				A1000001401A0015 /* visionOS */,
+				4312E5D52F366B5D0093897C /* ContentView_Unified.swift */,
+				4312E5D92F366B730093897C /* PreviewContainer.swift */,
 			);
 			path = Views;
 			sourceTree = "<group>";
@@ -357,7 +366,6 @@
 		A1000001401A0007 /* Preview Content */ = {
 			isa = PBXGroup;
 			children = (
-				A1000001101A0008 /* PreviewContainer.swift */,
 			);
 			path = "Preview Content";
 			sourceTree = "<group>";
@@ -463,7 +471,7 @@
 			children = (
 				A1000001101A0090 /* URLOpening.swift */,
 				A1000001101A0091 /* SyncMode.swift */,
-				A1000001101A0092 /* PlatformServices.swift */,
+				4312E5D72F366B6A0093897C /* PlatformServices.swift */,
 			);
 			path = Platform;
 			sourceTree = "<group>";
@@ -675,7 +683,6 @@
 				A100000120A10030 /* TaskAssignee.swift in Sources */,
 				A1000001201A0004 /* TodoViewModel.swift in Sources */,
 				A1000001201A0114 /* TasksSceneViewModel.swift in Sources */,
-				A1000001201A0008 /* PreviewContainer.swift in Sources */,
 				A1000001201A0010 /* TerminalPanelView.swift in Sources */,
 				A1000001201A0011 /* SwiftTermWrapper.swift in Sources */,
 				A1000001201A0012 /* Skill.swift in Sources */,
@@ -714,7 +721,6 @@
 				A1000001201A0084 /* SwipeCardsKit.swift in Sources */,
 				A1000001201A0090 /* URLOpening.swift in Sources */,
 				A1000001201A0091 /* SyncMode.swift in Sources */,
-				A1000001201A0092 /* PlatformServices.swift in Sources */,
 				A1000001201A0093 /* KeyboardShortcuts.swift in Sources */,
 				A1000001201A0094 /* NavigationTypes.swift in Sources */,
 				A1000001201A0116 /* AIProviderUI.swift in Sources */,
@@ -722,6 +728,7 @@
 				A1000001201A0096 /* VisionContentView.swift in Sources */,
 				A1000001201A0097 /* MacHelpers.swift in Sources */,
 				A1000001201A0098 /* MacScenes.swift in Sources */,
+				4312E5D82F366B6A0093897C /* PlatformServices.swift in Sources */,
 				A1000001201A0099 /* MobileScene.swift in Sources */,
 				A1000001201A0100 /* ImmersiveView.swift in Sources */,
 				A1000001201A0101 /* CommandPanelViews.swift in Sources */,
@@ -734,6 +741,7 @@
 				SCRPT0001201A0001 /* ScriptingSupport.swift in Sources */,
 				D83C5EA8B2548DEC8D10DA27 /* SessionRecoveryService.swift in Sources */,
 				92F9F81D9C73F02C7FA61BB3 /* RecoveredSessionsView.swift in Sources */,
+				4312E5DA2F366B730093897C /* PreviewContainer.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -774,7 +782,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.12;
+				MARKETING_VERSION = 0.1.13;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -796,7 +804,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.12;
+				MARKETING_VERSION = 0.1.13;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -826,7 +834,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.12;
+				MARKETING_VERSION = 0.1.13;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -852,7 +860,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.12;
+				MARKETING_VERSION = 0.1.13;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -915,13 +923,14 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
 				MTL_FAST_MATH = YES;
 				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx26.0;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
 			};
@@ -973,12 +982,13 @@
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
 				GCC_WARN_UNUSED_VARIABLE = YES;
-				IPHONEOS_DEPLOYMENT_TARGET = 17.0;
+				IPHONEOS_DEPLOYMENT_TARGET = 18.6;
 				LOCALIZATION_PREFERS_STRING_CATALOGS = YES;
-				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MACOSX_DEPLOYMENT_TARGET = 15.6;
 				MARKETING_VERSION = 0.1.0;
 				MTL_ENABLE_DEBUG_INFO = NO;
 				MTL_FAST_MATH = YES;
+				SDKROOT = macosx26.0;
 				SWIFT_COMPILATION_MODE = wholemodule;
 			};
 			name = Release;
@@ -1024,7 +1034,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.12;
+				MARKETING_VERSION = 0.1.13;
 				"OTHER_LDFLAGS[sdk=macosx*]" = (
 					"-lc++",
 					"-framework",
@@ -1084,7 +1094,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.12;
+				MARKETING_VERSION = 0.1.13;
 				"OTHER_LDFLAGS[sdk=macosx*]" = (
 					"-lc++",
 					"-framework",

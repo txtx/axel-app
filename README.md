@@ -1,7 +1,7 @@
 <div align="center">
   <picture>
-      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/txtx/axel/main/docs/assets/axel-github-dark.png">
-      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/txtx/axel/main/docs/assets/axel-github-light.png">
+      <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/txtx/axel-app/main/docs/assets/axel-github-dark.png">
+      <source media="(prefers-color-scheme: light)" srcset="https://raw.githubusercontent.com/txtx/axel-app/main/docs/assets/axel-github-light.png">
       <img alt="Surfpool is the best place to train before surfing Solana" style="max-width: 60%;">
   </picture>
 </div>

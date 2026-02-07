@@ -333,7 +333,7 @@ extension SessionStatus {
     var color: Color {
         switch self {
         case .blocked: return .orange
-        case .thinking: return .purple
+        case .thinking: return .accentPurple
         case .active: return .green
         case .idle: return .yellow
         case .dormant: return .secondary

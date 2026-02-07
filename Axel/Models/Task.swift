@@ -176,7 +176,9 @@ final class WorkTask {
         let doc = AutomergeStore.shared.document(for: self.syncId ?? self.id)
         try? doc.updateTaskStatus(newStatus.rawValue)
         // Trigger sync for status changes (important for cross-device sync)
+        #if os(macOS)
         SyncScheduler.shared.scheduleSync()
+        #endif
     }
 
     /// Update priority and sync to Automerge document

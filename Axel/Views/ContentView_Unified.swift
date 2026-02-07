@@ -5,7 +5,7 @@ struct ContentView: View {
     @Bindable var appState: AppState
     @Environment(\.modelContext) private var modelContext
     @Environment(\.scenePhase) private var scenePhase
-    @State private var viewModel = TodoViewModel()
+    @State private var viewModel = TaskViewModel()
     @State private var sidebarSelection: SidebarSection? = .inbox(.pending)
     @State private var selectedHint: Hint?
     @State private var selectedTask: WorkTask?
@@ -13,8 +13,7 @@ struct ContentView: View {
     @State private var selectedContext: Context?
     @State private var selectedTeamMember: OrganizationMember?
     @State private var showTerminal: Bool = false
-    @State private var authService = AuthService.shared
-    @State private var syncService = SyncService.shared
+    
     #if os(macOS)
     @State private var selectedSession: TerminalSession?
     @State private var showWorkerPicker = false
@@ -343,22 +342,24 @@ struct ContentView: View {
     #endif
 
     private func performSync() {
-        guard authService.isAuthenticated else { return }
-        guard !syncService.isSyncing else { return }
+        #if os(macOS)
+        guard AuthService.shared.isAuthenticated else { return }
+        guard !SyncService.shared.isSyncing else { return }
 
         // Check if we need to run cleanup (first launch after deletion sync was added)
         let hasRunCleanup = UserDefaults.standard.bool(forKey: "hasRunDeletionCleanup")
         if !hasRunCleanup {
             print("[ContentView] Running one-time deletion cleanup...")
             Task {
-                await syncService.performCleanupSync(context: modelContext)
+                await SyncService.shared.performCleanupSync(context: modelContext)
                 UserDefaults.standard.set(true, forKey: "hasRunDeletionCleanup")
             }
         } else {
             // Use background sync (runs entirely off main thread)
             print("[ContentView] Triggering background sync...")
-            syncService.performFullSyncInBackground(container: modelContext.container)
+            SyncService.shared.performFullSyncInBackground(container: modelContext.container)
         }
+        #endif
     }
 
     private var currentHintFilter: HintFilter {
@@ -374,96 +375,6 @@ struct ContentView: View {
         }
         return .backlog
     }
-
-    // MARK: - Content Column (macOS only)
-
-    #if os(macOS)
-    @ViewBuilder
-    private var contentColumnView: some View {
-        switch sidebarSelection {
-        case .optimizations(.overview):
-            ContentUnavailableView {
-                Label("Optimizations", systemImage: "gauge.with.dots.needle.50percent")
-            } description: {
-                Text("Add skills and context to improve agent performance")
-            }
-        case .optimizations(.skills):
-            SkillsListView(workspace: nil, selection: $selectedAgent)
-        case .optimizations(.context):
-            ContextListView(selection: $selectedContext)
-        case .team:
-            TeamListView(selectedMember: $selectedTeamMember)
-        case .queue:
-            QueueListView(
-                filter: currentTaskFilter,
-                selection: $selectedTask,
-                onNewTask: { appState.isNewTaskPresented = true }
-            )
-        case .inbox, .none:
-            HintInboxView(
-                filter: currentHintFilter,
-                selection: $selectedHint
-            )
-        case .terminals:
-            RunningListView(selection: $selectedSession, onRequestClose: requestCloseSession)
-        case .recovered:
-            // Recovered sessions not shown in global view (workspace-specific)
-            EmptyView()
-        }
-    }
-
-    // MARK: - Detail Column
-
-    @ViewBuilder
-    private var detailColumnView: some View {
-        switch sidebarSelection {
-        case .optimizations(.skills):
-            if let agent = selectedAgent {
-                AgentDetailView(agent: agent)
-            } else {
-                EmptySkillSelectionView()
-            }
-        case .optimizations(.context):
-            if let context = selectedContext {
-                ContextDetailView(context: context)
-            } else {
-                EmptyContextSelectionView()
-            }
-        case .terminals:
-            if let session = selectedSession {
-                AgentsScene(
-                    session: session,
-                    selection: $selectedSession,
-                    onRequestClose: requestCloseSession
-                )
-            } else {
-                EmptyRunningSelectionView()
-            }
-        case .queue:
-            if let task = selectedTask {
-                #if os(macOS)
-                TaskDetailView(task: task, viewModel: viewModel, showTerminal: $showTerminal, selectedTask: $selectedTask, onStartTerminal: startTerminal)
-                #else
-                TaskDetailView(task: task, viewModel: viewModel, showTerminal: $showTerminal, selectedTask: $selectedTask)
-                #endif
-            } else {
-                EmptyTaskSelectionView()
-            }
-        case .team:
-            if let member = selectedTeamMember {
-                TeamMemberDetailView(member: member)
-            } else {
-                EmptyTeamSelectionView()
-            }
-        default:
-            if let hint = selectedHint {
-                HintDetailView(hint: hint)
-            } else {
-                EmptyHintSelectionView()
-            }
-        }
-    }
-    #endif
 
     // MARK: - Body
 
@@ -489,18 +400,18 @@ struct ContentView: View {
 
             ToolbarItemGroup(placement: .primaryAction) {
                 // Sign in button (only when not authenticated)
-                if !authService.isAuthenticated {
+                if !AuthService.shared.isAuthenticated {
                     Button {
                         Task {
                             print("[ContentView] Sign in button pressed")
-                            await authService.signInWithGitHub()
-                            print("[ContentView] Sign in completed, error: \(String(describing: authService.authError))")
+                            await AuthService.shared.signInWithGitHub()
+                            print("[ContentView] Sign in completed, error: \(String(describing: AuthService.shared.authError))")
                         }
                     } label: {
-                        if authService.isLoading {
+                        if AuthService.shared.isLoading {
                             ProgressView()
                                 .controlSize(.small)
-                        } else if let error = authService.authError {
+                        } else if let error = AuthService.shared.authError {
                             HStack(spacing: 6) {
                                 Image(systemName: "exclamationmark.triangle")
                                     .font(.system(size: 16))
@@ -599,26 +510,10 @@ struct ContentView: View {
         .task {
             // Sync on launch if authenticated (non-blocking)
             performSync()
-            // Start real-time sync in background
-            if authService.isAuthenticated {
-                let service = syncService
-                let context = modelContext
-                Task {
-                    await service.startRealtimeSync(context: context)
-                }
-            }
         }
         .onChange(of: scenePhase) { _, newPhase in
             if newPhase == .active {
                 performSync()
-            }
-        }
-        .onChange(of: authService.isAuthenticated) { _, isAuthenticated in
-            if isAuthenticated {
-                performSync()
-                Task {
-                    await syncService.startRealtimeSync(context: modelContext)
-                }
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .taskCompletedOnTerminal)) { notification in
@@ -628,29 +523,369 @@ struct ContentView: View {
             }
         }
         #else
-        iOSContentView(
-            appState: appState,
-            viewModel: viewModel,
-            sidebarSelection: $sidebarSelection,
-            selectedHint: $selectedHint,
-            selectedTask: $selectedTask,
-            selectedAgent: $selectedAgent,
-            selectedContext: $selectedContext,
-            selectedTeamMember: $selectedTeamMember,
-            showTerminal: $showTerminal
-        )
+        // iOS and visionOS - Simple content
+        iOSContentView()
+        #endif
+    }
+    
+    #if os(macOS)
+    // MARK: - Content Column (macOS only)
+
+    @ViewBuilder
+    private var contentColumnView: some View {
+        switch sidebarSelection {
+        case .optimizations(.overview):
+            ContentUnavailableView {
+                Label("Optimizations", systemImage: "gauge.with.dots.needle.50percent")
+            } description: {
+                Text("Add skills and context to improve agent performance")
+            }
+        case .optimizations(.skills):
+            SkillsListView(workspace: nil, selection: $selectedAgent)
+        case .optimizations(.context):
+            ContextListView(selection: $selectedContext)
+        case .team:
+            TeamListView(selectedMember: $selectedTeamMember)
+        case .queue:
+            QueueListView(
+                filter: currentTaskFilter,
+                selection: $selectedTask,
+                onNewTask: { appState.isNewTaskPresented = true }
+            )
+        case .inbox, .none:
+            HintInboxView(
+                filter: currentHintFilter,
+                selection: $selectedHint
+            )
+        case .terminals:
+            RunningListView(selection: $selectedSession, onRequestClose: requestCloseSession)
+        case .recovered:
+            // Recovered sessions not shown in global view (workspace-specific)
+            EmptyView()
+        }
+    }
+
+    // MARK: - Detail Column
+
+    @ViewBuilder
+    private var detailColumnView: some View {
+        switch sidebarSelection {
+        case .optimizations(.skills):
+            if let agent = selectedAgent {
+                AgentDetailView(agent: agent)
+            } else {
+                EmptySkillSelectionView()
+            }
+        case .optimizations(.context):
+            if let context = selectedContext {
+                ContextDetailView(context: context)
+            } else {
+                EmptyContextSelectionView()
+            }
+        case .terminals:
+            if let session = selectedSession {
+                AgentsScene(
+                    session: session,
+                    selection: $selectedSession,
+                    onRequestClose: requestCloseSession
+                )
+            } else {
+                EmptyRunningSelectionView()
+            }
+        case .queue:
+            if let task = selectedTask {
+                TaskDetailView(task: task, viewModel: viewModel, showTerminal: $showTerminal, selectedTask: $selectedTask, onStartTerminal: startTerminal)
+            } else {
+                EmptyTaskSelectionView()
+            }
+        case .team:
+            if let member = selectedTeamMember {
+                TeamMemberDetailView(member: member)
+            } else {
+                EmptyTeamSelectionView()
+            }
+        default:
+            if let hint = selectedHint {
+                HintDetailView(hint: hint)
+            } else {
+                EmptyHintSelectionView()
+            }
+        }
+    }
+    #endif
+}
+
+// MARK: - iOS Content View
+
+#if os(iOS) || os(visionOS)
+struct iOSContentView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \WorkTask.priority) private var tasks: [WorkTask]
+    @Query(
+        filter: #Predicate<Hint> { hint in
+            hint.hintStatus == .pending
+        },
+        sort: \Hint.createdAt,
+        order: .reverse
+    ) private var pendingHints: [Hint]
+    
+    #if os(iOS)
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    #endif
+
+    var body: some View {
+        #if os(visionOS)
+        VStack {
+            Text("visionOS Content")
+                .foregroundStyle(.secondary)
+            Text("Coming Soon")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+        }
+        #else
+        if horizontalSizeClass == .compact {
+            // iPhone - Tab navigation
+            TabView {
+                NavigationStack {
+                    TaskListView(tasks: tasks)
+                        .navigationTitle("Tasks")
+                }
+                .tabItem {
+                    Label("Tasks", systemImage: "list.bullet")
+                }
+                
+                NavigationStack {
+                    InboxListView(hints: pendingHints)
+                        .navigationTitle("Inbox")
+                }
+                .tabItem {
+                    Label("Inbox", systemImage: "tray")
+                }
+                
+                NavigationStack {
+                    SettingsView()
+                        .navigationTitle("Settings")
+                }
+                .tabItem {
+                    Label("Settings", systemImage: "gear")
+                }
+            }
+        } else {
+            // iPad - Use same as iPhone for simplicity
+            TabView {
+                NavigationStack {
+                    TaskListView(tasks: tasks)
+                        .navigationTitle("Tasks")
+                }
+                .tabItem {
+                    Label("Tasks", systemImage: "list.bullet")
+                }
+                
+                NavigationStack {
+                    InboxListView(hints: pendingHints)
+                        .navigationTitle("Inbox")
+                }
+                .tabItem {
+                    Label("Inbox", systemImage: "tray")
+                }
+                
+                NavigationStack {
+                    SettingsView()
+                        .navigationTitle("Settings")
+                }
+                .tabItem {
+                    Label("Settings", systemImage: "gear")
+                }
+            }
+        }
         #endif
     }
 }
+
+struct TaskListView: View {
+    let tasks: [WorkTask]
+    @Environment(\.modelContext) private var modelContext
+    
+    var body: some View {
+        List {
+            if tasks.isEmpty {
+                ContentUnavailableView {
+                    Label("No Tasks", systemImage: "tray")
+                } description: {
+                    Text("Create a task to get started")
+                }
+            } else {
+                ForEach(tasks) { task in
+                    SimpleTaskRow(task: task)
+                }
+                .onDelete(perform: deleteTasks)
+            }
+        }
+    }
+    
+    private func deleteTasks(at offsets: IndexSet) {
+        for index in offsets {
+            let task = tasks[index]
+            task.prepareForDeletion()
+            modelContext.delete(task)
+        }
+    }
+}
+
+struct SimpleTaskRow: View {
+    @Bindable var task: WorkTask
+    
+    var body: some View {
+        HStack {
+            Button {
+                task.toggleComplete()
+            } label: {
+                Image(systemName: task.isCompleted ? "checkmark.circle.fill" : "circle")
+                    .foregroundStyle(task.isCompleted ? .green : .secondary)
+            }
+            .buttonStyle(.plain)
+            
+            VStack(alignment: .leading, spacing: 4) {
+                Text(task.title)
+                    .font(.body)
+                    .strikethrough(task.isCompleted)
+                    .foregroundStyle(task.isCompleted ? .secondary : .primary)
+                
+                if let description = task.taskDescription {
+                    Text(description)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(2)
+                }
+                
+                Text(task.taskStatus.displayName)
+                    .font(.caption2)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(statusColor(for: task.taskStatus))
+                    .foregroundStyle(.white)
+                    .clipShape(Capsule())
+            }
+        }
+        .padding(.vertical, 2)
+    }
+    
+    private func statusColor(for status: TaskStatus) -> Color {
+        switch status {
+        case .backlog: .blue
+        case .queued: .orange
+        case .running: .green
+        case .completed: .gray
+        case .inReview: .purple
+        case .aborted: .red
+        }
+    }
+}
+
+struct InboxListView: View {
+    let hints: [Hint]
+    
+    var body: some View {
+        List {
+            if hints.isEmpty {
+                ContentUnavailableView {
+                    Label("No Questions", systemImage: "checkmark.seal")
+                } description: {
+                    Text("All clear! AI agents will ask questions here when they need help.")
+                }
+            } else {
+                ForEach(hints) { hint in
+                    SimpleHintRow(hint: hint)
+                }
+            }
+        }
+    }
+}
+
+struct SimpleHintRow: View {
+    @Bindable var hint: Hint
+    
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(hint.title)
+                .font(.body)
+                .foregroundStyle(.primary)
+            
+            if let description = hint.hintDescription {
+                Text(description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+            
+            if let task = hint.task {
+                Text("Task: \(task.title)")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+struct SettingsView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Query(sort: \Workspace.name) private var workspaces: [Workspace]
+    
+    var body: some View {
+        List {
+            Section("Workspaces") {
+                if workspaces.isEmpty {
+                    Text("No workspaces")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(workspaces) { workspace in
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text(workspace.name)
+                                .font(.body)
+                            if let path = workspace.path {
+                                Text(path)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.vertical, 2)
+                    }
+                }
+            }
+            
+            Section("About") {
+                HStack {
+                    Text("Version")
+                    Spacer()
+                    Text("1.0.0")
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+    }
+}
+#endif
+
+// MARK: - Task View Model
+
+struct TaskViewModel {
+    func deleteTodo(_ task: WorkTask, context: ModelContext) async {
+        await MainActor.run {
+            task.prepareForDeletion()
+            context.delete(task)
+        }
+    }
+}
+
+// MARK: - Type Aliases for Compatibility
+
+typealias AgentSelection = Skill
 
 // MARK: - Previews
 
 #Preview {
     ContentView(appState: AppState())
-        .modelContainer(PreviewContainer.shared.container)
-}
-
-#Preview("Create Task") {
-    CreateTaskView(isPresented: .constant(true))
         .modelContainer(PreviewContainer.shared.container)
 }

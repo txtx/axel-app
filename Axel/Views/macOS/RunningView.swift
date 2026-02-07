@@ -783,7 +783,7 @@ struct TerminalMiniatureView: View {
             .padding(2)
             .overlay(
                 RoundedRectangle(cornerRadius: 16, style: .continuous)
-                    .stroke(isSelected ? Self.selectionBorderColor : Color.clear, lineWidth: isSelected ? 5 : 0)
+                    .stroke(isSelected ? Color.accentPurple : Color.clear, lineWidth: isSelected ? 5 : 0)
             )
             .shadow(color: .black.opacity(0.3), radius: 4, x: 0, y: 0)
             .padding(12)
@@ -810,7 +810,7 @@ struct TerminalMiniatureView: View {
                 .padding(.vertical, 3)
                 .background(
                     Capsule()
-                        .fill(isSelected ? Self.selectionBorderColor : Color.primary.opacity(0.06))
+                        .fill(isSelected ? Color.accentPurple : Color.primary.opacity(0.06))
                 )
                 .overlay(
                     Capsule()
@@ -823,7 +823,6 @@ struct TerminalMiniatureView: View {
         }
     }
 
-    private static let selectionBorderColor = Color(hex: "693EFE")!
 }
 
 
@@ -1275,7 +1274,7 @@ struct TokenHistogramOverlay: View {
 
     private var totalTokens: Int {
         guard let paneId = paneId else { return 0 }
-        return costTracker.totalTokens(forTerminal: paneId)
+        return costTracker.currentSessionTokens(forTerminal: paneId)
     }
 
     var body: some View {
@@ -1720,7 +1719,7 @@ struct WorkerPickerPanel: View {
                             HStack {
                                 Image(systemName: "arrow.triangle.branch")
                                     .font(.body)
-                                    .foregroundStyle(.purple)
+                                    .foregroundStyle(.accentPurple)
                                     .frame(width: 24)
 
                                 TextField("Branch name (e.g., feat-auth)", text: $newWorktreeBranch)
@@ -1740,7 +1739,7 @@ struct WorkerPickerPanel: View {
                             )
                             .overlay(
                                 RoundedRectangle(cornerRadius: 8)
-                                    .strokeBorder(Color.purple.opacity(0.3), lineWidth: 1)
+                                    .strokeBorder(Color.accentPurple.opacity(0.3), lineWidth: 1)
                             )
                         }
                     }
@@ -1804,7 +1803,7 @@ struct WorkerPickerPanel: View {
 
                 Image(systemName: isMain ? "folder.fill" : "arrow.triangle.branch")
                     .font(.caption)
-                    .foregroundStyle(isMain ? .orange : .purple)
+                    .foregroundStyle(isMain ? .orange : .accentPurple)
 
                 Text(name)
                     .font(.body)
@@ -1855,7 +1854,7 @@ struct WorkerPickerPanel: View {
                         HStack(spacing: 8) {
                             Image(systemName: session.worktreeBranch == nil ? "folder.fill" : "arrow.triangle.branch")
                                 .font(.caption)
-                                .foregroundStyle(session.worktreeBranch == nil ? .orange : .purple)
+                                .foregroundStyle(session.worktreeBranch == nil ? .orange : .accentPurple)
                                 .frame(width: 20)
                             Text("Worktree:")
                                 .font(.subheadline)
@@ -2342,7 +2341,7 @@ struct PaneInfo: Codable, Identifiable, Equatable {
         case "orange": return .orange
         case "green": return .green
         case "blue": return .blue
-        case "purple": return .purple
+        case "purple": return .accentPurple
         case "yellow": return .yellow
         case "red": return .red
         case "gray", "grey": return .gray
@@ -2369,7 +2368,7 @@ struct GridCellInfo: Codable, Equatable {
     var swiftUIColor: Color {
         guard let colorName = color else { return .gray }
         switch colorName.lowercased() {
-        case "purple": return .purple
+        case "purple": return .accentPurple
         case "yellow": return .yellow
         case "red": return .red
         case "green": return .green
@@ -2904,7 +2903,7 @@ struct CompactWorktreeChip: View {
         VStack(spacing: 8) {
             Image(systemName: worktree.isMain ? "folder.fill" : "arrow.triangle.branch")
                 .font(.system(size: 36))
-                .foregroundStyle(worktree.isMain ? .orange : .purple)
+                .foregroundStyle(worktree.isMain ? .orange : .accentPurple)
 
             Text(worktree.displayName)
                 .font(.callout)

@@ -533,7 +533,7 @@ struct ImmersiveInboxRow: View {
     private var typeColor: Color {
         switch event.eventType {
         case .permission: return .orange
-        case .hint: return .purple
+        case .hint: return .accentPurple
         case .toolUse: return .blue
         case .taskStart: return .green
         case .taskStop: return .red

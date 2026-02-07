@@ -1,4 +1,5 @@
 import AutomergeWrapper
+import AutomergeWrapper
 import Foundation
 import SwiftData
 import Supabase
@@ -17,9 +18,9 @@ private struct ProcessedTaskFields: Sendable {
     let needsRepair: Bool
 }
 
-/// Process Automerge bytes in background and extract field values
+/// Process Automerge bytes in background and extract field values for SyncService
 /// This runs off the main thread to avoid UI freezes
-private func processAutomergeBytesInBackground(
+private func syncServiceProcessAutomergeBytesInBackground(
     remoteTasks: [SyncTask],
     localSyncIds: Set<UUID>,
     existingDocBytes: [UUID: Data]
@@ -114,8 +115,8 @@ private func processAutomergeBytesInBackground(
 
 // MARK: - Background Sync Worker (runs off main thread)
 
-/// Actor that performs sync work entirely off the main thread
-private actor BackgroundSyncWorker {
+/// Performs sync work entirely off the main thread
+private struct BackgroundSyncWorker {
     static func performSync(container: ModelContainer, syncService: SyncService) async {
         // Use lock to prevent concurrent sync operations that could create duplicate records
         guard syncService.tryAcquireSyncLock() else {
@@ -1507,7 +1508,7 @@ final class SyncService {
         }
 
         // Step 2: Process Automerge documents in background (heavy work off main thread)
-        let processedFields = await processAutomergeBytesInBackground(
+        let processedFields = await syncServiceProcessAutomergeBytesInBackground(
             remoteTasks: remoteTasks,
             localSyncIds: Set(localById.keys),
             existingDocBytes: existingDocBytes

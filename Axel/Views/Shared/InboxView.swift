@@ -710,7 +710,7 @@ struct InboxEventDetailView: View {
         VStack(alignment: .leading, spacing: 12) {
             HStack {
                 Image(systemName: "chart.bar.fill")
-                    .foregroundStyle(.purple)
+                    .foregroundStyle(.accentPurple)
                 Text("Cost Breakdown")
                     .font(.headline)
                 Spacer()
@@ -728,7 +728,7 @@ struct InboxEventDetailView: View {
                         GeometryReader { geo in
                             let width = maxTokens > 0 ? CGFloat(segment.tokensUsed) / CGFloat(maxTokens) * geo.size.width : 0
                             RoundedRectangle(cornerRadius: 3)
-                                .fill(Color.purple.opacity(0.6))
+                                .fill(Color.accentPurple.opacity(0.6))
                                 .frame(width: max(4, width))
                         }
                         .frame(height: 12)
@@ -746,7 +746,7 @@ struct InboxEventDetailView: View {
                                     .foregroundStyle(.secondary)
                                 Text(String(format: "$%.4f", segment.costUsed))
                                     .font(.caption2)
-                                    .foregroundStyle(.purple)
+                                    .foregroundStyle(.accentPurple)
                             }
                         }
                         Spacer()
@@ -765,7 +765,7 @@ struct InboxEventDetailView: View {
                 Text(String(format: "$%.4f", totalCost))
                     .font(.caption)
                     .fontWeight(.medium)
-                    .foregroundStyle(.purple)
+                    .foregroundStyle(.accentPurple)
             }
         }
     }
@@ -1162,7 +1162,7 @@ struct InboxEventDetailView: View {
             HStack(spacing: 16) {
                 TokenBreakdownItem(label: "Input", value: snapshot.inputTokens, color: .blue)
                 TokenBreakdownItem(label: "Output", value: snapshot.outputTokens, color: .green)
-                TokenBreakdownItem(label: "Cache Read", value: snapshot.cacheReadTokens, color: .purple)
+                TokenBreakdownItem(label: "Cache Read", value: snapshot.cacheReadTokens, color: .accentPurple)
                 TokenBreakdownItem(label: "Cache Write", value: snapshot.cacheCreationTokens, color: .orange)
             }
 

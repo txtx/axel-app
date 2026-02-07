@@ -79,11 +79,11 @@ struct OrbView: View {
     }
 
     private var totalTokens: Int {
-        costTracker.globalTotalTokens
+        costTracker.globalCurrentSessionTokens
     }
 
     private var totalCost: Double {
-        costTracker.globalTotalCostUSD
+        costTracker.globalCurrentSessionCostUSD
     }
 
     var body: some View {
@@ -322,16 +322,16 @@ struct SidebarView: View {
                         if backlogTasksCount + upNextTasksCount > 0 {
                             Text("\(backlogTasksCount + upNextTasksCount)")
                                 .font(.callout.monospacedDigit())
-                                .foregroundStyle(Color(hex: "693EFE")!)
+                                .foregroundStyle(Color.accentPurple)
                                 .padding(.horizontal, 6)
                                 .padding(.vertical, 2)
-                                .background(Color(hex: "693EFE")!.opacity(0.15))
+                                .background(Color.accentPurple.opacity(0.15))
                                 .clipShape(Capsule())
                         }
                     }
                 } icon: {
                     Image(systemName: "rectangle.stack")
-                        .foregroundStyle(Color(hex: "693EFE")!)
+                        .foregroundStyle(Color.accentPurple)
                 }
                 .tag(SidebarSection.queue(.backlog))
 
@@ -388,49 +388,33 @@ struct SidebarView: View {
                 .padding(.leading, 16)
                 .tag(SidebarSection.terminals)
 
-                // Optimizations (shows Skills view)
+                // Optimizations (coming soon)
                 Label {
                     HStack {
                         Text("Optimizations")
                         Spacer()
-                        if !skills.isEmpty {
-                            Text("\(skills.count)")
-                                .font(.callout.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.secondary.opacity(0.15))
-                                .clipShape(Capsule())
-                        }
+                        Text("Soon")
+                            .font(.caption2)
+                            .foregroundStyle(.tertiary)
                     }
                 } icon: {
                     Image(systemName: "gauge.with.dots.needle.50percent")
-                        .foregroundStyle(.purple)
+                        .foregroundStyle(.tertiary)
                 }
+                .foregroundStyle(.tertiary)
                 .padding(.leading, 16)
-                .tag(SidebarSection.optimizations(.skills))
+                .allowsHitTesting(false)
 
                 // Context (under Optimizations)
                 Label {
-                    HStack {
-                        Text("Context")
-                        Spacer()
-                        if !contexts.isEmpty {
-                            Text("\(contexts.count)")
-                                .font(.callout.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(.secondary.opacity(0.15))
-                                .clipShape(Capsule())
-                        }
-                    }
+                    Text("Context")
                 } icon: {
                     Image(systemName: "briefcase.fill")
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(.tertiary)
                 }
+                .foregroundStyle(.tertiary)
                 .padding(.leading, 28)
-                .tag(SidebarSection.optimizations(.context))
+                .allowsHitTesting(false)
 
                 // Team (fourth under Coding Agents)
                 Label {
@@ -1365,7 +1349,7 @@ struct TaskDetailView: View {
                                         }
                                         .padding(.horizontal, 10)
                                         .padding(.vertical, 6)
-                                        .background(Color.purple.opacity(0.1))
+                                        .background(Color.accentPurple.opacity(0.1))
                                         .clipShape(Capsule())
                                     }
                                 }
@@ -1595,7 +1579,7 @@ struct TaskSkillPickerView: View {
                                     HStack(spacing: 12) {
                                         Image(systemName: "sparkles")
                                             .font(.title3)
-                                            .foregroundStyle(.purple)
+                                            .foregroundStyle(.accentPurple)
 
                                         VStack(alignment: .leading, spacing: 2) {
                                             Text(skill.name)

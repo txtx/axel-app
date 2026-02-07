@@ -110,7 +110,7 @@ struct FileHeaderView: View {
         case .deleted: return .red
         case .modified: return .blue
         case .renamed: return .orange
-        case .copied: return .purple
+        case .copied: return .diffPurple
         }
     }
 }

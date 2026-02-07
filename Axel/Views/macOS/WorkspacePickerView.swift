@@ -24,32 +24,12 @@ struct WorkspacePickerView: View {
     }
 
     var body: some View {
-        ZStack(alignment: .topLeading) {
-            HStack(spacing: 0) {
-                // Left side - Branding and Actions
-                brandingPanel
+        HStack(spacing: 0) {
+            // Left side - Branding and Actions
+            brandingPanel
 
-                // Right side - Recent Workspaces
-                recentWorkspacesPanel
-            }
-
-            // Close button
-            Button {
-                dismissWindow(id: "workspace-picker")
-            } label: {
-                Image(systemName: "xmark.circle.fill")
-                    .font(.system(size: 14))
-                    .foregroundStyle(Color.white.opacity(0.4))
-            }
-            .buttonStyle(.plain)
-            .padding(12)
-            .onHover { isHovered in
-                if isHovered {
-                    NSCursor.pointingHand.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
+            // Right side - Recent Workspaces
+            recentWorkspacesPanel
         }
         .frame(width: 760, height: 420)
         .clipShape(RoundedRectangle(cornerRadius: 12))
@@ -68,20 +48,16 @@ struct WorkspacePickerView: View {
                 selectedWorkspaceId = first.id
             }
 
-            // Hide traffic light buttons
+            // Show only the red close button, hide minimize and zoom
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
                 for window in NSApplication.shared.windows {
                     if window.identifier?.rawValue == "workspace-picker" ||
                        window.title == "Axel" {
-                        // Hide each button and their container
-                        for buttonType: NSWindow.ButtonType in [.closeButton, .miniaturizeButton, .zoomButton] {
+                        // Hide minimize and zoom, keep close
+                        for buttonType: NSWindow.ButtonType in [.miniaturizeButton, .zoomButton] {
                             if let button = window.standardWindowButton(buttonType) {
                                 button.isHidden = true
                             }
-                        }
-                        // Hide the titlebar container
-                        if let titlebarContainer = window.standardWindowButton(.closeButton)?.superview?.superview {
-                            titlebarContainer.isHidden = true
                         }
                         break
                     }

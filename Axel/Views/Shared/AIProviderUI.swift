@@ -9,7 +9,7 @@ extension AIProvider {
         case .claude: return .orange
         case .codex: return Color(red: 0x23/255.0, green: 0xAC/255.0, blue: 0x86/255.0) // #23AC86
         case .opencode: return .blue
-        case .antigravity: return .purple
+        case .antigravity: return .accentPurple
         case .shell: return .yellow
         case .custom: return .gray
         }

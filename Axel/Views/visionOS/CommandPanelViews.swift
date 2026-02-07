@@ -29,7 +29,7 @@ enum CommandWindow: String, CaseIterable {
     var accentColor: Color {
         switch self {
         case .tasks: return .cyan
-        case .agents: return .purple
+        case .agents: return .accentPurple
         case .inbox: return .orange
         }
     }
@@ -188,19 +188,19 @@ struct AgentsPanelView: View {
             CommandPanelHeader(
                 title: "SKILLS",
                 icon: "cpu",
-                accentColor: .purple,
+                accentColor: .accentPurple,
                 count: skills.count
             )
 
             // Status overview
             HStack(spacing: 16) {
-                AgentStatusBadge(label: "Total", count: skills.count, color: .purple)
+                AgentStatusBadge(label: "Total", count: skills.count, color: .accentPurple)
                 AgentStatusBadge(label: "Ready", count: skills.count, color: .green)
             }
             .padding(16)
 
             Divider()
-                .background(Color.purple.opacity(0.3))
+                .background(Color.accentPurple.opacity(0.3))
 
             // Agent list
             ScrollView {
@@ -213,7 +213,7 @@ struct AgentsPanelView: View {
                         EmptyStateView(
                             icon: "cpu",
                             message: "No skills configured",
-                            accentColor: .purple
+                            accentColor: .accentPurple
                         )
                         .padding(.top, 40)
                     }
@@ -281,7 +281,7 @@ struct AgentRow: View {
         .background(
             RoundedRectangle(cornerRadius: 12)
                 .fill(Color.white.opacity(0.05))
-                .stroke(Color.purple.opacity(0.3), lineWidth: 1)
+                .stroke(Color.accentPurple.opacity(0.3), lineWidth: 1)
         )
     }
 }

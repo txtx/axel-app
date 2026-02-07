@@ -379,19 +379,34 @@ struct iPhoneTabView: View {
     private var tasksSection: some View {
         VStack(spacing: 0) {
             if runningTasks.isEmpty && upNextTasks.isEmpty && backlogTasks.isEmpty && completedTasks.isEmpty {
-                VStack(spacing: 14) {
+                VStack(spacing: 12) {
                     Image(systemName: "tray")
                         .font(.system(size: 40, weight: .thin))
                         .foregroundStyle(.secondary.opacity(0.6))
-                    Text("No tasks yet")
-                        .font(.system(size: 17, weight: .medium))
+
+                    Text("No Tasks")
+                        .font(.system(size: 18, weight: .semibold))
                         .foregroundStyle(.secondary)
+
+                    Text("Create a task to get started")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.tertiary)
+
+                    Button {
+                        appState.isNewTaskPresented = true
+                    } label: {
+                        Label("New Task", systemImage: "plus")
+                            .font(.system(size: 14, weight: .semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.blue)
+                    .padding(.top, 4)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.top, 60)
             } else {
                 if !runningTasks.isEmpty {
-                    taskSectionHeader("Running")
+                    taskSectionHeader("Running", count: runningTasks.count, color: .green)
                     ForEach(runningTasks, id: \.id) { task in
                         ExpandableTaskRow(
                             task: task,
@@ -411,11 +426,21 @@ struct iPhoneTabView: View {
                 // Up Next section - tasks assigned to terminal queues (show position numbers)
                 if !upNextTasks.isEmpty {
                     HStack {
-                        Text("Up Next")
-                            .font(.system(size: 13, weight: .semibold))
-                            .foregroundStyle(Color.white.opacity(0.5))
-                            .textCase(.uppercase)
-                            .tracking(0.8)
+                        HStack(spacing: 8) {
+                            Text("Up Next")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(Color.white.opacity(0.7))
+                                .textCase(.uppercase)
+                                .tracking(0.8)
+
+                            Text("\(upNextTasks.count)")
+                                .font(.caption.weight(.bold).monospacedDigit())
+                                .foregroundStyle(.orange)
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 2)
+                                .background(.orange.opacity(0.15))
+                                .clipShape(Capsule())
+                        }
                         Spacer()
                         if editMode == .active {
                             Button("Done") {
@@ -463,7 +488,7 @@ struct iPhoneTabView: View {
 
                 // Backlog section - unassigned tasks (no position numbers)
                 if !backlogTasks.isEmpty {
-                    taskSectionHeader("Backlog")
+                    taskSectionHeader("Backlog", count: backlogTasks.count, color: .secondary)
                     List {
                         ForEach(backlogTasks, id: \.id) { task in
                             ExpandableTaskRow(
@@ -497,7 +522,7 @@ struct iPhoneTabView: View {
                 }
 
                 if !completedTasks.isEmpty {
-                    taskSectionHeader("Completed")
+                    taskSectionHeader("Completed", count: completedTasks.count, color: .secondary)
                     ForEach(completedTasks, id: \.id) { task in
                         ExpandableTaskRow(
                             task: task,
@@ -517,13 +542,22 @@ struct iPhoneTabView: View {
         }
     }
 
-    private func taskSectionHeader(_ title: String) -> some View {
-        HStack {
+    private func taskSectionHeader(_ title: String, count: Int, color: Color) -> some View {
+        HStack(spacing: 8) {
             Text(title)
                 .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(Color.white.opacity(0.5))
+                .foregroundStyle(Color.white.opacity(0.7))
                 .textCase(.uppercase)
                 .tracking(0.8)
+
+            Text("\(count)")
+                .font(.caption.weight(.bold).monospacedDigit())
+                .foregroundStyle(color)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(color.opacity(0.15))
+                .clipShape(Capsule())
+
             Spacer()
         }
         .padding(.horizontal, 16)
@@ -616,6 +650,7 @@ struct iPhoneTabView: View {
 /// Animated dashed circle that spins for running tasks
 struct RunningTaskIndicator: View {
     let size: CGFloat
+    var color: Color = .orange
 
     @State private var rotation: Double = 0
 
@@ -628,7 +663,7 @@ struct RunningTaskIndicator: View {
                     dash: [2, 3]
                 )
             )
-            .foregroundStyle(Color.orange.opacity(0.8))
+            .foregroundStyle(color.opacity(0.8))
             .frame(width: size, height: size)
             .rotationEffect(.degrees(rotation))
             .onAppear {
@@ -661,11 +696,34 @@ struct ExpandableTaskRow: View {
     @State private var showContent: Bool = false
 
     private let indicatorSize: CGFloat = 26
-    private let indicatorSpace: CGFloat = 42 // indicatorSize + spacing
 
     private var isRunning: Bool { task.taskStatus == .running }
     private var isCompleted: Bool { task.taskStatus == .completed }
     private var isQueued: Bool { task.taskStatus.isPending }
+
+    private var statusColor: Color {
+        switch task.taskStatus {
+        case .backlog, .queued: .blue
+        case .running: .green
+        case .completed: .secondary
+        case .inReview: .yellow
+        case .aborted: .red
+        }
+    }
+
+    private var statusIcon: String {
+        switch task.taskStatus {
+        case .backlog, .queued: "clock.circle.fill"
+        case .running: "play.circle.fill"
+        case .completed: "checkmark.circle.fill"
+        case .inReview: "eye.circle.fill"
+        case .aborted: "xmark.circle.fill"
+        }
+    }
+
+    private var statusLabel: String {
+        task.taskStatus.rawValue.replacingOccurrences(of: "_", with: " ").capitalized
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
@@ -680,14 +738,32 @@ struct ExpandableTaskRow: View {
                         .padding(.trailing, titleOffset ? 0 : 16)
 
                     // Title - slides left when indicator disappears
-                    Text(task.title)
-                        .font(.system(size: 17))
-                        .foregroundStyle(isCompleted ? .tertiary : .primary)
-                        .strikethrough(isCompleted, color: .secondary)
-                        .lineLimit(2)
-                        .multilineTextAlignment(.leading)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .opacity(showContent ? 0 : 1)
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text(task.title)
+                            .font(.system(size: 16, weight: .medium))
+                            .foregroundStyle(isCompleted ? .tertiary : .primary)
+                            .strikethrough(isCompleted, color: .secondary)
+                            .lineLimit(2)
+
+                        HStack(spacing: 8) {
+                            Text(statusLabel)
+                                .font(.caption)
+                                .foregroundStyle(statusColor)
+
+                            Text(task.createdAt, style: .relative)
+                                .font(.caption)
+                                .foregroundStyle(.tertiary)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .opacity(showContent ? 0 : 1)
+
+                    if task.priority > 0 {
+                        Image(systemName: "exclamationmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.orange)
+                            .padding(.trailing, 6)
+                    }
 
                     // Chevron
                     Image(systemName: "chevron.right")
@@ -696,7 +772,7 @@ struct ExpandableTaskRow: View {
                         .rotationEffect(.degrees(isExpanded ? 90 : 0))
                 }
                 .padding(.horizontal, 16)
-                .padding(.vertical, 14)
+                .padding(.vertical, 12)
                 .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
@@ -708,11 +784,15 @@ struct ExpandableTaskRow: View {
             }
         }
         .background(
-            RoundedRectangle(cornerRadius: isExpanded ? 12 : 0)
-                .fill(isExpanded ? Color.white.opacity(0.05) : .clear)
+            RoundedRectangle(cornerRadius: 12)
+                .fill(isExpanded ? Color.white.opacity(0.08) : Color.white.opacity(0.04))
         )
-        .padding(.horizontal, isExpanded ? 8 : 0)
-        .padding(.vertical, isExpanded ? 4 : 0)
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .stroke(statusColor.opacity(isExpanded ? 0.25 : 0.12), lineWidth: 1)
+        )
+        .padding(.horizontal, 16)
+        .padding(.vertical, 6)
         .onAppear {
             editedTitle = task.title
             editedDescription = task.taskDescription ?? ""
@@ -759,11 +839,11 @@ struct ExpandableTaskRow: View {
     private var statusIndicator: some View {
         ZStack {
             if isRunning {
-                RunningTaskIndicator(size: indicatorSize)
+                RunningTaskIndicator(size: indicatorSize, color: statusColor)
             } else if isCompleted {
                 ZStack {
                     Circle()
-                        .fill(Color.green)
+                        .fill(statusColor)
                         .frame(width: indicatorSize, height: indicatorSize)
                     Image(systemName: "checkmark")
                         .font(.system(size: 12, weight: .bold))
@@ -773,21 +853,23 @@ struct ExpandableTaskRow: View {
                 if let pos = position {
                     ZStack {
                         Circle()
-                            .strokeBorder(Color.gray.opacity(0.6), lineWidth: 1.5)
+                            .strokeBorder(Color.orange.opacity(0.7), lineWidth: 1.5)
                             .frame(width: indicatorSize, height: indicatorSize)
                         Text("\(pos)")
                             .font(.system(size: 12, weight: .bold).monospacedDigit())
-                            .foregroundStyle(.gray)
+                            .foregroundStyle(.orange)
                     }
                 } else {
-                    Circle()
-                        .strokeBorder(Color.white.opacity(0.2), lineWidth: 1.5)
+                    Image(systemName: statusIcon)
+                        .font(.system(size: 22))
                         .frame(width: indicatorSize, height: indicatorSize)
+                        .foregroundStyle(statusColor)
                 }
             } else {
-                Circle()
-                    .strokeBorder(Color.white.opacity(0.2), lineWidth: 1.5)
+                Image(systemName: statusIcon)
+                    .font(.system(size: 22))
                     .frame(width: indicatorSize, height: indicatorSize)
+                    .foregroundStyle(statusColor)
             }
         }
     }
@@ -1652,7 +1734,7 @@ struct iPhoneSettingsView: View {
     }
 }
 
-// MARK: - iPad Split View
+// MARK: - iPad Split View (Simplified for iOS)
 
 struct iPadSplitView: View {
     @Bindable var appState: AppState
@@ -1668,75 +1750,20 @@ struct iPadSplitView: View {
     var currentTaskFilter: TaskFilter
 
     var body: some View {
-        NavigationSplitView {
-            SidebarView(
-                selection: $sidebarSelection,
-                onNewTask: { appState.isNewTaskPresented = true }
-            )
-        } content: {
-            switch sidebarSelection {
-            case .optimizations(.skills):
-                SkillsListView(workspace: nil, selection: $selectedAgent)
-            case .optimizations(.context):
-                ContextListView(selection: $selectedContext)
-            case .optimizations(.overview):
-                SkillsListView(workspace: nil, selection: $selectedAgent)
-            case .team:
-                TeamListView(selectedMember: $selectedTeamMember)
-            case .queue:
-                QueueListView(
-                    filter: currentTaskFilter,
-                    selection: $selectedTask,
-                    onNewTask: { appState.isNewTaskPresented = true }
-                )
-            case .inbox, .terminals, .none:
-                HintInboxView(
-                    filter: currentHintFilter,
-                    selection: $selectedHint
-                )
-            }
-        } detail: {
-            switch sidebarSelection {
-            case .optimizations(.skills):
-                if let agent = selectedAgent {
-                    AgentDetailView(agent: agent)
-                } else {
-                    EmptySkillSelectionView()
-                }
-            case .optimizations(.context):
-                if let context = selectedContext {
-                    ContextDetailView(context: context)
-                } else {
-                    EmptyContextSelectionView()
-                }
-            case .team:
-                if let member = selectedTeamMember {
-                    TeamMemberDetailView(member: member)
-                } else {
-                    EmptyTeamSelectionView()
-                }
-            case .queue:
-                if let task = selectedTask {
-                    TaskDetailView(task: task, viewModel: viewModel, showTerminal: $showTerminal, selectedTask: $selectedTask)
-                } else {
-                    EmptyTaskSelectionView()
-                }
-            default:
-                if let hint = selectedHint {
-                    HintDetailView(hint: hint)
-                } else {
-                    EmptyHintSelectionView()
-                }
-            }
-        }
-        .sheet(isPresented: $appState.isNewTaskPresented) {
-            CreateTaskView(isPresented: $appState.isNewTaskPresented)
-                .presentationDetents([.medium])
-        }
-        .onChange(of: selectedTask) { _, _ in
-            showTerminal = false
-        }
+        // For iPad, use the iPhone interface for now until proper iPad views are implemented
+        iPhoneTabView(
+            appState: appState,
+            viewModel: viewModel,
+            selectedHint: $selectedHint,
+            selectedTask: $selectedTask,
+            selectedAgent: $selectedAgent,
+            selectedContext: $selectedContext
+        )
     }
 }
+
+// MARK: - iOS Content View Fallback for Missing Views
+
+// Simple fallback content for iPad split view when using iOS-only mode
 
 #endif
