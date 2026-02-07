@@ -445,7 +445,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: txtx/homebrew-taps
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          token: ${{ secrets.TXTX_ACCESS_TOKEN }}
           path: homebrew-tap
 
       - name: Update cask formula

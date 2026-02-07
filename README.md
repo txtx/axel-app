@@ -11,6 +11,9 @@ Axel is for anyone who wants the **calm** of a task list and their agents in **w
 
 It pairs a native macOS app with a fast [RUST CLI](https://github.com/txtx/axel) to orchestrate many AI agents across tmux panes, Ghostty based terminals, and git worktrees — with a user interface inspired by **Things**.
 
+> [!IMPORTANT]
+> Axel is currently in beta and may have bugs. Contributions and bug reports are welcome.
+
 ---
 
 ## What Axel Feels Like
