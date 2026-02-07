@@ -271,6 +271,28 @@ struct WorkspaceQueueListView: View {
         }
     }
 
+    /// Move selected task back to backlog
+    private func moveSelectedToBacklog() {
+        guard let task = viewModel.highlightedTask(in: visibleTasksInOrder),
+              task.taskStatus != .backlog else { return }
+
+        // Find next task before changing status
+        if let currentIndex = visibleTasksInOrder.firstIndex(where: { $0.id == task.id }) {
+            let nextTask = currentIndex < visibleTasksInOrder.count - 1
+                ? visibleTasksInOrder[currentIndex + 1]
+                : (currentIndex > 0 ? visibleTasksInOrder[currentIndex - 1] : nil)
+
+            task.updateStatusWithUndo(.backlog)
+
+            // Select next task if the current one will disappear from this view
+            if let next = nextTask, filter != .backlog && filter != .all {
+                selectTask(next)
+            }
+        } else {
+            task.updateStatusWithUndo(.backlog)
+        }
+    }
+
     /// Move selected task up in priority (lower priority number = higher in list)
     private func moveSelectedPriorityUp() {
         guard let task = viewModel.highlightedTask(in: visibleTasksInOrder) else { return }
@@ -394,6 +416,7 @@ struct WorkspaceQueueListView: View {
             onToggleExpand: toggleSelectedTaskExpansion,
             onMarkComplete: markSelectedComplete,
             onMarkCancelled: markSelectedCancelled,
+            onMoveToBacklog: moveSelectedToBacklog,
             onMovePriorityUp: moveSelectedPriorityUp,
             onMovePriorityDown: moveSelectedPriorityDown,
             onRunSelected: runHighlightedTask
@@ -630,7 +653,11 @@ struct WorkspaceQueueListView: View {
                             onMarkCompleted: {
                                 handleTaskStatusChange(task)
                                 task.updateStatusWithUndo(.completed)
-                            }
+                            },
+                            onMoveToBacklog: task.taskStatus != .backlog ? {
+                                handleTaskStatusChange(task)
+                                task.updateStatusWithUndo(.backlog)
+                            } : nil
                         ) {
                             TextField(
                                 "Note details",
@@ -686,7 +713,11 @@ struct WorkspaceQueueListView: View {
                     onMarkCompleted: {
                         handleTaskStatusChange(task)
                         task.updateStatusWithUndo(.completed)
-                    }
+                    },
+                    onMoveToBacklog: task.taskStatus != .backlog ? {
+                        handleTaskStatusChange(task)
+                        task.updateStatusWithUndo(.backlog)
+                    } : nil
                 ) {
                     TextField(
                         "Note details",
@@ -1174,6 +1205,7 @@ struct TaskListKeyboardModifier: ViewModifier {
     var onToggleExpand: () -> Void
     var onMarkComplete: () -> Void
     var onMarkCancelled: () -> Void
+    var onMoveToBacklog: () -> Void
     var onMovePriorityUp: () -> Void
     var onMovePriorityDown: () -> Void
     var onRunSelected: () -> Void
@@ -1237,6 +1269,15 @@ struct TaskListKeyboardModifier: ViewModifier {
                 }
                 return .ignored
             }
+            .onKeyPress(keys: [KeyEquivalent("b")], phases: .down) { keyPress in
+                guard expandedTaskId == nil else { return .ignored }
+                if keyPress.modifiers == .command {
+                    // Cmd+B: move to backlog
+                    onMoveToBacklog()
+                    return .handled
+                }
+                return .ignored
+            }
             .onKeyPress(keys: [KeyEquivalent("a")], phases: .down) { keyPress in
                 if keyPress.modifiers.contains(.command) {
                     onSelectAll()
@@ -1293,6 +1334,7 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
     var onDelete: (() -> Void)? = nil
     var onMarkCancelled: (() -> Void)? = nil
     var onMarkCompleted: (() -> Void)? = nil
+    var onMoveToBacklog: (() -> Void)? = nil
     let style: ExpandableRowStyle
     let expandedContent: () -> ExpandedContent
     @State private var isStatusHovering: Bool = false
@@ -1308,6 +1350,7 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
         onDelete: (() -> Void)? = nil,
         onMarkCancelled: (() -> Void)? = nil,
         onMarkCompleted: (() -> Void)? = nil,
+        onMoveToBacklog: (() -> Void)? = nil,
         style: ExpandableRowStyle = .default,
         @ViewBuilder expandedContent: @escaping () -> ExpandedContent
     ) {
@@ -1319,6 +1362,7 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
         self.onDelete = onDelete
         self.onMarkCancelled = onMarkCancelled
         self.onMarkCompleted = onMarkCompleted
+        self.onMoveToBacklog = onMoveToBacklog
         self.style = style
         self.expandedContent = expandedContent
     }
@@ -1464,7 +1508,16 @@ struct ExpandableRow<Item: ExpandableListItem, ExpandedContent: View>: View {
                     .keyboardShortcut("k", modifiers: [.command, .option])
                 }
 
-                if onRun != nil || onMarkCompleted != nil || onMarkCancelled != nil {
+                if let onMoveToBacklog {
+                    Button {
+                        onMoveToBacklog()
+                    } label: {
+                        Label("Move to Backlog", systemImage: "tray")
+                    }
+                    .keyboardShortcut("b", modifiers: .command)
+                }
+
+                if onRun != nil || onMarkCompleted != nil || onMarkCancelled != nil || onMoveToBacklog != nil {
                     Divider()
                 }
 
