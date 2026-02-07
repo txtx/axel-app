@@ -279,6 +279,20 @@ jobs:
           echo "name=${DMG_NAME}" >> $GITHUB_OUTPUT
           echo "path=dist/${DMG_NAME}" >> $GITHUB_OUTPUT
 
+      - name: Notarize DMG
+        if: steps.check_release.outputs.should_release == 'true' && env.APPLE_ID != ''
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple "${{ steps.dmg.outputs.path }}"
+
       - name: Download existing appcast
         if: steps.check_release.outputs.should_release == 'true'
         continue-on-error: true
@@ -308,20 +322,6 @@ jobs:
           else
             echo "Warning: SPARKLE_PRIVATE_KEY not set, skipping appcast generation"
           fi
-
-      - name: Notarize DMG
-        if: steps.check_release.outputs.should_release == 'true' && env.APPLE_ID != ''
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          xcrun notarytool submit "${{ steps.dmg.outputs.path }}" \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-          xcrun stapler staple "${{ steps.dmg.outputs.path }}"
 
       - name: Upload artifacts
         if: steps.check_release.outputs.should_release == 'true'
@@ -419,3 +419,78 @@ jobs:
             ./artifacts/*.dmg
 
           echo "Created release: $TAG"
+
+  update-homebrew:
+    name: Update Homebrew Cask
+    needs: [build-macos, publish-s3]
+    runs-on: ubuntu-latest
+    if: needs.build-macos.outputs.should_release == 'true'
+
+    steps:
+      - name: Download DMG artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: Axel-macOS-${{ needs.build-macos.outputs.version }}
+          path: ./artifacts
+
+      - name: Calculate SHA256
+        id: sha
+        run: |
+          DMG_FILE="./artifacts/${{ needs.build-macos.outputs.dmg_name }}"
+          SHA256=$(sha256sum "$DMG_FILE" | cut -d' ' -f1)
+          echo "sha256=$SHA256" >> $GITHUB_OUTPUT
+          echo "SHA256: $SHA256"
+
+      - name: Checkout Homebrew tap
+        uses: actions/checkout@v4
+        with:
+          repository: txtx/homebrew-taps
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update cask formula
+        run: |
+          VERSION="${{ needs.build-macos.outputs.version }}"
+          SHA256="${{ steps.sha.outputs.sha256 }}"
+
+          mkdir -p homebrew-tap/Casks
+
+          cat > homebrew-tap/Casks/axel.rb << EOF
+          cask "axel" do
+            version "${VERSION}"
+            sha256 "${SHA256}"
+
+            url "https://txtx-public.s3.amazonaws.com/releases/axel/Axel-#{version}-macos.dmg"
+            name "Axel"
+            desc "AI-powered terminal workspace manager"
+            homepage "https://github.com/txtx/axel"
+
+            livecheck do
+              url "https://txtx-public.s3.amazonaws.com/releases/axel/appcast.xml"
+              strategy :sparkle
+            end
+
+            auto_updates true
+            depends_on macos: ">= :sequoia"
+
+            app "Axel.app"
+
+            zap trash: [
+              "~/Library/Application Support/Axel",
+              "~/Library/Caches/Axel",
+              "~/Library/Preferences/com.txtx.Axel.plist",
+            ]
+          end
+          EOF
+
+          echo "Updated cask formula:"
+          cat homebrew-tap/Casks/axel.rb
+
+      - name: Commit and push
+        working-directory: homebrew-tap
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Casks/axel.rb
+          git diff --cached --quiet || git commit -m "Update axel to ${{ needs.build-macos.outputs.version }}"
+          git push
