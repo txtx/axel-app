@@ -7,11 +7,9 @@
 </div>
 
 
-**Axel is a beautiful task manager for agents.**
+Axel is for anyone who wants the **calm** of a task list and their agents in **war mode** — without losing track of what's running, where, or why.
 
-Axel is for anyone who wants the calm of a task list and the power of a multi‑agent terminal, without losing track of what’s running, where it’s running, or why it’s running.
-
-It pairs a native macOS app with a fast Rust CLI to orchestrate many AI agents across tmux panes, Ghostty terminals, and git worktrees — with a user interface inspired by **Things**.
+It pairs a native macOS app with a fast [RUST CLI](https://github.com/txtx/axel) to orchestrate many AI agents across tmux panes, Ghostty based terminals, and git worktrees — with a user interface inspired by **Things**.
 
 ---
 
@@ -19,7 +17,7 @@ It pairs a native macOS app with a fast Rust CLI to orchestrate many AI agents a
 
 - A clean, Things‑like inbox for tasks and priorities.
 - A living map of your active agents, each anchored to a worktree and terminal.
-- A system that makes “spin up another agent” feel as cheap as “open a new tab.”
+- A system that literally makes “spin up another agent in a new git worktree” feel as cheap as “open a new tab.”
 
 ---
 
