@@ -501,9 +501,17 @@ struct WorkspaceContentView: View {
         case .optimizations(.overview):
             OptimizationsOverviewView(workspace: workspace)
         case .terminals:
-            detailColumnView
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .background(agentsBackgroundColor)
+            VStack(spacing: 0) {
+                detailColumnView
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(.leading, 5)
+                TimelinePanelView(
+                    workspaceId: workspace.id,
+                    selection: $selectedSession,
+                    onRequestClose: requestCloseSession
+                )
+            }
+            .background(agentsBackgroundColor)
         default:
             HStack(spacing: 0) {
                 listColumnView
@@ -1578,7 +1586,7 @@ struct WorkspaceCreateTaskView: View {
             .background(.bar)
         }
         .frame(width: 480, height: 180)
-        .background(.background)
+        .presentationBackground(.ultraThinMaterial)
         .onAppear {
             isFocused = true
         }

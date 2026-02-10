@@ -97,6 +97,7 @@
 		BAF581097CA2F8F7B7EBBCB1 /* SyncIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = ACF7B9EBCB92787E60FE8BF0 /* SyncIntegrationTests.swift */; };
 		C4TERMINSPEC201A0001 /* TerminalInspectorView.swift in Sources */ = {isa = PBXBuildFile; fileRef = C4TERMINSPEC101A0001 /* TerminalInspectorView.swift */; };
 		C51987E5A7AD635958003081 /* AgentsSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6313768DC4AC4264A7D8D87B /* AgentsSceneView.swift */; };
+		D2E5341DFAEBA23EFE698B43 /* TimelinePanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 34D7BABA1A73CC084A8AF4AA /* TimelinePanelView.swift */; };
 		D83C5EA8B2548DEC8D10DA27 /* SessionRecoveryService.swift in Sources */ = {isa = PBXBuildFile; fileRef = ABB3623AE837474A68F802B1 /* SessionRecoveryService.swift */; };
 		E435BED8E7D96547E09E1C1C /* Cocoa.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 23797E4E4415996BCCFE8E45 /* Cocoa.framework */; };
 		SCRPT0001201A0001 /* ScriptingSupport.swift in Sources */ = {isa = PBXBuildFile; fileRef = SCRPT0001101A0001 /* ScriptingSupport.swift */; };
@@ -149,6 +150,7 @@
 		61605B448288B219FBB6F529 /* AgentsListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentsListView.swift; sourceTree = "<group>"; };
 		6238124A78A2C3A74FCFEDBB /* WorktreeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeService.swift; sourceTree = "<group>"; };
 		6313768DC4AC4264A7D8D87B /* AgentsSceneView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentsSceneView.swift; sourceTree = "<group>"; };
+		34D7BABA1A73CC084A8AF4AA /* TimelinePanelView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TimelinePanelView.swift; sourceTree = "<group>"; };
 		86858D2EBCB04868D3E1B813 /* RecoveredSessionsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecoveredSessionsView.swift; sourceTree = "<group>"; };
 		95700AD843F5BBA9BA003E57 /* AgentPickerPanel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentPickerPanel.swift; sourceTree = "<group>"; };
 		9C177CAE09A36E267719D856 /* SessionStatusService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStatusService.swift; sourceTree = "<group>"; };
@@ -462,6 +464,7 @@
 				C816992969483022B7146F40 /* TerminalSessionManager.swift */,
 				61605B448288B219FBB6F529 /* AgentsListView.swift */,
 				6313768DC4AC4264A7D8D87B /* AgentsSceneView.swift */,
+				34D7BABA1A73CC084A8AF4AA /* TimelinePanelView.swift */,
 				95700AD843F5BBA9BA003E57 /* AgentPickerPanel.swift */,
 				0718CEBFCE1BBD5BFDA68441 /* LayoutService.swift */,
 			);
@@ -766,6 +769,7 @@
 				38F426E245983ED49A47CEC9 /* TerminalSessionManager.swift in Sources */,
 				71DDADC0E48CBDA1CEBAA9E3 /* AgentsListView.swift in Sources */,
 				C51987E5A7AD635958003081 /* AgentsSceneView.swift in Sources */,
+				D2E5341DFAEBA23EFE698B43 /* TimelinePanelView.swift in Sources */,
 				6E6B81287BC62D6D66638D1E /* AgentPickerPanel.swift in Sources */,
 				3EF6228B2BC81F1E8ED19698 /* LayoutService.swift in Sources */,
 			);
