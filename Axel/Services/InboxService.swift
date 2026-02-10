@@ -538,19 +538,10 @@ final class InboxService {
             return
         }
 
-        // Handle OTEL metrics separately
-        if eventType == "otel_metrics" {
-            let otelPaneId = json["pane_id"] as? String
-            print("[InboxService] Received otel_metrics event for paneId: \(otelPaneId ?? "nil")")
-            parseOTELMetrics(json, paneId: otelPaneId)
-            return
-        }
-
-        // Handle OTEL logs (Codex primarily exports logs, not metrics)
-        if eventType == "otel_logs" {
-            let otelPaneId = json["pane_id"] as? String
-            print("[InboxService] Received otel_logs event for paneId: \(otelPaneId ?? "nil")")
-            parseOTELLogs(json, paneId: otelPaneId)
+        // Handle parsed metrics updates from CLI
+        if eventType == "metrics_update" {
+            let paneId = json["pane_id"] as? String
+            handleMetricsUpdate(json, paneId: paneId)
             return
         }
 
@@ -558,11 +549,19 @@ final class InboxService {
         do {
             let event = try decoder.decode(InboxEvent.self, from: data)
 
-            // Register paneId to sessionId mapping for ANY event that has both
-            // This ensures the mapping exists before OTEL metrics arrive
-            if let sessionId = event.event.claudeSessionId {
-                CostTracker.shared.registerSession(paneId: event.paneId, sessionId: sessionId)
-            }
+            // NOTE: Do NOT register session mapping from hook events.
+            // .claude/settings.json hooks are workspace-wide: the last terminal
+            // created overwrites the hooks for ALL Claude instances in the workspace.
+            // This means hook events arrive with the wrong paneId (the last terminal's),
+            // corrupting the sessionId→paneId mapping and causing metrics to bleed
+            // across terminals ("all terminals lighting up").
+            //
+            // Session mapping is correctly handled by OTEL events instead, which use
+            // per-process env vars (OTEL_EXPORTER_OTLP_METRICS_ENDPOINT) with the
+            // correct pane_id in the URL path.
+            //
+            // The CLI now remaps hook events to the correct pane_id using
+            // OTEL-derived session→pane mappings (see routes.rs handle_hook_event).
 
             // Add to front of array (newest first)
             events.insert(event, at: 0)
@@ -655,293 +654,95 @@ final class InboxService {
         }
     }
 
-    // MARK: - OTEL Metrics Parsing
+    // MARK: - Metrics Update Handling
 
-    private func parseOTELLogs(_ json: [String: Any], paneId: String?) {
-        guard let eventData = json["event"] as? [String: Any],
-              let resourceLogs = eventData["resourceLogs"] as? [[String: Any]] else {
-            print("[OTEL Logs] No resourceLogs found in event")
+    /// Handle a `metrics_update` event from the CLI.
+    /// The CLI has already parsed the raw OTEL payload into a flat JSON structure.
+    private func handleMetricsUpdate(_ json: [String: Any], paneId: String?) {
+        guard let eventData = json["event"] as? [String: Any] else {
+            print("[InboxService] metrics_update: missing event payload")
             return
         }
 
-        for resourceLog in resourceLogs {
-            guard let scopeLogs = resourceLog["scopeLogs"] as? [[String: Any]] else {
-                continue
-            }
+        let sessionId = eventData["session_id"] as? String
+        let provider = eventData["provider"] as? String ?? "claude"
+        let inputTokens = eventData["input_tokens"] as? Int ?? 0
+        let outputTokens = eventData["output_tokens"] as? Int ?? 0
+        let cacheReadTokens = eventData["cache_read_tokens"] as? Int ?? 0
+        let cacheCreationTokens = eventData["cache_creation_tokens"] as? Int ?? 0
+        let costUSD = eventData["cost_usd"] as? Double ?? 0
+        let linesAdded = eventData["lines_added"] as? Int ?? 0
+        let linesRemoved = eventData["lines_removed"] as? Int ?? 0
+        let activeTimeSeconds = eventData["active_time_seconds"] as? Double ?? 0
 
-            for scopeLog in scopeLogs {
-                guard let logRecords = scopeLog["logRecords"] as? [[String: Any]] else {
-                    continue
-                }
-
-                for record in logRecords {
-                    parseOTELLogRecord(record, paneId: paneId)
-                }
-            }
-        }
-    }
-
-    /// Parse a single OTEL log record and extract token/cost data if present
-    private func parseOTELLogRecord(_ record: [String: Any], paneId: String?) {
-        // Extract attributes for debugging and data extraction
-        let attributes = record["attributes"] as? [[String: Any]] ?? []
-
-        // Build a map of attribute key -> value for easier access
-        var attrMap: [String: Any] = [:]
-        for attr in attributes {
-            guard let key = attr["key"] as? String,
-                  let valueDict = attr["value"] as? [String: Any] else {
-                continue
-            }
-            // OTEL values can be stringValue, intValue, doubleValue, etc.
-            if let stringVal = valueDict["stringValue"] as? String {
-                attrMap[key] = stringVal
-            } else if let intVal = valueDict["intValue"] as? Int {
-                attrMap[key] = intVal
-            } else if let doubleVal = valueDict["doubleValue"] as? Double {
-                attrMap[key] = doubleVal
-            }
+        // Register session→pane mapping
+        if let paneId = paneId, let sid = sessionId {
+            CostTracker.shared.registerSession(paneId: paneId, sessionId: sid)
         }
 
-        // DEBUG: Log all attributes to understand Codex log format
-        let body = record["body"] as? [String: Any]
-        let bodyString = body?["stringValue"] as? String ?? "nil"
-        print("[OTEL Log] pane=\(paneId ?? "nil") body=\(bodyString.prefix(200)) attrs=\(attrMap.keys.sorted())")
+        // Use sessionId if available, otherwise paneId
+        let metricsId = sessionId ?? paneId ?? "unknown"
+        let metrics = self.metrics(for: metricsId)
 
-        // Handle Codex-specific events
-        if let eventName = attrMap["event.name"] as? String {
-            handleCodexOTELEvent(eventName: eventName, attrMap: attrMap, paneId: paneId)
-        }
-
-        // Try to parse body as JSON if it looks like JSON (Codex might embed usage data there)
-        if bodyString.hasPrefix("{"), let bodyData = bodyString.data(using: .utf8) {
-            if let bodyJson = try? JSONSerialization.jsonObject(with: bodyData) as? [String: Any] {
-                // Look for usage object in body (OpenAI response format)
-                if let usage = bodyJson["usage"] as? [String: Any] {
-                    if let promptTokens = usage["prompt_tokens"] as? Int {
-                        attrMap["prompt_tokens"] = promptTokens
-                    }
-                    if let completionTokens = usage["completion_tokens"] as? Int {
-                        attrMap["completion_tokens"] = completionTokens
-                    }
-                    if let totalTokens = usage["total_tokens"] as? Int {
-                        attrMap["total_tokens"] = totalTokens
-                    }
-                }
-                // Also check for direct token fields in body
-                if let tokens = bodyJson["tokens"] as? [String: Any] {
-                    if let input = tokens["input"] as? Int {
-                        attrMap["input_tokens"] = input
-                    }
-                    if let output = tokens["output"] as? Int {
-                        attrMap["output_tokens"] = output
-                    }
-                }
+        if provider == "codex" {
+            // Codex sends per-response token counts (not cumulative) — accumulate
+            metrics.accumulateFromLog(inputTokens: inputTokens, outputTokens: outputTokens)
+            if costUSD > 0 {
+                metrics.accumulateFromLog(costUSD: costUSD)
             }
-        }
-
-        // Look for token usage data in attributes
-        // Common attribute names to check:
-        // - input_tokens, output_tokens (Claude style)
-        // - input_token_count, output_token_count (Codex style)
-        // - prompt_tokens, completion_tokens (OpenAI API style)
-        // - gen_ai.usage.prompt_tokens, gen_ai.usage.completion_tokens (OTEL semantic conventions)
-        // - total_tokens
-        // - session.id or session_id or conversation.id
-
-        var sessionId: String?
-        var inputTokens: Int = 0
-        var outputTokens: Int = 0
-        var costUSD: Double = 0
-
-        // Try to find session ID (multiple naming conventions)
-        sessionId = attrMap["session.id"] as? String
-            ?? attrMap["session_id"] as? String
-            ?? attrMap["conversation.id"] as? String
-            ?? attrMap["gen_ai.session.id"] as? String
-
-        // Helper to extract int from attribute (handles both Int and String)
-        func extractInt(_ key: String) -> Int? {
-            if let val = attrMap[key] as? Int { return val }
-            if let str = attrMap[key] as? String, let val = Int(str) { return val }
-            return nil
-        }
-
-        // Try various token attribute names (multiple naming conventions)
-        // Codex uses input_token_count/output_token_count in sse_event logs
-        if let val = extractInt("input_token_count") { inputTokens = val }
-        else if let val = extractInt("input_tokens") { inputTokens = val }
-        else if let val = extractInt("prompt_tokens") { inputTokens = val }
-        else if let val = extractInt("gen_ai.usage.prompt_tokens") { inputTokens = val }
-        else if let val = extractInt("gen_ai.usage.input_tokens") { inputTokens = val }
-        else if let val = extractInt("llm.usage.prompt_tokens") { inputTokens = val }
-
-        if let val = extractInt("output_token_count") { outputTokens = val }
-        else if let val = extractInt("output_tokens") { outputTokens = val }
-        else if let val = extractInt("completion_tokens") { outputTokens = val }
-        else if let val = extractInt("gen_ai.usage.completion_tokens") { outputTokens = val }
-        else if let val = extractInt("gen_ai.usage.output_tokens") { outputTokens = val }
-        else if let val = extractInt("llm.usage.completion_tokens") { outputTokens = val }
-
-        if let val = attrMap["cost"] as? Double { costUSD = val }
-        else if let val = attrMap["cost_usd"] as? Double { costUSD = val }
-        else if let val = attrMap["gen_ai.usage.cost"] as? Double { costUSD = val }
-
-        // If we have token data, record it
-        if (inputTokens > 0 || outputTokens > 0) {
-            print("[OTEL Log] Found token data: session=\(sessionId ?? paneId ?? "unknown") in=\(inputTokens) out=\(outputTokens) cost=\(costUSD)")
-
-            // Register pane/session mapping if we have both
-            if let paneId = paneId, let sid = sessionId {
-                CostTracker.shared.registerSession(paneId: paneId, sessionId: sid)
+        } else {
+            // Claude sends cumulative values — assign directly
+            if inputTokens > 0 || outputTokens > 0 || cacheReadTokens > 0 || cacheCreationTokens > 0 {
+                metrics.updateFromOTEL(
+                    inputTokens: inputTokens,
+                    outputTokens: outputTokens,
+                    cacheReadTokens: cacheReadTokens,
+                    cacheCreationTokens: cacheCreationTokens
+                )
             }
-
-            // Use sessionId if available, otherwise paneId
-            let metricsId = sessionId ?? paneId ?? "unknown"
-
-            // Update local metrics
-            let metrics = self.metrics(for: metricsId)
-            metrics.updateFromOTEL(
-                inputTokens: inputTokens,
-                outputTokens: outputTokens,
-                cacheReadTokens: 0,
-                cacheCreationTokens: 0
-            )
             if costUSD > 0 {
                 metrics.updateFromOTEL(costUSD: costUSD)
             }
-
-            // Update CostTracker
-            CostTracker.shared.recordMetrics(
-                forSession: metricsId,
-                inputTokens: inputTokens,
-                outputTokens: outputTokens,
-                cacheReadTokens: 0,
-                cacheCreationTokens: 0,
-                costUSD: costUSD
-            )
-        }
-    }
-
-    /// Handle Codex-specific OTEL events (tool_decision, tool_result, response.completed)
-    private func handleCodexOTELEvent(eventName: String, attrMap: [String: Any], paneId: String?) {
-        // Get session ID for Codex (uses conversation.id)
-        let sessionId = attrMap["conversation.id"] as? String ?? paneId
-
-        switch eventName {
-        case "codex.sse_event":
-            // Check if this is a response.completed event (task finished)
-            if let eventKind = attrMap["event.kind"] as? String, eventKind == "response.completed" {
-                guard let paneId = paneId, let sessionId = sessionId else { return }
-
-                // Create a synthetic Stop event for the inbox
-                let payload = InboxEventPayload(
-                    hookEventName: "Stop",
-                    claudeSessionId: sessionId
-                )
-
-                let inboxEvent = InboxEvent(
-                    paneId: paneId,
-                    eventType: "codex_completion",
-                    event: payload
-                )
-
-                // Check if we already have a recent completion for this session (debounce)
-                let recentThreshold: TimeInterval = 5  // 5 seconds
-                let hasRecentCompletion = events.contains { event in
-                    event.event.hookEventName == "Stop" &&
-                    event.event.claudeSessionId == sessionId &&
-                    event.timestamp.timeIntervalSinceNow > -recentThreshold
-                }
-
-                guard !hasRecentCompletion else {
-                    print("[InboxService] Skipping duplicate Codex completion for session \(sessionId.prefix(8))...")
-                    return
-                }
-
-                // Add to events list
-                events.insert(inboxEvent, at: 0)
-                if events.count > maxEvents {
-                    events.removeLast(events.count - maxEvents)
-                }
-
-                // Track for auto-resolution
-                if let previousEventId = lastStopEventPerSession[sessionId] {
-                    resolvedEventIds.insert(previousEventId)
-                }
-                lastStopEventPerSession[sessionId] = inboxEvent.id
-
-                // Skip showing completion screen if no running task
-                if !hasRunningTask(forPaneId: paneId) {
-                    resolvedEventIds.insert(inboxEvent.id)
-                }
-
-                // Auto-resolve pending permission requests
-                for existingEvent in events {
-                    if existingEvent.event.hookEventName == "PermissionRequest",
-                       existingEvent.event.claudeSessionId == sessionId,
-                       !resolvedEventIds.contains(existingEvent.id) {
-                        resolvedEventIds.insert(existingEvent.id)
-                    }
-                }
-
-                // Finalize task in CostTracker
-                CostTracker.shared.finalizeTask(forPaneId: paneId)
-
-                // Queue for metrics snapshot
-                pendingStopEvents.append((eventId: inboxEvent.id, sessionId: sessionId, timestamp: Date()))
-
-                print("[InboxService] Created Codex completion event for session \(sessionId.prefix(8))...")
+            if linesAdded > 0 || linesRemoved > 0 {
+                metrics.updateFromOTEL(linesAdded: linesAdded, linesRemoved: linesRemoved)
             }
-
-        case "codex.tool_decision":
-            // Tool decision event - logged AFTER decision, not BEFORE like Claude's hooks
-            // This tells us what tool was approved/rejected, useful for tracking
-            let toolName = attrMap["tool_name"] as? String ?? "Unknown"
-            let decision = attrMap["decision"] as? String ?? "unknown"
-            let source = attrMap["source"] as? String ?? "unknown"
-
-            print("[InboxService] Codex tool decision: \(toolName) -> \(decision) (source: \(source))")
-
-            // If decision was "rejected" by user, we might want to track that
-            // But since this happens AFTER the decision, we can't show an approval dialog
-            // This is just for telemetry/logging purposes
-
-        case "codex.tool_result":
-            // Tool result - tool execution completed
-            let toolName = attrMap["tool_name"] as? String ?? "Unknown"
-            let success = attrMap["success"] as? String ?? "unknown"
-
-            print("[InboxService] Codex tool result: \(toolName) success=\(success))")
-
-        default:
-            break
-        }
-    }
-
-    private func parseOTELMetrics(_ json: [String: Any], paneId: String?) {
-        guard let eventData = json["event"] as? [String: Any],
-              let resourceMetrics = eventData["resourceMetrics"] as? [[String: Any]] else {
-            return
-        }
-
-        for resourceMetric in resourceMetrics {
-            guard let scopeMetrics = resourceMetric["scopeMetrics"] as? [[String: Any]] else {
-                continue
-            }
-
-            for scopeMetric in scopeMetrics {
-                guard let metrics = scopeMetric["metrics"] as? [[String: Any]] else {
-                    continue
-                }
-
-                for metric in metrics {
-                    parseMetric(metric, paneId: paneId)
-                }
+            if activeTimeSeconds > 0 {
+                metrics.updateFromOTEL(activeTimeSeconds: activeTimeSeconds)
             }
         }
 
-        // Process any pending Stop events now that we have fresh metrics
+        // Pass (possibly accumulated) cumulative values to CostTracker
+        CostTracker.shared.recordMetrics(
+            forSession: metricsId,
+            inputTokens: metrics.inputTokens,
+            outputTokens: metrics.outputTokens,
+            cacheReadTokens: metrics.cacheReadTokens,
+            cacheCreationTokens: metrics.cacheCreationTokens,
+            costUSD: metrics.costUSD
+        )
+
+        // Auto-resolve pending permission requests when significant token activity after delay
+        if let paneId = CostTracker.shared.paneId(forSessionId: metricsId) ?? paneId,
+           let pendingEventId = lastPermissionRequestPerSession[paneId],
+           !resolvedEventIds.contains(pendingEventId) {
+            let currentTokens = metrics.inputTokens + metrics.outputTokens
+            let snapshotTokens = permissionRequestTokenSnapshot[paneId] ?? 0
+            let requestTime = permissionRequestTimestamp[paneId] ?? .distantPast
+            let timeSinceRequest = Date().timeIntervalSince(requestTime)
+
+            let hasEnoughTime = timeSinceRequest >= autoResolveDelaySeconds
+            let hasEnoughTokens = currentTokens >= snapshotTokens + autoResolveTokenThreshold
+
+            if hasEnoughTime && hasEnoughTokens {
+                resolvedEventIds.insert(pendingEventId)
+                lastPermissionRequestPerSession.removeValue(forKey: paneId)
+                permissionRequestTokenSnapshot.removeValue(forKey: paneId)
+                permissionRequestTimestamp.removeValue(forKey: paneId)
+                print("[InboxService] Auto-resolved permission request for pane \(paneId.prefix(8))... due to token activity")
+            }
+        }
+
+        // Process any pending Stop event snapshots
         processPendingSnapshots()
     }
 
@@ -949,193 +750,19 @@ final class InboxService {
     private func processPendingSnapshots() {
         guard !pendingStopEvents.isEmpty else { return }
 
-        // Process all pending events
         for pending in pendingStopEvents {
             guard let metrics = taskMetrics[pending.sessionId] else { continue }
 
-            // Get the last snapshot values for this session (or zeros if first task)
             let lastValues = lastSnapshotValues[pending.sessionId]
-
-            // Create delta snapshot
             let deltaSnapshot = MetricsSnapshot(
                 from: metrics,
                 subtractingPrevious: lastValues
             )
-
             eventMetricsSnapshots[pending.eventId] = deltaSnapshot
-
-            // Update last snapshot values for next delta calculation
             lastSnapshotValues[pending.sessionId] = MetricsSnapshot(from: metrics)
         }
 
         pendingStopEvents.removeAll()
-    }
-
-    private func parseMetric(_ metric: [String: Any], paneId eventPaneId: String?) {
-        guard let name = metric["name"] as? String,
-              let sum = metric["sum"] as? [String: Any],
-              let dataPoints = sum["dataPoints"] as? [[String: Any]] else {
-            return
-        }
-
-        // DEBUG: Log OTEL metric structure
-        print("[OTEL] parseMetric: name=\(name) dataPoints.count=\(dataPoints.count) paneId=\(eventPaneId ?? "nil")")
-
-        // OTEL batches metrics from multiple models in a single metric.
-        // Each model has its own cumulative counter, so we need to SUM
-        // values across all models for the session total.
-        // Group by session and aggregate values by type.
-        var sessionData: [String: (
-            inputTokens: Int, outputTokens: Int, cacheReadTokens: Int, cacheCreationTokens: Int,
-            costUSD: Double, linesAdded: Int, linesRemoved: Int, activeTimeSeconds: Double
-        )] = [:]
-
-        for dataPoint in dataPoints {
-            guard let value = dataPoint["asDouble"] as? Double,
-                  let attributes = dataPoint["attributes"] as? [[String: Any]] else {
-                continue
-            }
-
-            // Extract session ID and type from attributes
-            var sessionId: String?
-            var type: String?
-
-            for attr in attributes {
-                guard let key = attr["key"] as? String,
-                      let valueDict = attr["value"] as? [String: Any],
-                      let stringValue = valueDict["stringValue"] as? String else {
-                    continue
-                }
-
-                if key == "session.id" {
-                    sessionId = stringValue
-                } else if key == "type" {
-                    type = stringValue
-                }
-            }
-
-            guard let sid = sessionId else { continue }
-
-            // DEBUG: Log each datapoint
-            print("[OTEL]   dataPoint: session=\(sid.prefix(8)) type=\(type ?? "nil") value=\(value)")
-
-            // If we have paneId from the event, register the mapping
-            if let paneId = eventPaneId {
-                CostTracker.shared.registerSession(paneId: paneId, sessionId: sid)
-            }
-
-            // Initialize session data if needed
-            if sessionData[sid] == nil {
-                sessionData[sid] = (0, 0, 0, 0, 0, 0, 0, 0)
-            }
-
-            // Aggregate values by type (summing across models)
-            // NOTE: This assumes each datapoint is from a different model with its own
-            // cumulative counter. If datapoints are NOT per-model, this SUM is incorrect!
-            // Handle metrics from any AI provider (claude_code.*, codex.*, etc.)
-            let metricSuffix = name.components(separatedBy: ".").dropFirst().joined(separator: ".")
-
-            switch metricSuffix {
-            case "token.usage":
-                switch type {
-                case "input":
-                    sessionData[sid]!.inputTokens += Int(value)
-                    print("[OTEL]     → aggregated inputTokens = \(sessionData[sid]!.inputTokens)")
-                case "output":
-                    sessionData[sid]!.outputTokens += Int(value)
-                    print("[OTEL]     → aggregated outputTokens = \(sessionData[sid]!.outputTokens)")
-                case "cacheRead":
-                    sessionData[sid]!.cacheReadTokens += Int(value)
-                case "cacheCreation":
-                    sessionData[sid]!.cacheCreationTokens += Int(value)
-                default:
-                    break
-                }
-
-            case "cost.usage":
-                sessionData[sid]!.costUSD += value
-
-            case "lines_of_code.count":
-                switch type {
-                case "added":
-                    sessionData[sid]!.linesAdded += Int(value)
-                case "removed":
-                    sessionData[sid]!.linesRemoved += Int(value)
-                default:
-                    break
-                }
-
-            case "active_time.total":
-                sessionData[sid]!.activeTimeSeconds += value
-
-            default:
-                break
-            }
-        }
-
-        // Update metrics once per session with aggregated values
-        for (sid, data) in sessionData {
-            let metrics = self.metrics(for: sid)
-
-            // Only update non-zero values (metrics may come in separate OTEL batches)
-            if data.inputTokens > 0 || data.outputTokens > 0 ||
-               data.cacheReadTokens > 0 || data.cacheCreationTokens > 0 {
-                metrics.updateFromOTEL(
-                    inputTokens: data.inputTokens,
-                    outputTokens: data.outputTokens,
-                    cacheReadTokens: data.cacheReadTokens,
-                    cacheCreationTokens: data.cacheCreationTokens
-                )
-            }
-            if data.costUSD > 0 {
-                metrics.updateFromOTEL(costUSD: data.costUSD)
-            }
-            if data.linesAdded > 0 || data.linesRemoved > 0 {
-                metrics.updateFromOTEL(linesAdded: data.linesAdded, linesRemoved: data.linesRemoved)
-            }
-            if data.activeTimeSeconds > 0 {
-                metrics.updateFromOTEL(activeTimeSeconds: data.activeTimeSeconds)
-            }
-
-            // Update CostTracker once with aggregated values
-            // DEBUG: Log what we're sending to CostTracker
-            print("[OTEL] → CostTracker.recordMetrics(session=\(sid.prefix(8)), in:\(metrics.inputTokens) out:\(metrics.outputTokens) cacheR:\(metrics.cacheReadTokens) cacheC:\(metrics.cacheCreationTokens) cost:\(String(format: "%.4f", metrics.costUSD)))")
-
-            CostTracker.shared.recordMetrics(
-                forSession: sid,
-                inputTokens: metrics.inputTokens,
-                outputTokens: metrics.outputTokens,
-                cacheReadTokens: metrics.cacheReadTokens,
-                cacheCreationTokens: metrics.cacheCreationTokens,
-                costUSD: metrics.costUSD
-            )
-
-            // Auto-resolve pending permission requests when we see significant NEW token activity
-            // after a delay. This handles the case where permission was granted directly in
-            // the terminal (e.g., on Sequoia where SSE permission events may not be received)
-            if let paneId = CostTracker.shared.paneId(forSessionId: sid),
-               let pendingEventId = lastPermissionRequestPerSession[paneId],
-               !resolvedEventIds.contains(pendingEventId) {
-                let currentTokens = metrics.inputTokens + metrics.outputTokens
-                let snapshotTokens = permissionRequestTokenSnapshot[paneId] ?? 0
-                let requestTime = permissionRequestTimestamp[paneId] ?? .distantPast
-                let timeSinceRequest = Date().timeIntervalSince(requestTime)
-
-                // Only auto-resolve if:
-                // 1. Enough time has passed (give inbox time to display the request)
-                // 2. Meaningful token activity occurred (not just metric noise)
-                let hasEnoughTime = timeSinceRequest >= autoResolveDelaySeconds
-                let hasEnoughTokens = currentTokens >= snapshotTokens + autoResolveTokenThreshold
-
-                if hasEnoughTime && hasEnoughTokens {
-                    resolvedEventIds.insert(pendingEventId)
-                    lastPermissionRequestPerSession.removeValue(forKey: paneId)
-                    permissionRequestTokenSnapshot.removeValue(forKey: paneId)
-                    permissionRequestTimestamp.removeValue(forKey: paneId)
-                    print("[InboxService] Auto-resolved permission request for pane \(paneId) due to new token activity (current: \(currentTokens), snapshot: \(snapshotTokens), elapsed: \(String(format: "%.1f", timeSinceRequest))s)")
-                }
-            }
-        }
     }
 
     // MARK: - Outbox (Sending Responses)

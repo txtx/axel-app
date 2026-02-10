@@ -41,8 +41,7 @@ struct WorkspaceContentView: View {
     @State private var closeTargetSession: TerminalSession?
     @State private var closeKillTmuxSession = false
     @State private var showTerminalInspector = false
-    @State private var showNewTerminalSheet = false
-    @State private var pendingTaskForPicker: WorkTask?
+    @State private var agentPickerMode: AgentPickerMode?
     @State private var floatingSession: TerminalSession?
     @State private var skillsColumnWidth: CGFloat = 280
     @State private var inboxColumnWidth: CGFloat = 280
@@ -176,14 +175,14 @@ struct WorkspaceContentView: View {
         let hasExistingSessions = !sessionManager.sessions(for: workspace.id).isEmpty
         print("[WorkspaceContentView] startTerminal: task='\(task?.title ?? "nil")', hasExistingSessions=\(hasExistingSessions), provider=\(provider.displayName)")
 
-        if task != nil {
-            // Task provided - show worker picker to allow provider + session selection
-            pendingTaskForPicker = task
-            print("[WorkspaceContentView] → Set pendingTaskForPicker to trigger sheet")
+        if let task {
+            // Task provided - show unified picker in assign mode
+            agentPickerMode = .assignTask(task)
+            print("[WorkspaceContentView] → Set agentPickerMode to .assignTask")
         } else {
-            // No task - show new terminal sheet for worktree/provider selection
-            showNewTerminalSheet = true
-            print("[WorkspaceContentView] → Showing new terminal sheet")
+            // No task - show unified picker in new terminal mode
+            agentPickerMode = .newTerminal
+            print("[WorkspaceContentView] → Set agentPickerMode to .newTerminal")
         }
     }
 
@@ -501,6 +500,10 @@ struct WorkspaceContentView: View {
             )
         case .optimizations(.overview):
             OptimizationsOverviewView(workspace: workspace)
+        case .terminals:
+            detailColumnView
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(agentsBackgroundColor)
         default:
             HStack(spacing: 0) {
                 listColumnView
@@ -570,15 +573,11 @@ struct WorkspaceContentView: View {
                 EmptyContextSelectionView()
             }
         case .terminals:
-            if let session = selectedSession {
-                AgentsScene(
-                    session: session,
-                    selection: $selectedSession,
-                    onRequestClose: requestCloseSession
-                )
-            } else {
-                EmptyRunningSelectionView()
-            }
+            AgentsSceneLayout(
+                workspaceId: workspace.id,
+                selection: $selectedSession,
+                onRequestClose: requestCloseSession
+            )
         case .recovered:
             if let session = selectedRecoveredSession {
                 RecoveredSessionDetailView(
@@ -619,7 +618,7 @@ struct WorkspaceContentView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            WorkspaceToolbarHeader(workspace: workspace, showTerminal: $showTerminal)
+            OrbView(workspace: workspace, showTerminal: $showTerminal)
         }
 
 //        ToolbarItemGroup(placement: .primaryAction) {
@@ -711,9 +710,10 @@ struct WorkspaceContentView: View {
             .modifier(WorkspaceSheetModifier(
                 workspace: workspace,
                 appState: appState,
-                pendingTaskForPicker: $pendingTaskForPicker,
-                showNewTerminalSheet: $showNewTerminalSheet,
+                agentPickerMode: $agentPickerMode,
                 selectedTask: $selectedTask,
+                selectedSession: $selectedSession,
+                showTerminal: $showTerminal,
                 onStartTerminal: { task in startTerminal(for: task) },
                 onAssignTask: assignTaskToWorker,
                 onCreateNewTerminal: { task, provider, gridName in createNewTerminal(for: task, provider: provider, gridName: gridName) },
@@ -854,9 +854,10 @@ private struct WorkspaceAlertModifier: ViewModifier {
 private struct WorkspaceSheetModifier: ViewModifier {
     let workspace: Workspace
     @Bindable var appState: AppState
-    @Binding var pendingTaskForPicker: WorkTask?
-    @Binding var showNewTerminalSheet: Bool
+    @Binding var agentPickerMode: AgentPickerMode?
     @Binding var selectedTask: WorkTask?
+    @Binding var selectedSession: TerminalSession?
+    @Binding var showTerminal: Bool
     let onStartTerminal: (WorkTask) -> Void
     let onAssignTask: (WorkTask, TerminalSession) -> Void
     let onCreateNewTerminal: (WorkTask?, AIProvider, String?) -> Void
@@ -872,34 +873,24 @@ private struct WorkspaceSheetModifier: ViewModifier {
                     onSelect: { task in selectedTask = task }
                 )
             }
-            .sheet(isPresented: $showNewTerminalSheet) {
-                NewTerminalSheet(workspacePath: workspace.path ?? "") { branchName, provider, gridName in
-                    if let branchName {
-                        onCreateWorktreeTerminal(nil, branchName, provider, gridName)
-                    } else {
-                        onCreateNewTerminal(nil, provider, gridName)
-                    }
-                }
-            }
-            .sheet(item: $pendingTaskForPicker) { task in
-                // Using sheet(item:) guarantees task is non-nil when sheet is presented
-                // This eliminates the race condition where pendingTask was nil
-                WorkerPickerPanel(
+            .sheet(item: $agentPickerMode) { mode in
+                AgentPickerPanel(
                     workspaceId: workspace.id,
                     workspacePath: workspace.path,
-                    onSelect: { selectedWorker, provider, gridName in
-                        print("[WorkerPicker] Callback fired - task: \(task.title), selectedWorker: \(selectedWorker?.taskTitle ?? "nil (new agent)"), grid: \(gridName ?? "nil")")
-                        if let worker = selectedWorker {
-                            print("[WorkerPicker] → Assigning task '\(task.title)' to worker, hasTask: \(worker.hasTask), paneId: \(worker.paneId ?? "nil")")
-                            onAssignTask(task, worker)
+                    task: mode.task,
+                    onCreateTerminal: { branchName, provider, gridName in
+                        if let branchName {
+                            onCreateWorktreeTerminal(mode.task, branchName, provider, gridName)
                         } else {
-                            print("[WorkerPicker] → Creating new terminal for task '\(task.title)'")
-                            onCreateNewTerminal(task, provider, gridName)
+                            onCreateNewTerminal(mode.task, provider, gridName)
                         }
                     },
-                    onCreateWorktreeAgent: { branch, provider, gridName in
-                        print("[WorkerPicker] → Creating worktree terminal for task '\(task.title)' on branch '\(branch)', grid: \(gridName ?? "nil")")
-                        onCreateWorktreeTerminal(task, branch, provider, gridName)
+                    onAssignToSession: mode.task != nil ? { task, session in
+                        onAssignTask(task, session)
+                    } : nil,
+                    onGoToSession: { session in
+                        selectedSession = session
+                        showTerminal = true
                     }
                 )
             }
@@ -1077,92 +1068,51 @@ private struct WorkspaceNotificationModifier: ViewModifier {
 
 // MARK: - Workspace Toolbar Header
 
-struct WorkspaceToolbarHeader: View {
+struct OrbView: View {
+    /// Only play boot animation once per app session
+    private static var hasPlayedBootAnimation = false
+
     let workspace: Workspace
     @Binding var showTerminal: Bool
-    @Environment(\.terminalSessionManager) private var sessionManager
     @Environment(\.colorScheme) private var colorScheme
     @State private var costTracker = CostTracker.shared
+    @State private var shouldPlayBoot = false
 
-    private var terminalsCount: Int {
-        sessionManager.runningCount(for: workspace.id)
-    }
-
-    private var queueCount: Int {
-        workspace.tasks.filter { $0.taskStatus.isPending }.count
-    }
-
-    /// Providers that have terminals (even if no activity yet)
-    private var activeProviders: [AIProvider] {
-        costTracker.activeProviders
-    }
-
-    private var totalTokens: Int {
-        costTracker.globalCurrentSessionTokens
-    }
-
-    private var totalCost: Double {
-        costTracker.globalCurrentSessionCostUSD
-    }
-
-    private var formattedTokenCount: String {
-        if totalTokens >= 1_000_000 {
-            return String(format: "%.1fM", Double(totalTokens) / 1_000_000)
-        } else if totalTokens >= 1_000 {
-            return String(format: "%.1fK", Double(totalTokens) / 1_000)
-        }
-        return "\(totalTokens)"
+    /// AI providers to display — always show Claude and Codex, plus any other active ones
+    private var displayProviders: [AIProvider] {
+        var providers = Set(costTracker.activeProviders.filter { $0 != .shell && $0 != .custom })
+        providers.insert(.claude)
+        providers.insert(.codex)
+        return AIProvider.allCases.filter { providers.contains($0) }
     }
 
     var body: some View {
-        HStack(spacing: 12) {
-            // Per-provider histograms
-            ForEach(activeProviders.isEmpty ? [AIProvider.claude] : activeProviders, id: \.self) { provider in
-                ToolbarProviderHistogram(provider: provider, costTracker: costTracker)
-            }
-
-            // Total token count
-            Text(formattedTokenCount)
-                .font(.system(size: 11, weight: .medium).monospacedDigit())
-                .foregroundStyle(colorScheme == .dark ? Color(hex: "DCDCDC")! : Color(hex: "666666")!)
-
-            // Show cost if available
-            if totalCost > 0 {
-                Text(String(format: "$%.2f", totalCost))
-                    .font(.system(size: 10).monospacedDigit())
-                    .foregroundStyle(colorScheme == .dark ? Color(hex: "DCDCDC")!.opacity(0.7) : Color(hex: "666666")!.opacity(0.7))
+        HStack(spacing: 10) {
+            ForEach(Array(displayProviders.enumerated()), id: \.element) { index, provider in
+                SpeedometerGauge(
+                    provider: provider,
+                    costTracker: costTracker,
+                    colorScheme: colorScheme,
+                    bootDelay: Double(index) * 0.15,
+                    playBootAnimation: shouldPlayBoot
+                )
             }
         }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
         .background(
             Capsule()
                 .fill(colorScheme == .dark ? Color(white: 0.08) : Color(hex: "F7F7F7")!)
         )
         .fixedSize()
-    }
-}
-
-// MARK: - Toolbar Provider Histogram
-
-private struct ToolbarProviderHistogram: View {
-    let provider: AIProvider
-    let costTracker: CostTracker
-
-    private var histogramValues: [Double] {
-        costTracker.histogramValues(forProvider: provider)
-    }
-
-    var body: some View {
-        HStack(spacing: 4) {
-            AIProviderIcon(provider: provider, size: 12)
-                .opacity(0.8)
-
-            HStack(alignment: .bottom, spacing: 1.5) {
-                ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
-                    UnevenRoundedRectangle(topLeadingRadius: 1, bottomLeadingRadius: 0, bottomTrailingRadius: 0, topTrailingRadius: 1)
-                        .fill(provider.color)
-                        .frame(width: 7, height: 2 + CGFloat(value) * 5)
+        .onAppear {
+            if !Self.hasPlayedBootAnimation {
+                Self.hasPlayedBootAnimation = true
+                shouldPlayBoot = true
+                // Reset after animation completes to prevent replays
+                // if SwiftUI preserves @State across view recreations
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                    shouldPlayBoot = false
                 }
             }
         }

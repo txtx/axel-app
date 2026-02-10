@@ -72,6 +72,23 @@ final class TaskMetrics {
         startNewStep()
     }
 
+    /// Accumulate per-response token values from OTEL log records (Codex).
+    /// Unlike `updateFromOTEL` which assigns cumulative values, this ADDS to existing totals
+    /// because Codex sends per-response counts, not session-cumulative ones.
+    func accumulateFromLog(
+        inputTokens: Int = 0,
+        outputTokens: Int = 0,
+        costUSD: Double = 0
+    ) {
+        self.inputTokens += inputTokens
+        self.outputTokens += outputTokens
+        self.costUSD += costUSD
+
+        // Update current step's end values
+        currentStep?.endTokens = totalTokens
+        currentStep?.endCost = self.costUSD
+    }
+
     /// Update metrics from OTEL data.
     /// NOTE: This ASSIGNS values (not adds). Values should be cumulative from OTEL.
     func updateFromOTEL(

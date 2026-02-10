@@ -394,8 +394,7 @@ struct ContentView: View {
         .frame(minWidth: 1000, idealWidth: 1200, minHeight: 650, idealHeight: 800)
         .toolbar {
             ToolbarItem(placement: .principal) {
-                // Centered workspace info (Xcode style)
-                WorkspaceHeaderView(showTerminal: $showTerminal)
+                EmptyView()
             }
 
             ToolbarItemGroup(placement: .primaryAction) {
@@ -450,19 +449,22 @@ struct ContentView: View {
         .keyboardShortcut(for: .undo) { TaskUndoManager.shared.undo() }
         .keyboardShortcut(for: .redo) { TaskUndoManager.shared.redo() }
         .sheet(isPresented: $showWorkerPicker) {
-            WorkerPickerPanel(workspaceId: nil) { selectedWorker, provider, _ in
-                if let task = pendingTask {
-                    if let worker = selectedWorker {
-                        // User selected an existing worker
-                        assignTaskToWorker(task, worker: worker)
-                    } else {
-                        // User chose to create a new agent
+            AgentPickerPanel(
+                workspaceId: nil,
+                workspacePath: nil,
+                task: pendingTask,
+                onCreateTerminal: { _, provider, gridName in
+                    if let task = pendingTask {
                         createNewTerminal(for: task, provider: provider)
                     }
-                }
-                pendingTask = nil
-            }
-            .presentationDetents([.medium])
+                    pendingTask = nil
+                },
+                onAssignToSession: { task, worker in
+                    assignTaskToWorker(task, worker: worker)
+                    pendingTask = nil
+                },
+                onGoToSession: nil
+            )
         }
         .sheet(isPresented: $showCloseTerminalConfirmation) {
             TerminalCloseConfirmationSheet(

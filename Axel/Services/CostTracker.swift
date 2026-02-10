@@ -523,13 +523,19 @@ final class CostTracker {
 
     // MARK: - Session Mapping
 
-    /// Register a mapping from claudeSessionId to paneId (called when hook events arrive).
-    /// This allows us to find the right terminal when OTEL metrics arrive with sessionId.
+    /// Register a mapping from claudeSessionId to paneId.
+    /// Called from OTEL event processing (which has the correct pane_id from the URL path).
     ///
     /// Also detects session changes: when a new sessionId appears for an existing pane,
     /// the terminal tracker's lastSession values are reset so the new session's OTEL
     /// cumulative counters (which start from 0) are correctly interpreted as deltas.
     func registerSession(paneId: String, sessionId: String) {
+        // Safety: if this sessionId was previously mapped to a different pane,
+        // check if this is a genuine remapping or a stale/misrouted event.
+        // Only update the mapping if we trust the source (OTEL events).
+        if let existingPaneId = sessionIdToPaneId[sessionId], existingPaneId != paneId {
+            print("[CostTracker] Session \(sessionId.prefix(8)) remapped: \(existingPaneId.prefix(8)) → \(paneId.prefix(8))")
+        }
         sessionIdToPaneId[sessionId] = paneId
 
         // Detect session change for this pane
@@ -598,6 +604,38 @@ final class CostTracker {
         terminalTrackers.values
             .filter { $0.provider == provider }
             .reduce(0) { $0 + $1.totalCostUSD }
+    }
+
+    /// Recent token throughput for a provider — latest delta per terminal, summed.
+    /// Returns raw token count (not normalized). Used for absolute-scale gauges.
+    ///
+    /// Uses the most recent data point per terminal (not a windowed sum) so the gauge
+    /// holds steady between OTEL batches. Decays to 0 when no data arrives within
+    /// `maxAge` seconds. Default 3s covers the 2s OTEL export interval with margin.
+    func recentThroughput(forProvider provider: AIProvider, maxAge: TimeInterval = 3) -> Int {
+        let cutoff = Date().addingTimeInterval(-maxAge)
+        return terminalTrackers.values
+            .filter { $0.provider == provider }
+            .compactMap { tracker -> Int? in
+                guard let last = tracker.timeSeries.last,
+                      last.timestamp > cutoff else { return nil }
+                return last.totalTokens
+            }
+            .reduce(0, +)
+    }
+
+    /// Current session tokens for a specific provider across all terminals
+    func currentSessionTokens(forProvider provider: AIProvider) -> Int {
+        terminalTrackers.values
+            .filter { $0.provider == provider }
+            .reduce(0) { $0 + $1.currentSessionTotalTokens }
+    }
+
+    /// Current session cost for a specific provider across all terminals
+    func currentSessionCost(forProvider provider: AIProvider) -> Double {
+        terminalTrackers.values
+            .filter { $0.provider == provider }
+            .reduce(0) { $0 + $1.currentSessionCostUSD }
     }
 
     /// Histogram values for a specific provider (aggregated across all terminals of that provider)

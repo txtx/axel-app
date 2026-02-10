@@ -6,32 +6,8 @@ import UniformTypeIdentifiers
 import AppKit
 #endif
 
-// MARK: - Workspace Header (Xcode style)
-
 #if os(macOS)
 import Sparkle
-
-struct WorkspaceHeaderView: View {
-    @Binding var showTerminal: Bool
-    @Environment(\.terminalSessionManager) private var sessionManager
-    @State private var updateState = SparkleUpdateState.shared
-
-    private let headerHeight: CGFloat = 35
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // Update pill (only shown when update available)
-            if updateState.updateAvailable {
-                UpdatePill(version: updateState.availableVersion) {
-                    SparkleUpdater.shared.checkForUpdates()
-                }
-            }
-
-            OrbView()
-        }
-        .frame(height: headerHeight, alignment: .center)
-    }
-}
 
 /// Pill showing available update with install action
 struct UpdatePill: View {
@@ -67,94 +43,263 @@ struct UpdatePill: View {
     }
 }
 
-// Orb - Token usage histogram display (connected to CostTracker)
-// Shows histograms for each active AI provider
-struct OrbView: View {
-    @State private var costTracker = CostTracker.shared
-    @Environment(\.colorScheme) private var colorScheme
-
-    /// Providers that have terminals (even if no activity yet)
-    private var activeProviders: [AIProvider] {
-        costTracker.activeProviders
-    }
-
-    private var totalTokens: Int {
-        costTracker.globalCurrentSessionTokens
-    }
-
-    private var totalCost: Double {
-        costTracker.globalCurrentSessionCostUSD
-    }
-
-    var body: some View {
-        HStack(spacing: 12) {
-            // Provider histograms
-            ForEach(activeProviders.isEmpty ? [AIProvider.claude] : activeProviders, id: \.self) { provider in
-                ProviderHistogramView(provider: provider, costTracker: costTracker, colorScheme: colorScheme)
-            }
-
-            // Total token count and cost
-            HStack(spacing: 8) {
-                Text(formatTokenCount(totalTokens))
-                    .font(.system(size: 11, weight: .medium).monospacedDigit())
-                    .foregroundStyle(colorScheme == .dark ? Color.primary : Color.primary.opacity(0.9))
-                if totalCost > 0 {
-                    Text(String(format: "$%.4f", totalCost))
-                        .font(.system(size: 11, weight: .medium).monospacedDigit())
-                        .foregroundStyle(colorScheme == .dark ? Color.secondary : Color.secondary.opacity(0.8))
-                }
-            }
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 6)
-        .frame(height: 32)
-        .background(
-            Capsule()
-                .fill(Color.primary.opacity(colorScheme == .dark ? 0.08 : 0.1))
-        )
-    }
-
-    private func formatTokenCount(_ count: Int) -> String {
-        if count >= 1_000_000 {
-            return String(format: "%.1fM", Double(count) / 1_000_000)
-        } else if count >= 1_000 {
-            return String(format: "%.1fK", Double(count) / 1_000)
-        }
-        return "\(count)"
-    }
-}
-
-/// Histogram view for a single AI provider
-private struct ProviderHistogramView: View {
+/// Speedometer-style circular gauge for a single AI provider.
+/// 250° arc with gap at 6 o'clock, provider icon inside.
+///
+/// Scaling: gauge reaches the last 1/7th (~85%) only when ~10 agents run concurrently.
+/// A single agent doing typical work (≈10K tokens/batch) fills ~1/7 of the arc.
+/// Reference max: 120K tokens/batch ≈ 10 concurrent agents at full throttle.
+struct SpeedometerGauge: View {
     let provider: AIProvider
     let costTracker: CostTracker
     let colorScheme: ColorScheme
+    var monochromeColor: Color? = nil
+    /// Stagger delay so gauges don't animate in sync
+    var bootDelay: Double = 0
+    /// Whether to play the boot animation (controlled by parent)
+    var playBootAnimation: Bool = false
 
-    private var histogramValues: [Double] {
-        costTracker.histogramValues(forProvider: provider)
+    private let gaugeSize: CGFloat = 26
+    private let lineWidth: CGFloat = 4
+
+    /// 250° = 25/36 of full circle
+    private let arcFraction: Double = 25.0 / 36.0
+    /// Rotate so the gap is centered at 6 o'clock: 90° + (360°-250°)/2 = 145°
+    private let arcRotation: Double = 145
+
+    /// Dashed stroke: flat-capped segments with gaps
+    private var dashStyle: StrokeStyle {
+        StrokeStyle(lineWidth: lineWidth, lineCap: .butt, dash: [2, 1])
+    }
+
+    /// Reference throughput for full-scale gauge.
+    /// ~10 concurrent agents × ~12K tokens/batch = 120K.
+    private let maxThroughput: Double = 120_000
+
+    /// Boot animation state — nil means use real data
+    @State private var bootAnimationValue: Double?
+
+    /// Subtle trembling offset applied on top of the base value
+    @State private var tremble: Double = 0
+
+    /// Tick counter to force re-evaluation of time-dependent baseValue
+    @State private var tick: UInt = 0
+
+    /// Timer driving the tremble effect and decay re-evaluation
+    private let trembleTimer = Timer.publish(every: 0.18, on: .main, in: .common).autoconnect()
+
+    /// Base gauge value from real throughput data (0–1, absolute scale).
+    /// Depends on `tick` to force re-evaluation as data ages out of the time window.
+    private var baseValue: Double {
+        _ = tick  // force dependency on tick so timer re-evaluates
+        let throughput = Double(costTracker.recentThroughput(forProvider: provider))
+        if throughput <= 0 { return 0.01 }
+        // sqrt scaling so low values are more visible, high values compress
+        return min(1.0, sqrt(throughput / maxThroughput))
+    }
+
+    /// The displayed gauge fill — boot overrides real; tremble adds jitter
+    private var displayValue: Double {
+        if let boot = bootAnimationValue { return boot }
+        let base = baseValue
+        if base <= 0.01 { return 0.01 }
+        return min(1.0, max(0.01, base + tremble))
+    }
+
+    private var providerTokens: Int {
+        costTracker.currentSessionTokens(forProvider: provider)
+    }
+
+    private var formattedTokens: String {
+        if providerTokens >= 1_000_000 {
+            return String(format: "%.1fM", Double(providerTokens) / 1_000_000)
+        } else if providerTokens >= 1_000 {
+            return String(format: "%.0fK", Double(providerTokens) / 1_000)
+        }
+        return "\(providerTokens)"
+    }
+
+    /// Whether the gauge is in the red danger zone (last 1/7)
+    private var inRedZone: Bool {
+        displayValue > 6.0 / 7.0
+    }
+
+    /// Provider icon that turns red when in the danger zone, dims at rest
+    @ViewBuilder
+    private var providerIcon: some View {
+        let atRest = displayValue <= 0.01 && bootAnimationValue == nil
+        let baseColor = atRest ? Color.white : (monochromeColor ?? provider.color)
+        let iconColor = !atRest && monochromeColor == nil && inRedZone ? Color.red : baseColor
+        let iconSize: CGFloat = gaugeSize * 0.5
+        let iconOpacity = atRest ? 0.5 : 1.0
+        switch provider {
+        case .claude:
+            ClaudeShape()
+                .fill(iconColor)
+                .frame(width: iconSize, height: iconSize * 88 / 128)
+                .opacity(iconOpacity)
+        case .codex:
+            Image("CodexIcon")
+                .renderingMode(.template)
+                .resizable()
+                .scaledToFit()
+                .foregroundStyle(iconColor)
+                .frame(width: iconSize, height: iconSize)
+                .opacity(iconOpacity)
+        case .opencode, .antigravity, .shell, .custom:
+            Image(systemName: provider.systemImage)
+                .font(.system(size: iconSize * 0.8))
+                .foregroundStyle(iconColor)
+                .frame(width: iconSize, height: iconSize)
+                .opacity(iconOpacity)
+        }
     }
 
     var body: some View {
-        HStack(spacing: 4) {
-            // Provider icon
-            AIProviderIcon(provider: provider, size: 10)
-                .opacity(0.8)
+        HStack(spacing: 5) {
+            // Gauge with provider icon inside
+            ZStack {
+                // Full arc track — subtle dashed guide always visible
+                Circle()
+                    .trim(from: 0, to: arcFraction)
+                    .rotation(.degrees(arcRotation))
+                    .stroke(
+                        Color.primary.opacity(colorScheme == .dark ? 0.1 : 0.08),
+                        style: dashStyle
+                    )
+                .frame(width: gaugeSize, height: gaugeSize)
 
-            // Histogram bars
-            HStack(alignment: .bottom, spacing: 2) {
-                ForEach(Array(histogramValues.enumerated()), id: \.offset) { _, value in
-                    RoundedRectangle(cornerRadius: 1.5)
-                        .fill(
-                            LinearGradient(
-                                colors: [provider.color, provider.color.opacity(0.7)],
-                                startPoint: .top,
-                                endPoint: .bottom
-                            )
-                        )
-                        .frame(width: 5, height: max(3, CGFloat(value) * 20))
+                // Red zone track (last 1/7)
+                Circle()
+                    .trim(from: arcFraction * 6.0 / 7.0, to: arcFraction)
+                    .rotation(.degrees(arcRotation))
+                    .stroke(
+                        (monochromeColor ?? .red).opacity(colorScheme == .dark ? 0.25 : 0.2),
+                        style: dashStyle
+                    )
+                    .frame(width: gaugeSize, height: gaugeSize)
+
+                // Active arc (filled based on activity)
+                Circle()
+                    .trim(from: 0, to: arcFraction * displayValue)
+                    .rotation(.degrees(arcRotation))
+                    .stroke(
+                        AngularGradient(
+                            stops: monochromeColor == nil
+                            ? [
+                                .init(color: provider.color, location: 0),
+                                .init(color: provider.color, location: 6.0 / 7.0 - 0.05),
+                                .init(color: .red, location: 6.0 / 7.0 + 0.05),
+                                .init(color: .red, location: 1.0),
+                            ]
+                            : [
+                                .init(color: monochromeColor ?? provider.color, location: 0),
+                                .init(color: monochromeColor ?? provider.color, location: 1.0),
+                            ],
+                            center: .center,
+                            startAngle: .degrees(arcRotation),
+                            endAngle: .degrees(arcRotation + 250)
+                        ),
+                        style: dashStyle
+                    )
+                    .frame(width: gaugeSize, height: gaugeSize)
+                    .shadow(
+                        color: (monochromeColor ?? (inRedZone ? .red : provider.color)).opacity(0.5),
+                        radius: displayValue > 0.3 ? 4 : 0
+                    )
+
+                // Provider icon — turns red in the danger zone
+                providerIcon
+            }
+            .frame(width: gaugeSize + 4, height: gaugeSize + 4)
+
+            // Token count to the right (hidden for now)
+//            Text(formattedTokens)
+//                .font(.system(size: 10, weight: .medium).monospacedDigit())
+//                .foregroundStyle(colorScheme == .dark ? .primary : .secondary)
+        }
+        .onChange(of: playBootAnimation, initial: true) { _, shouldPlay in
+            if shouldPlay {
+                runBootAnimation()
+            }
+        }
+        .onReceive(trembleTimer) { _ in
+            // During boot animation, just tick for decay but don't interfere
+            guard bootAnimationValue == nil else {
+                tick &+= 1
+                return
+            }
+
+            let base = baseValue
+
+            if base <= 0.01 {
+                // At rest: animate decay smoothly, clear tremble
+                withAnimation(.easeInOut(duration: 0.4)) {
+                    tick &+= 1
+                    tremble = 0
+                }
+            } else {
+                // Active: jitter proportional to current value
+                let amplitude = 0.01 + base * 0.02
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    tick &+= 1
+                    tremble = Double.random(in: -amplitude...amplitude)
                 }
             }
-            .frame(height: 20)
+        }
+    }
+
+    /// Boot animation: aggressive rev like an engine starting, with stagger per gauge
+    private func runBootAnimation() {
+        bootAnimationValue = 0.0
+        let d = bootDelay
+        // Rev 1: slam to redline
+        DispatchQueue.main.asyncAfter(deadline: .now() + d) {
+            withAnimation(.easeIn(duration: 0.35)) {
+                bootAnimationValue = 1.0
+            }
+        }
+        // Rev 1 drop: engine blip back
+        DispatchQueue.main.asyncAfter(deadline: .now() + d + 0.35) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                bootAnimationValue = 0.5
+            }
+        }
+        // Rev 2: slam back up
+        DispatchQueue.main.asyncAfter(deadline: .now() + d + 0.55) {
+            withAnimation(.easeIn(duration: 0.25)) {
+                bootAnimationValue = 0.95
+            }
+        }
+        // Rev 2 drop
+        DispatchQueue.main.asyncAfter(deadline: .now() + d + 0.80) {
+            withAnimation(.easeOut(duration: 0.2)) {
+                bootAnimationValue = 0.4
+            }
+        }
+        // Rev 3: one more kick
+        DispatchQueue.main.asyncAfter(deadline: .now() + d + 1.0) {
+            withAnimation(.easeIn(duration: 0.2)) {
+                bootAnimationValue = 0.8
+            }
+        }
+        // Settle: engine idle down
+        DispatchQueue.main.asyncAfter(deadline: .now() + d + 1.2) {
+            withAnimation(.easeOut(duration: 0.6)) {
+                bootAnimationValue = 0.15
+            }
+        }
+        // Coast to zero
+        DispatchQueue.main.asyncAfter(deadline: .now() + d + 1.8) {
+            withAnimation(.easeOut(duration: 0.8)) {
+                bootAnimationValue = 0.0
+            }
+        }
+        // Hand off to real data
+        DispatchQueue.main.asyncAfter(deadline: .now() + d + 2.6) {
+            withAnimation(.easeInOut(duration: 0.3)) {
+                bootAnimationValue = nil
+            }
         }
     }
 }
