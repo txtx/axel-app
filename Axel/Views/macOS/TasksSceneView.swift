@@ -667,6 +667,14 @@ struct WorkspaceQueueListView: View {
                                 ),
                                 axis: .vertical
                             )
+                            .onKeyPress(.return, phases: .down) { keyPress in
+                                guard keyPress.modifiers.contains(.shift) else { return .ignored }
+                                if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+                                    textView.insertNewlineIgnoringFieldEditor(nil)
+                                    return .handled
+                                }
+                                return .ignored
+                            }
                             .font(.system(size: 15))
                             .foregroundStyle(.secondary)
                             .lineLimit(nil)
@@ -727,6 +735,14 @@ struct WorkspaceQueueListView: View {
                         ),
                         axis: .vertical
                     )
+                    .onKeyPress(.return, phases: .down) { keyPress in
+                        guard keyPress.modifiers.contains(.shift) else { return .ignored }
+                        if let textView = NSApp.keyWindow?.firstResponder as? NSTextView {
+                            textView.insertNewlineIgnoringFieldEditor(nil)
+                            return .handled
+                        }
+                        return .ignored
+                    }
                     .font(.system(size: 15))
                     .foregroundStyle(.secondary)
                     .lineLimit(nil)
@@ -1251,6 +1267,7 @@ struct TaskListKeyboardModifier: ViewModifier {
                 return .handled
             }
             .onKeyPress(.return) {
+                guard expandedTaskId == nil else { return .ignored }
                 guard !selectedTaskIds.isEmpty else { return .ignored }
                 onToggleExpand()
                 return .handled

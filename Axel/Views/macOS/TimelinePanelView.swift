@@ -92,7 +92,7 @@ struct WorktreeLaneView: View {
     private let yellowBottom = Color(red: 0.90, green: 0.75, blue: 0.10)
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
+        VStack(alignment: .leading, spacing: 10) {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: cardSpacing) {
                     ForEach(statusGroups, id: \.status) { group in
@@ -119,7 +119,7 @@ struct WorktreeLaneView: View {
                         }
                     }
                 }
-                .padding(.leading, 20)
+                .padding(.leading, 8)
             }
             .frame(height: laneHeight)
 
@@ -171,6 +171,7 @@ struct AnimatedTerminalStack: View {
     let cardSpacing: CGFloat
 
     private let cardHeight: CGFloat = 180
+    @State private var frontSessionId: UUID?
 
     private var stackId: StackIdentifier {
         StackIdentifier(worktreeName: worktreeName, status: status)
@@ -190,78 +191,84 @@ struct AnimatedTerminalStack: View {
     }
 
     var body: some View {
-        ZStack(alignment: .leading) {
-            ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
-                CompactMiniatureView(
-                    session: session,
-                    isSelected: selection?.id == session.id
-                )
-                .offset(x: xOffset(for: index))
-                .rotationEffect(rotation(for: index), anchor: .bottom)
-                .scaleEffect(scale(for: index))
-                .zIndex(zIndex(for: index))
-                .timelineContextMenu(session: session, onRequestClose: onRequestClose)
-                .onTapGesture(count: 2) {
-                    if isExpanded {
-                        selection = session
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
-                            expandedStack = nil
-                        }
-                    }
-                }
-                .onTapGesture(count: 1) {
-                    if isExpanded {
-                        selection = session
-                    } else {
-                        withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
-                            expandedStack = stackId
-                        }
-                    }
-                }
-            }
-
-            // Count badge when collapsed
-            if !isExpanded && sessions.count > 1 {
-                Text("\(sessions.count)")
-                    .font(.caption.weight(.heavy).monospacedDigit())
-                    .foregroundStyle(.white)
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(
-                        Capsule()
-                            .fill(status.color)
-                            .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
+        Color.clear
+            .frame(width: containerWidth, height: cardHeight + 16)
+            .overlay(alignment: .topLeading) {
+                ForEach(Array(sessions.enumerated()), id: \.element.id) { index, session in
+                    CompactMiniatureView(
+                        session: session,
+                        isSelected: selection?.id == session.id
                     )
-                    .overlay(Capsule().stroke(Color.black.opacity(0.3), lineWidth: 1))
-                    .position(x: cardWidth - 8, y: 16)
-                    .allowsHitTesting(false)
-                    .transition(.opacity)
+                    .offset(x: xOffset(for: index), y: 8)
+                    .rotationEffect(rotation(for: index), anchor: .bottom)
+                    .scaleEffect(scale(for: index))
+                    .zIndex(zIndex(for: index))
+                    .animation(.spring(response: 0.32, dampingFraction: 0.88), value: isExpanded)
+                    .animation(.spring(response: 0.32, dampingFraction: 0.88), value: frontSessionId)
+                    .timelineContextMenu(session: session, onRequestClose: onRequestClose)
+                    .gesture(
+                        DragGesture(minimumDistance: 0)
+                            .onChanged { _ in }
+                            .onEnded { value in
+                                guard abs(value.translation.width) < 5, abs(value.translation.height) < 5 else { return }
+                                if isExpanded {
+                                    selection = session
+                                } else {
+                                    expandedStack = stackId
+                                }
+                            }
+                    )
+                    .simultaneousGesture(
+                        TapGesture(count: 2).onEnded {
+                            if isExpanded {
+                                selection = session
+                                frontSessionId = session.id
+                                expandedStack = nil
+                            }
+                        }
+                    )
+                }
             }
-        }
-        .frame(width: containerWidth, height: cardHeight + 16)
-        .contentShape(Rectangle())
-        .focusEffectDisabled()
-        .animation(.spring(response: 0.5, dampingFraction: 0.82), value: isExpanded)
+            .overlay(alignment: .topLeading) {
+                if !isExpanded && sessions.count > 1 {
+                    Text("\(sessions.count)")
+                        .font(.caption.weight(.heavy).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 3)
+                        .background(
+                            Capsule()
+                                .fill(status.color)
+                                .shadow(color: .black.opacity(0.5), radius: 3, x: 0, y: 1)
+                        )
+                        .overlay(Capsule().stroke(Color.black.opacity(0.3), lineWidth: 1))
+                        .offset(x: cardWidth - 16, y: 4)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
+            }
+            .contentShape(Rectangle())
+            .focusEffectDisabled()
     }
 
     // MARK: - Position math
 
-    /// Depth in the collapsed fan: 0 = front card (selected or first), 1+ = behind
+    /// Depth in the collapsed fan: 0 = front card, 1+ = behind.
+    /// Only changes when collapsing (frontSessionId updated on collapse).
     private func fanDepth(for index: Int) -> Int {
-        if let sel = selection, let selIdx = sessions.firstIndex(where: { $0.id == sel.id }) {
-            if index == selIdx { return 0 }
-            // Others get depth 1, 2, … in their original order
-            let offset = index < selIdx ? index : index - 1
+        if let frontId = frontSessionId, let frontIdx = sessions.firstIndex(where: { $0.id == frontId }) {
+            if index == frontIdx { return 0 }
+            let offset = index < frontIdx ? index : index - 1
             return offset + 1
         }
         return index
     }
 
     private func xOffset(for index: Int) -> CGFloat {
+        let depth = fanDepth(for: index)
         if isExpanded {
-            return CGFloat(index) * (cardWidth + cardSpacing)
+            return CGFloat(depth) * (cardWidth + cardSpacing)
         } else {
-            let depth = fanDepth(for: index)
             switch depth {
             case 0: return 0
             case 1: return 6
@@ -294,7 +301,7 @@ struct AnimatedTerminalStack: View {
     }
 
     private func zIndex(for index: Int) -> Double {
-        if !isExpanded, let sel = selection, sessions[index].id == sel.id {
+        if !isExpanded, let frontId = frontSessionId, sessions[index].id == frontId {
             return Double(sessions.count + 1)
         }
         return Double(sessions.count - index)
@@ -318,7 +325,7 @@ struct CompactMiniatureView: View {
                     Image(nsImage: current)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                        .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 }
                 .clipped()
             } else if let previous = session.previousThumbnail {
@@ -326,7 +333,7 @@ struct CompactMiniatureView: View {
                     Image(nsImage: previous)
                         .resizable()
                         .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                        .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                 }
                 .clipped()
             } else {
@@ -464,9 +471,8 @@ private struct TimelineKeyboardNavigation: ViewModifier {
                     onNavigate: { navigate($0) },
                     onEscape: {
                         if expandedStack != nil {
-                            withAnimation(.spring(response: 0.5, dampingFraction: 0.82)) {
-                                expandedStack = nil
-                            }
+                            expandedStack = nil
+                            // frontSessionId stays as-is; current selection is already on top
                             return true
                         }
                         return false

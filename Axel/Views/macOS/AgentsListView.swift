@@ -362,18 +362,18 @@ struct TerminalMiniatureView: View {
                         Image(nsImage: previous)
                             .resizable()
                             .scaledToFill()
-                            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                     }
                     .clipped()
                 }
 
-                // Current thumbnail (fades in on top) - show top, crop bottom
+                // Current thumbnail (fades in on top) - show top-left, crop right
                 if let current = session.currentThumbnail {
                     GeometryReader { geo in
                         Image(nsImage: current)
                             .resizable()
                             .scaledToFill()
-                            .frame(width: geo.size.width, height: geo.size.height, alignment: .top)
+                            .frame(width: geo.size.width, height: geo.size.height, alignment: .topLeading)
                     }
                     .clipped()
                     .transition(.opacity.animation(.easeInOut(duration: 0.4)))

@@ -31,13 +31,30 @@ enum AgentPickerMode: Identifiable {
 enum AgentPickerItem: Identifiable {
     case newWorktree
     case mainWorktree
-    case session(TerminalSession)
+    case worktree(WorktreeInfo)
 
     var id: String {
         switch self {
         case .newWorktree: return "__new_worktree__"
         case .mainWorktree: return "__main__"
-        case .session(let session): return session.id.uuidString
+        case .worktree(let info): return "__worktree__\(info.id)"
+        }
+    }
+}
+
+// MARK: - Right Pane Item
+
+/// Unified items for the horizontal right-pane picker
+enum RightPaneItem: Identifiable {
+    case pane(PaneInfo)
+    case grid(GridInfo)
+    case existingSession(TerminalSession)
+
+    var id: String {
+        switch self {
+        case .pane(let info): return "pane_\(info.id)"
+        case .grid(let info): return "grid_\(info.id)"
+        case .existingSession(let session): return "session_\(session.id.uuidString)"
         }
     }
 }
@@ -103,6 +120,59 @@ struct SlotPickerView<Item: Identifiable, Content: View>: View {
     }
 }
 
+// MARK: - Horizontal Slot Picker
+
+/// Horizontal slot-machine style picker: selected item at center, neighbors clipped by edges.
+struct HorizontalSlotPickerView<Item: Identifiable, Content: View>: View {
+    let items: [Item]
+    @Binding var selectedIndex: Int
+    let itemWidth: CGFloat
+    let spacing: CGFloat
+    let content: (Item, Bool) -> Content
+
+    init(
+        items: [Item],
+        selectedIndex: Binding<Int>,
+        itemWidth: CGFloat = 300,
+        spacing: CGFloat = 20,
+        @ViewBuilder content: @escaping (Item, Bool) -> Content
+    ) {
+        self.items = items
+        self._selectedIndex = selectedIndex
+        self.itemWidth = itemWidth
+        self.spacing = spacing
+        self.content = content
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            let centerX = geo.size.width / 2
+            let step = itemWidth + spacing
+            let contentOffset = centerX - (CGFloat(selectedIndex) * step) - (itemWidth / 2)
+
+            HStack(spacing: spacing) {
+                ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                    let isSelected = index == selectedIndex
+                    let distance = abs(index - selectedIndex)
+                    content(item, isSelected)
+                        .frame(width: itemWidth)
+                        .frame(maxHeight: .infinity)
+                        .opacity(distance == 0 ? 1.0 : max(0.15, 1.0 - Double(distance) * 0.35))
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                                selectedIndex = index
+                            }
+                        }
+                }
+            }
+            .offset(x: contentOffset)
+            .animation(.spring(response: 0.3, dampingFraction: 0.82), value: selectedIndex)
+            .clipped()
+        }
+    }
+}
+
 // MARK: - Agent Picker Panel
 
 /// Unified panel for Cmd+T (new terminal) and Cmd+R (assign task).
@@ -122,10 +192,10 @@ struct AgentPickerPanel: View {
     @State private var pickerItems: [AgentPickerItem] = []
     @State private var panes: [PaneInfo] = []
     @State private var grids: [GridInfo] = []
-    @State private var selectedPaneIndex: Int = 0
-    @State private var selectedGridIndex: Int = 0
-    @State private var isGridModeSelected: Bool = false
+    @State private var rightPaneItems: [RightPaneItem] = []
+    @State private var rightPaneSelectedIndex: Int = 0
     @State private var newWorktreeBranch: String = ""
+    @State private var worktrees: [WorktreeInfo] = []
     @State private var isLoading = true
     @FocusState private var isFocused: Bool
     @FocusState private var isWorktreeFieldFocused: Bool
@@ -135,44 +205,52 @@ struct AgentPickerPanel: View {
         return pickerItems[selectedIndex]
     }
 
-    private var selectedPane: PaneInfo? {
-        guard selectedPaneIndex < panes.count else { return nil }
-        return panes[selectedPaneIndex]
+    private var selectedRightPaneItem: RightPaneItem? {
+        guard rightPaneSelectedIndex >= 0 && rightPaneSelectedIndex < rightPaneItems.count else { return nil }
+        return rightPaneItems[rightPaneSelectedIndex]
     }
 
-    private var selectedGrid: GridInfo? {
-        guard selectedGridIndex < grids.count else { return nil }
-        return grids[selectedGridIndex]
-    }
-
-    private var selectedGridName: String? {
-        guard isGridModeSelected, let grid = selectedGrid else { return nil }
-        return grid.name
-    }
-
-    private var selectedProvider: AIProvider {
-        selectedPane?.provider ?? .claude
-    }
-
-    /// Whether we show layout picker (new session) vs session detail (existing)
-    private var showsLayoutPicker: Bool {
-        guard let item = selectedItem else { return true }
-        switch item {
-        case .mainWorktree, .newWorktree: return true
-        case .session: return false
-        }
-    }
-
-    /// Build picker items: new worktree, main, then sessions
+    /// Build picker items: new worktree, main, existing worktrees, then sessions
     private func buildPickerItems() -> [AgentPickerItem] {
         var items: [AgentPickerItem] = []
         items.append(.newWorktree)
         items.append(.mainWorktree)
-        if let workspaceId {
+        // Add existing worktrees (excluding main)
+        for wt in worktrees where !wt.isMain {
+            items.append(.worktree(wt))
+        }
+        return items
+    }
+
+    /// Build right pane items: panes + grids + existing sessions for the selected worktree
+    private func buildRightPaneItems() -> [RightPaneItem] {
+        var items: [RightPaneItem] = []
+        for pane in panes {
+            items.append(.pane(pane))
+        }
+        for grid in grids {
+            items.append(.grid(grid))
+        }
+        // Add existing sessions only in assign-task mode (Cmd+R)
+        if task != nil, let workspaceId, let item = selectedItem {
+            let branch: String? = {
+                switch item {
+                case .mainWorktree: return nil
+                case .worktree(let info): return info.displayName
+                default: return nil
+                }
+            }()
             let sessions = sessionManager.sessions(for: workspaceId)
+                .filter { session in
+                    if let branch {
+                        return session.worktreeBranch == branch
+                    } else {
+                        return session.worktreeBranch == nil
+                    }
+                }
                 .sorted { $0.startedAt > $1.startedAt }
             for session in sessions {
-                items.append(.session(session))
+                items.append(.existingSession(session))
             }
         }
         return items
@@ -196,7 +274,7 @@ struct AgentPickerPanel: View {
                 }
             }
         }
-        .frame(width: 700, height: 340)
+        .frame(width: 760, height: 340)
         .background(.ultraThinMaterial)
         .clipShape(RoundedRectangle(cornerRadius: 14))
         .presentationBackground(.clear)
@@ -208,13 +286,20 @@ struct AgentPickerPanel: View {
             if let path = workspacePath {
                 async let panesTask = LayoutService.shared.listPanes(in: path)
                 async let gridsTask = LayoutService.shared.listGrids(in: path)
+                async let worktreesTask = WorktreeService.shared.listWorktrees(in: path)
                 panes = await panesTask.filter { $0.isAi }
                 grids = await gridsTask
+                worktrees = await worktreesTask
             }
             pickerItems = buildPickerItems()
             // Default to main (index 1)
             selectedIndex = pickerItems.count > 1 ? 1 : 0
+            rightPaneItems = buildRightPaneItems()
             isLoading = false
+        }
+        .onChange(of: selectedIndex) {
+            rightPaneItems = buildRightPaneItems()
+            rightPaneSelectedIndex = 0
         }
         .onKeyPress(.upArrow) {
             navigateUp()
@@ -289,31 +374,14 @@ struct AgentPickerPanel: View {
                             .font(.title.weight(.bold))
                     }
 
-                case .session(let session):
-                    Text(session.taskTitle)
+                case .worktree(let info):
+                    Text(info.displayName)
                         .font(.title.weight(.bold))
                         .lineLimit(1)
-                    HStack(spacing: 5) {
-                        Circle()
-                            .fill(session.status.color)
-                            .frame(width: 6, height: 6)
-                        Text(session.worktreeDisplayName)
-                            .font(.caption)
-                    }
-                    .foregroundStyle(.secondary)
                 }
             }
 
             Spacer()
-
-            if case .session(let session) = item, session.queueCount > 0 {
-                Text("\(session.queueCount)")
-                    .font(.caption2.monospacedDigit())
-                    .foregroundStyle(.orange)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 2)
-                    .background(Capsule().fill(Color.orange.opacity(0.15)))
-            }
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 4)
@@ -323,197 +391,162 @@ struct AgentPickerPanel: View {
     // MARK: - Right Pane
 
     private var rightPane: some View {
-        VStack(spacing: 0) {
-            if let item = selectedItem {
-                switch item {
-                case .mainWorktree, .newWorktree:
-                    newSessionRightPane(item: item)
-                case .session(let session):
-                    sessionDetailRightPane(session: session)
-                }
-            }
-        }
+        newSessionRightPane()
     }
 
     // MARK: - Right Pane: New Session
 
-    private func newSessionRightPane(item: AgentPickerItem) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // Layout selection
-                VStack(alignment: .leading, spacing: 8) {
-                    Text("Layout")
-                        .font(.subheadline.weight(.medium))
-                        .foregroundStyle(.secondary)
-
-                    if panes.isEmpty && grids.isEmpty {
-                        Text("Loading...")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
-                    } else {
-                        HStack(spacing: 16) {
-                            HStack(spacing: 8) {
-                                ForEach(Array(panes.enumerated()), id: \.element.id) { index, pane in
-                                    CompactPaneChip(
-                                        pane: pane,
-                                        isSelected: !isGridModeSelected && index == selectedPaneIndex,
-                                        isFocused: !isGridModeSelected
-                                    )
-                                    .onTapGesture {
-                                        selectedPaneIndex = index
-                                        isGridModeSelected = false
-                                    }
-                                }
-                            }
-
-                            if !grids.isEmpty {
-                                Rectangle()
-                                    .fill(Color.secondary.opacity(0.3))
-                                    .frame(width: 1)
-                                    .frame(height: 40)
-
-                                HStack(spacing: 12) {
-                                    ForEach(Array(grids.enumerated()), id: \.element.id) { index, grid in
-                                        GridVisualization(
-                                            grid: grid,
-                                            isSelected: isGridModeSelected && (grids.count == 1 || index == selectedGridIndex),
-                                            isFocused: isGridModeSelected
-                                        )
-                                        .onTapGesture {
-                                            selectedGridIndex = index
-                                            isGridModeSelected = true
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+    private func newSessionRightPane() -> some View {
+        VStack(spacing: 0) {
+            if rightPaneItems.isEmpty {
+                Spacer()
+                Text("Loading...")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+            } else {
+                HorizontalSlotPickerView(
+                    items: rightPaneItems,
+                    selectedIndex: $rightPaneSelectedIndex,
+                    itemWidth: 300
+                ) { item, isSelected in
+                    rightPaneMiniature(for: item, isSelected: isSelected)
                 }
             }
-            .padding(16)
         }
-        .padding(.top, 16)
     }
 
-    // MARK: - Right Pane: Session Detail
+    // MARK: - Miniature Card Renderer
 
-    private func sessionDetailRightPane(session: TerminalSession) -> some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                // Session info
-                VStack(alignment: .leading, spacing: 12) {
-                    HStack(spacing: 8) {
-                        Image(systemName: session.worktreeBranch == nil ? "folder.fill" : "arrow.triangle.branch")
-                            .font(.caption)
-                            .foregroundStyle(session.worktreeBranch == nil ? .orange : .accentPurple)
-                            .frame(width: 20)
-                        Text("Worktree:")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text(session.worktreeDisplayName)
-                            .font(.subheadline.weight(.medium))
+    @ViewBuilder
+    private func rightPaneMiniature(for item: RightPaneItem, isSelected: Bool) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            // Card
+            ZStack {
+                RoundedRectangle(cornerRadius: 10)
+                    .fill(Color(red: 0x14/255.0, green: 0x14/255.0, blue: 0x14/255.0))
+
+                switch item {
+                case .pane(let pane):
+                    VStack(spacing: 12) {
+                        AIProviderIcon(provider: pane.provider, size: 40)
                     }
 
-                    HStack(spacing: 8) {
-                        Image(systemName: "clock")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                            .frame(width: 20)
-                        Text("Running:")
-                            .font(.subheadline)
-                            .foregroundStyle(.secondary)
-                        Text(session.startedAt, style: .relative)
-                            .font(.subheadline)
-                    }
+                case .grid(let grid):
+                    miniGridVisualization(grid: grid)
+                        .padding(8)
 
-                    if session.queueCount > 0 {
-                        HStack(spacing: 8) {
-                            Image(systemName: "list.bullet")
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                                .frame(width: 20)
-                            Text("Queued:")
-                                .font(.subheadline)
-                                .foregroundStyle(.secondary)
-                            Text("\(session.queueCount) task\(session.queueCount == 1 ? "" : "s")")
-                                .font(.subheadline.weight(.medium))
-                                .foregroundStyle(.orange)
-                        }
-                    }
-                }
-
-                if session.hasTask {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Current Task")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.secondary)
-
-                        HStack(spacing: 8) {
-                            Image(systemName: "play.circle.fill")
-                                .font(.body)
-                                .foregroundStyle(.green)
-                            Text(session.taskTitle)
-                                .font(.body)
-                                .lineLimit(2)
-                        }
-                        .padding(12)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.green.opacity(0.1))
-                        )
-                    }
-                }
-
-                if !session.taskHistory.isEmpty {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Recent Tasks")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.secondary)
-
-                        VStack(spacing: 6) {
-                            ForEach(session.taskHistory.prefix(3), id: \.self) { taskTitle in
-                                HStack(spacing: 8) {
-                                    Image(systemName: "checkmark.circle")
-                                        .font(.caption)
-                                        .foregroundStyle(.green)
-                                    Text(taskTitle)
-                                        .font(.subheadline)
-                                        .lineLimit(1)
-                                        .foregroundStyle(.secondary)
-                                    Spacer()
-                                }
-                            }
-                        }
-                        .padding(12)
-                        .background(
-                            RoundedRectangle(cornerRadius: 8)
-                                .fill(Color.primary.opacity(0.03))
-                        )
-                    }
-                }
-
-                if let thumbnail = session.currentThumbnail {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Text("Preview")
-                            .font(.subheadline.weight(.medium))
-                            .foregroundStyle(.secondary)
-
+                case .existingSession(let session):
+                    if let thumbnail = session.currentThumbnail {
                         Image(nsImage: thumbnail)
                             .resizable()
-                            .scaledToFit()
-                            .frame(maxWidth: .infinity)
+                            .scaledToFill()
                             .clipShape(RoundedRectangle(cornerRadius: 8))
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 8)
-                                    .strokeBorder(Color.primary.opacity(0.1), lineWidth: 1)
-                            )
+                    } else {
+                        VStack(spacing: 12) {
+                            Image(systemName: "terminal.fill")
+                                .font(.largeTitle)
+                                .foregroundStyle(.green)
+                        }
                     }
                 }
             }
-            .padding(16)
+            .frame(width: 300, height: 200)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(
+                        isSelected ? Color.accentColor : Color.white.opacity(0.08),
+                        lineWidth: isSelected ? 2 : 1
+                    )
+            )
+
+            // Title + context below card
+            VStack(alignment: .leading, spacing: 3) {
+                switch item {
+                case .pane(let pane):
+                    Text(pane.name)
+                        .font(.title.weight(.bold))
+                    Text("New session")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                case .grid(let grid):
+                    Text(grid.displayName)
+                        .font(.title.weight(.bold))
+                    Text("New grid session")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+
+                case .existingSession(let session):
+                    Text(session.taskTitle)
+                        .font(.title.weight(.bold))
+                        .lineLimit(1)
+                    if session.hasTask {
+                        Text("Enqueue task to session")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else {
+                        Text("Assign to idle session")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+            .padding(.horizontal, 4)
         }
-        .padding(.top, 16)
+        .padding(.vertical, 8)
+    }
+
+    /// Grid layout visualization showing colored bordered cells with pane names
+    private func miniGridVisualization(grid: GridInfo) -> some View {
+        GeometryReader { geo in
+            let cols = grid.columnCount
+            let rows = grid.rowCount
+            let gap: CGFloat = 4
+            let totalW = geo.size.width
+            let totalH = geo.size.height
+
+            // Compute column widths from cell width percentages
+            let colWidths: [CGFloat] = {
+                var widths = Array(repeating: totalW / max(CGFloat(cols), 1), count: cols)
+                // Use width hints from first cell in each column
+                let byCol = grid.cellsByColumn
+                let totalPct = byCol.reduce(0) { sum, colCells in
+                    sum + (colCells.first?.width ?? 50)
+                }
+                if totalPct > 0 {
+                    for c in 0..<cols {
+                        let pct = byCol[c].first?.width ?? 50
+                        widths[c] = (CGFloat(pct) / CGFloat(totalPct)) * (totalW - gap * CGFloat(cols - 1))
+                    }
+                }
+                return widths
+            }()
+
+            // Compute row heights per column
+            ForEach(Array(grid.cells.enumerated()), id: \.offset) { _, cell in
+                let colRows = grid.cellsByColumn[cell.col].count
+                let x = (0..<cell.col).reduce(CGFloat(0)) { $0 + colWidths[$1] + gap }
+                let cellH = (totalH - gap * CGFloat(colRows - 1)) / max(CGFloat(colRows), 1)
+                let y = CGFloat(cell.row) * (cellH + gap)
+
+                ZStack(alignment: .topLeading) {
+                    RoundedRectangle(cornerRadius: 4)
+                        .fill(cell.swiftUIColor.opacity(0.1))
+                    RoundedRectangle(cornerRadius: 4)
+                        .strokeBorder(cell.swiftUIColor.opacity(0.6), lineWidth: 1)
+
+                    Text(cell.paneType)
+                        .font(.system(size: 9, weight: .medium, design: .monospaced))
+                        .foregroundStyle(cell.swiftUIColor)
+                        .padding(.horizontal, 5)
+                        .padding(.top, 4)
+                }
+                .frame(width: colWidths[cell.col], height: cellH)
+                .offset(x: x, y: y)
+            }
+        }
     }
 
     // MARK: - Navigation
@@ -528,6 +561,7 @@ struct AgentPickerPanel: View {
             isWorktreeFieldFocused = true
         } else {
             isWorktreeFieldFocused = false
+            isFocused = true
         }
     }
 
@@ -541,75 +575,63 @@ struct AgentPickerPanel: View {
             isWorktreeFieldFocused = true
         } else {
             isWorktreeFieldFocused = false
+            isFocused = true
         }
     }
 
     private func navigateLeft() {
-        guard showsLayoutPicker else { return }
-        let totalItems = panes.count + grids.count
-        guard totalItems > 0 else { return }
-
-        let currentPosition = isGridModeSelected ? panes.count + selectedGridIndex : selectedPaneIndex
-        let newPosition = currentPosition > 0 ? currentPosition - 1 : totalItems - 1
-
-        if newPosition < panes.count {
-            isGridModeSelected = false
-            selectedPaneIndex = newPosition
-        } else {
-            isGridModeSelected = true
-            selectedGridIndex = newPosition - panes.count
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+            if rightPaneSelectedIndex > 0 {
+                rightPaneSelectedIndex -= 1
+            }
         }
     }
 
     private func navigateRight() {
-        guard showsLayoutPicker else { return }
-        let totalItems = panes.count + grids.count
-        guard totalItems > 0 else { return }
-
-        let currentPosition = isGridModeSelected ? panes.count + selectedGridIndex : selectedPaneIndex
-        let newPosition = currentPosition < totalItems - 1 ? currentPosition + 1 : 0
-
-        if newPosition < panes.count {
-            isGridModeSelected = false
-            selectedPaneIndex = newPosition
-        } else {
-            isGridModeSelected = true
-            selectedGridIndex = newPosition - panes.count
+        withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+            if rightPaneSelectedIndex < rightPaneItems.count - 1 {
+                rightPaneSelectedIndex += 1
+            }
         }
     }
 
     private func confirmSelection() {
         guard let item = selectedItem else { return }
 
-        switch item {
-        case .mainWorktree:
-            if isGridModeSelected, let grid = selectedGrid {
-                let provider = panes.first?.provider ?? .claude
-                onCreateTerminal(nil, provider, grid.name)
-            } else {
-                onCreateTerminal(nil, selectedProvider, nil)
+        // Determine branch from left pane selection
+        let branch: String? = {
+            switch item {
+            case .mainWorktree: return nil
+            case .newWorktree:
+                let b = newWorktreeBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+                return b.isEmpty ? nil : b
+            case .worktree(let info): return info.displayName
             }
-            dismiss()
+        }()
 
-        case .newWorktree:
-            let branch = newWorktreeBranch.trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !branch.isEmpty else { return }
-            if isGridModeSelected, let grid = selectedGrid {
-                let provider = panes.first?.provider ?? .claude
-                onCreateTerminal(branch, provider, grid.name)
-            } else {
-                onCreateTerminal(branch, selectedProvider, nil)
-            }
-            dismiss()
+        // New worktree requires non-empty branch name
+        if case .newWorktree = item {
+            guard branch != nil else { return }
+        }
 
-        case .session(let session):
+        guard let rightItem = selectedRightPaneItem else { return }
+
+        switch rightItem {
+        case .pane(let pane):
+            onCreateTerminal(branch, pane.provider, nil)
+
+        case .grid(let grid):
+            let provider = panes.first?.provider ?? .claude
+            onCreateTerminal(branch, provider, grid.name)
+
+        case .existingSession(let session):
             if let task, let onAssignToSession {
                 onAssignToSession(task, session)
             } else {
                 onGoToSession?(session)
             }
-            dismiss()
         }
+        dismiss()
     }
 }
 
