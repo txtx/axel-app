@@ -966,34 +966,7 @@ struct WorkspaceQueueListView: View {
     }
 
     private func sectionHeader(_ title: String, count: Int? = nil, color: Color? = nil) -> some View {
-        VStack(spacing: 8) {
-            HStack {
-                Text(title)
-                    .font(.system(size: 13, weight: .semibold))
-                    .foregroundStyle(Color.accentPurple)
-                    .textCase(.uppercase)
-                    .tracking(0.5)
-                if let count, count > 0 {
-                    Text("\(count)")
-                        .font(.system(size: 12, weight: .medium).monospacedDigit())
-                        .foregroundStyle(Color.accentPurple)
-                        .padding(.horizontal, 5)
-                        .padding(.vertical, 2)
-                        .background(Color.accentPurple.opacity(0.15))
-                        .clipShape(Capsule())
-                }
-                Spacer()
-            }
-            .padding(.leading, 16)
-            .padding(.trailing, 12)
-
-            Rectangle()
-                .fill(Color.accentPurple.opacity(0.25))
-                .frame(height: 1)
-        }
-        .padding(.horizontal, 12)
-        .padding(.top, 18)
-        .padding(.bottom, 8)
+        SectionHeader(title: title, count: count, color: color ?? .accentPurple)
     }
 
     private func tasksForStatus(_ status: TaskStatus) -> [WorkTask] {

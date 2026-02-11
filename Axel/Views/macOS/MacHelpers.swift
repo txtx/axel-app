@@ -128,7 +128,7 @@ struct SpeedometerGauge: View {
     @ViewBuilder
     private var providerIcon: some View {
         let atRest = displayValue <= 0.01 && bootAnimationValue == nil
-        let baseColor = atRest ? Color.white : (monochromeColor ?? provider.color)
+        let baseColor = atRest ? (colorScheme == .dark ? Color.white : Color.black) : (monochromeColor ?? provider.color)
         let iconColor = !atRest && monochromeColor == nil && inRedZone ? Color.red : baseColor
         let iconSize: CGFloat = gaugeSize * 0.5
         let iconOpacity = atRest ? 0.5 : 1.0
@@ -2401,5 +2401,42 @@ struct WindowDragArea: NSViewRepresentable {
 
 class DraggableView: NSView {
     override var mouseDownCanMoveWindow: Bool { true }
+}
+
+// MARK: - Section Header
+
+struct SectionHeader: View {
+    let title: String
+    var count: Int? = nil
+    var color: Color = .accentPurple
+
+    var body: some View {
+        VStack(spacing: 8) {
+            HStack {
+                Text(title)
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(color)
+                    .tracking(0.5)
+                if let count, count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: 12, weight: .medium).monospacedDigit())
+                        .foregroundStyle(color)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(color.opacity(0.15))
+                        .clipShape(Capsule())
+                }
+                Spacer()
+            }
+            .padding(.leading, 30)
+
+            Rectangle()
+                .fill(color.opacity(0.25))
+                .frame(height: 1)
+                .padding(.horizontal, 30)
+        }
+        .padding(.top, 18)
+        .padding(.bottom, 8)
+    }
 }
 #endif

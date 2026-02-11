@@ -199,6 +199,11 @@ private final class KeyboardNavigationMonitor {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self = self else { return event }
 
+            // If we're inside a sheet, let the sheet handle all keys
+            if event.window?.sheetParent != nil {
+                return event
+            }
+
             // Only handle Cmd+arrow keys (without other modifiers like Shift)
             guard event.modifierFlags.contains(.command),
                   !event.modifierFlags.contains(.shift),

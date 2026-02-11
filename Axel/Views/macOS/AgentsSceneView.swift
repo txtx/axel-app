@@ -54,7 +54,7 @@ struct AgentsScene: View {
                 .padding(.trailing, 12)
             }
         }
-        .background(backgroundColor)
+        .background(.clear)
         .onAppear {
             installedTerminals = TerminalApp.installedApps
         }
@@ -246,6 +246,8 @@ struct TerminalFullView: View {
 // MARK: - Empty Running Selection
 
 struct EmptyRunningSelectionView: View {
+    @Environment(\.colorScheme) private var colorScheme
+
     var body: some View {
         VStack(spacing: 12) {
             Spacer()
@@ -266,7 +268,10 @@ struct EmptyRunningSelectionView: View {
             Spacer()
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(.background)
+        .background {
+            (colorScheme == .dark ? Color(hex: "292F30")! : Color.white)
+                .ignoresSafeArea()
+        }
     }
 }
 

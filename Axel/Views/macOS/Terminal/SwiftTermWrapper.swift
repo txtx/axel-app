@@ -489,6 +489,18 @@ extension TerminalEmulator {
             fatalError("init(coder:) not supported")
         }
 
+        /// Detach the ghostty surface and free it on a background thread to avoid blocking the main thread.
+        /// After calling this, the surface view is inert and should be removed from its superview.
+        func teardownAsync() {
+            let s = surface
+            surface = nil
+            if let s {
+                DispatchQueue.global(qos: .utility).async {
+                    ghostty_surface_free(s)
+                }
+            }
+        }
+
         deinit {
             if let surface {
                 ghostty_surface_free(surface)

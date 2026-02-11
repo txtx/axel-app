@@ -19,7 +19,7 @@ struct TimelinePanelView: View {
 
     @Environment(\.terminalSessionManager) private var sessionManager
     @Environment(\.colorScheme) private var colorScheme
-    @State private var panelHeight: CGFloat = 300
+    @State private var panelHeight: CGFloat = 350
     @State private var expandedStack: StackIdentifier?
 
     private let statusService = SessionStatusService.shared
@@ -49,10 +49,16 @@ struct TimelinePanelView: View {
                 }
                 .padding(.horizontal, 12)
                 .padding(.vertical, 8)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+                .onTapGesture {
+                    selection = nil
+                }
             }
+            .scrollClipDisabled()
             .frame(height: panelHeight)
-            .background(backgroundColor)
         }
+        .background(.clear)
         .focusEffectDisabled()
         .modifier(TimelineKeyboardNavigation(
             sessions: allTimelineSessions,
@@ -88,11 +94,10 @@ struct WorktreeLaneView: View {
         statusService.groupedByStatus(sessions)
     }
 
-    private let yellowTop = Color(red: 0.95, green: 0.85, blue: 0.25)
-    private let yellowBottom = Color(red: 0.90, green: 0.75, blue: 0.10)
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 0) {
+            SectionHeader(title: "Agents working on \(worktreeName)", count: sessions.count)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: cardSpacing) {
                     ForEach(statusGroups, id: \.status) { group in
@@ -119,37 +124,10 @@ struct WorktreeLaneView: View {
                         }
                     }
                 }
-                .padding(.leading, 8)
+                .padding(.leading, 30)
             }
+            .scrollClipDisabled()
             .frame(height: laneHeight)
-
-            Rectangle()
-                .fill(yellowBottom.opacity(0.5))
-                .frame(height: 2)
-                .overlay(alignment: .leading) {
-                    HStack(spacing: 5) {
-                        Image(.gitBranchIcon)
-                            .resizable()
-                            .frame(width: 12, height: 12)
-                        Text(worktreeName)
-                            .font(.caption.weight(.semibold))
-                            .lineLimit(1)
-                    }
-                    .foregroundStyle(.black.opacity(0.85))
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 4)
-                    .background(
-                        Capsule()
-                            .fill(
-                                LinearGradient(
-                                    colors: [yellowTop, yellowBottom],
-                                    startPoint: .top,
-                                    endPoint: .bottom
-                                )
-                            )
-                    )
-                    .padding(.leading, 4)
-                }
         }
         .focusEffectDisabled()
     }
@@ -352,7 +330,7 @@ struct CompactMiniatureView: View {
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
-                .stroke(isSelected ? Color.accentPurple : Color.white.opacity(0.1), lineWidth: isSelected ? 2.5 : 0.5)
+                .strokeBorder(isSelected ? Color.accentPurple : Color.white.opacity(0.1), lineWidth: isSelected ? 2.5 : 0.5)
         )
         .shadow(color: .black.opacity(0.25), radius: 3, x: 0, y: 1)
         .contentShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
@@ -421,15 +399,10 @@ struct HorizontalResizableDivider: View {
     @Environment(\.colorScheme) private var colorScheme
 
     var body: some View {
-        ZStack {
-            Rectangle()
-                .fill(colorScheme == .dark ? Color.white.opacity(0.08) : Color.black.opacity(0.1))
-                .frame(height: 1)
-            Capsule()
-                .fill(colorScheme == .dark ? Color.white.opacity(isDragging ? 0.35 : 0.2) : Color.black.opacity(isDragging ? 0.25 : 0.12))
-                .frame(width: 36, height: 4)
-        }
-        .frame(height: 12)
+        Capsule()
+            .fill(colorScheme == .dark ? Color.white.opacity(isDragging ? 0.35 : 0.2) : Color.black.opacity(isDragging ? 0.25 : 0.12))
+            .frame(width: 36, height: 4)
+            .frame(height: 12)
         .frame(maxWidth: .infinity)
         .contentShape(Rectangle())
         .onHover { hovering in
@@ -514,6 +487,10 @@ private final class TimelineKeyboardMonitor {
     private func setupMonitor() {
         eventMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
+            // If we're inside a sheet, let the sheet handle all keys (sheets have priority)
+            if event.window?.sheetParent != nil {
+                return event
+            }
             if event.keyCode == 53 { return self.onEscape() ? nil : event }
             guard event.modifierFlags.contains(.command),
                   !event.modifierFlags.contains(.shift),

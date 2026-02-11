@@ -307,19 +307,19 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
     func stopScreenshotCapture() {
         screenshotTimer?.invalidate()
         screenshotTimer = nil
-        cleanupOffscreenWindow()
+
+        // Tear down the ghostty surface on a background thread to avoid blocking the main thread,
+        // then remove the view and close the offscreen window.
+        surfaceView?.teardownAsync()
+        surfaceView?.removeFromSuperview()
+        surfaceView = nil
+        offscreenWindow?.close()
+        offscreenWindow = nil
 
         // Notify SessionStatusService to clear tracking for this session
         if let paneId = paneId {
             SessionStatusService.shared.clearSession(paneId: paneId)
         }
-    }
-
-    private func cleanupOffscreenWindow() {
-        // Remove terminal view from offscreen window and close it
-        surfaceView?.removeFromSuperview()
-        offscreenWindow?.close()
-        offscreenWindow = nil
     }
 
     func captureScreenshot() {
@@ -379,6 +379,7 @@ final class TerminalSession: Identifiable, SessionIdentifiable {
         // happens on the main thread for MainActor-isolated classes
         MainActor.assumeIsolated {
             screenshotTimer?.invalidate()
+            surfaceView?.teardownAsync()
             surfaceView?.removeFromSuperview()
             offscreenWindow?.close()
         }

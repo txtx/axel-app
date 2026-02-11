@@ -340,7 +340,7 @@ struct TasksPanelContent: View {
             ScrollView {
                 VStack(alignment: .leading, spacing: 16) {
                     if !runningTasks.isEmpty {
-                        Text("RUNNING")
+                        Text("Running")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.green)
                             .padding(.horizontal, 24)
@@ -352,7 +352,7 @@ struct TasksPanelContent: View {
                     }
 
                     if !queuedTasks.isEmpty {
-                        Text("UP NEXT")
+                        Text("Up Next")
                             .font(.caption.weight(.semibold))
                             .foregroundStyle(.secondary)
                             .padding(.horizontal, 24)

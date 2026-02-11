@@ -82,16 +82,25 @@ final class SessionRecoveryService {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
-        do {
-            try process.run()
-            process.waitUntilExit()
+        // Run the process off the main thread to avoid blocking the UI
+        let result: (status: Int32, stdout: Data, stderr: Data) = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
+                    let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+                    continuation.resume(returning: (process.terminationStatus, stdoutData, stderrData))
+                } catch {
+                    continuation.resume(returning: (-1, Data(), Data()))
+                }
+            }
+        }
 
-            let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-            let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-
-            if process.terminationStatus == 0 {
+        if result.status == 0 {
+            do {
                 let decoder = JSONDecoder()
-                let sessions = try decoder.decode([RecoveredSession].self, from: stdoutData)
+                let sessions = try decoder.decode([RecoveredSession].self, from: result.stdout)
                 let filtered = sessions.filter { $0.port != nil }
                 self.recoveredSessions = filtered
                 self.lastDiscoveryTime = Date()
@@ -100,15 +109,19 @@ final class SessionRecoveryService {
                 let recoverable = filtered.filter { $0.canRecover }
                 let unrecoverable = filtered.filter { !$0.canRecover }
                 print("[SessionRecovery] Discovered \(filtered.count) session(s) with ports: \(recoverable.count) recoverable, \(unrecoverable.count) manual-only")
-            } else {
-                let stderr = String(data: stderrData, encoding: .utf8) ?? ""
-                self.lastError = "axel command failed with status \(process.terminationStatus)"
-                print("[SessionRecovery] Command failed with status \(process.terminationStatus): \(stderr)")
+            } catch {
+                self.lastError = "Failed to decode sessions: \(error.localizedDescription)"
+                print("[SessionRecovery] Decode error: \(error)")
                 self.recoveredSessions = []
             }
-        } catch {
-            self.lastError = "Failed to discover sessions: \(error.localizedDescription)"
-            print("[SessionRecovery] Error: \(error)")
+        } else if result.status == -1 {
+            self.lastError = "Failed to run axel process"
+            print("[SessionRecovery] Failed to launch process")
+            self.recoveredSessions = []
+        } else {
+            let stderr = String(data: result.stderr, encoding: .utf8) ?? ""
+            self.lastError = "axel command failed with status \(result.status)"
+            print("[SessionRecovery] Command failed with status \(result.status): \(stderr)")
             self.recoveredSessions = []
         }
     }

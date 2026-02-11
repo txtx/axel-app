@@ -86,36 +86,68 @@ struct SlotPickerView<Item: Identifiable, Content: View>: View {
     var body: some View {
         GeometryReader { geo in
             let centerY = geo.size.height / 2
-            let contentOffset = centerY - (CGFloat(selectedIndex) * rowHeight) - (rowHeight / 2)
+            let totalContentHeight = CGFloat(items.count) * rowHeight
+            let fitsWithoutScrolling = totalContentHeight <= geo.size.height
 
-            ZStack {
-                // Fixed selection band at center
-                RoundedRectangle(cornerRadius: 8)
-                    .fill(Color.white.opacity(0.1))
-                    .frame(width: geo.size.width - 16, height: rowHeight)
-                    .position(x: geo.size.width / 2, y: centerY)
-
-                // Scrolling items
+            if fitsWithoutScrolling {
+                // Few items: center the group, highlight selection in place
                 VStack(spacing: 0) {
                     ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
                         let isSelected = index == selectedIndex
-                        let distance = abs(index - selectedIndex)
-                        content(item, isSelected)
-                            .frame(height: rowHeight)
-                            .frame(maxWidth: .infinity)
-                            .opacity(distance == 0 ? 1.0 : max(0.15, 1.0 - Double(distance) * 0.35))
-                            .contentShape(Rectangle())
-                            .onTapGesture {
-                                withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
-                                    selectedIndex = index
-                                }
+                        ZStack {
+                            if isSelected {
+                                RoundedRectangle(cornerRadius: 8)
+                                    .fill(Color.white.opacity(0.1))
+                                    .padding(.horizontal, 8)
                             }
+                            content(item, isSelected)
+                                .frame(height: rowHeight)
+                                .frame(maxWidth: .infinity)
+                                .opacity(isSelected ? 1.0 : 0.5)
+                        }
+                        .frame(height: rowHeight)
+                        .contentShape(Rectangle())
+                        .onTapGesture {
+                            withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                                selectedIndex = index
+                            }
+                        }
                     }
                 }
-                .offset(y: contentOffset)
-                .animation(.spring(response: 0.3, dampingFraction: 0.82), value: selectedIndex)
+                .frame(maxHeight: .infinity)
+            } else {
+                // Many items: slot-machine with scrolling offset
+                let contentOffset = centerY - (CGFloat(selectedIndex) * rowHeight) - (rowHeight / 2)
+
+                ZStack {
+                    // Fixed selection band at center
+                    RoundedRectangle(cornerRadius: 8)
+                        .fill(Color.white.opacity(0.1))
+                        .frame(width: geo.size.width - 16, height: rowHeight)
+                        .position(x: geo.size.width / 2, y: centerY)
+
+                    // Scrolling items
+                    VStack(spacing: 0) {
+                        ForEach(Array(items.enumerated()), id: \.element.id) { index, item in
+                            let isSelected = index == selectedIndex
+                            let distance = abs(index - selectedIndex)
+                            content(item, isSelected)
+                                .frame(height: rowHeight)
+                                .frame(maxWidth: .infinity)
+                                .opacity(distance == 0 ? 1.0 : max(0.15, 1.0 - Double(distance) * 0.35))
+                                .contentShape(Rectangle())
+                                .onTapGesture {
+                                    withAnimation(.spring(response: 0.3, dampingFraction: 0.82)) {
+                                        selectedIndex = index
+                                    }
+                                }
+                        }
+                    }
+                    .offset(y: contentOffset)
+                    .animation(.spring(response: 0.3, dampingFraction: 0.82), value: selectedIndex)
+                }
+                .clipped()
             }
-            .clipped()
         }
     }
 }
@@ -210,8 +242,14 @@ struct AgentPickerPanel: View {
         return rightPaneItems[rightPaneSelectedIndex]
     }
 
+    /// Whether the workspace has worktree support (is a git repo with worktrees discovered)
+    private var hasWorktreeSupport: Bool {
+        !worktrees.isEmpty
+    }
+
     /// Build picker items: new worktree, main, existing worktrees, then sessions
     private func buildPickerItems() -> [AgentPickerItem] {
+        guard hasWorktreeSupport else { return [] }
         var items: [AgentPickerItem] = []
         items.append(.newWorktree)
         items.append(.mainWorktree)
@@ -260,9 +298,9 @@ struct AgentPickerPanel: View {
         Group {
             if isLoading {
                 HStack { Spacer(); ProgressView(); Spacer() }
-            } else {
+            } else if hasWorktreeSupport {
                 HStack(spacing: 0) {
-                    // Left pane: slot-machine picker
+                    // Left pane: slot-machine picker (worktrees)
                     slotPickerPane
                         .frame(width: 280)
 
@@ -271,6 +309,30 @@ struct AgentPickerPanel: View {
                     // Right pane: layout or session detail
                     rightPane
                         .frame(maxWidth: .infinity)
+                }
+            } else {
+                // No worktree support: right pane only + optional branch input
+                VStack(spacing: 0) {
+                    rightPane
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+                    Divider().opacity(0.3)
+
+                    // Optional worktree creation
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        TextField("branch name (optional)", text: $newWorktreeBranch)
+                            .textFieldStyle(.plain)
+                            .font(.callout)
+                            .focused($isWorktreeFieldFocused)
+                            .onSubmit {
+                                confirmSelection()
+                            }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 10)
                 }
             }
         }
@@ -596,21 +658,25 @@ struct AgentPickerPanel: View {
     }
 
     private func confirmSelection() {
-        guard let item = selectedItem else { return }
-
-        // Determine branch from left pane selection
+        // Determine branch from left pane selection (or inline field when no worktree support)
         let branch: String? = {
-            switch item {
-            case .mainWorktree: return nil
-            case .newWorktree:
+            if let item = selectedItem {
+                switch item {
+                case .mainWorktree: return nil
+                case .newWorktree:
+                    let b = newWorktreeBranch.trimmingCharacters(in: .whitespacesAndNewlines)
+                    return b.isEmpty ? nil : b
+                case .worktree(let info): return info.displayName
+                }
+            } else {
+                // No worktree support — use inline branch field if filled
                 let b = newWorktreeBranch.trimmingCharacters(in: .whitespacesAndNewlines)
                 return b.isEmpty ? nil : b
-            case .worktree(let info): return info.displayName
             }
         }()
 
         // New worktree requires non-empty branch name
-        if case .newWorktree = item {
+        if let item = selectedItem, case .newWorktree = item {
             guard branch != nil else { return }
         }
 

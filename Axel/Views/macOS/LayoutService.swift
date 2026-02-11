@@ -155,16 +155,31 @@ final class LayoutService {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
 
-        do {
-            try process.run()
-            process.waitUntilExit()
+        // Run the process off the main thread to avoid blocking the UI
+        let result: (status: Int32, data: Data) = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    continuation.resume(returning: (process.terminationStatus, data))
+                } catch {
+                    continuation.resume(returning: (-1, Data()))
+                }
+            }
+        }
 
-            let data = pipe.fileHandleForReading.readDataToEndOfFile()
-            let layout = try JSONDecoder().decode(LayoutOutput.self, from: data)
+        guard result.status == 0 else {
+            print("[LayoutService] Process exited with status \(result.status)")
+            return nil
+        }
+
+        do {
+            let layout = try JSONDecoder().decode(LayoutOutput.self, from: result.data)
             cachedLayout = (workspacePath, layout)
             return layout
         } catch {
-            print("[LayoutService] Failed to fetch layout: \(error)")
+            print("[LayoutService] Failed to decode layout: \(error)")
             return nil
         }
     }

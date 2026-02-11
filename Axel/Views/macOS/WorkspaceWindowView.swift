@@ -500,20 +500,26 @@ final class AxelSetupService {
         process.standardOutput = pipe
         process.standardError = FileHandle.nullDevice
 
-        do {
-            try process.run()
-            process.waitUntilExit()
-
-            if process.terminationStatus == 0 {
-                let data = pipe.fileHandleForReading.readDataToEndOfFile()
-                if let output = String(data: data, encoding: .utf8)?
-                    .trimmingCharacters(in: .whitespacesAndNewlines),
-                   !output.isEmpty {
-                    return output
+        // Run off the main thread to avoid blocking the UI
+        let result: (status: Int32, data: Data) = await withCheckedContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                do {
+                    try process.run()
+                    process.waitUntilExit()
+                    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+                    continuation.resume(returning: (process.terminationStatus, data))
+                } catch {
+                    continuation.resume(returning: (-1, Data()))
                 }
             }
-        } catch {
-            // which command failed, axel not in PATH
+        }
+
+        if result.status == 0 {
+            if let output = String(data: result.data, encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines),
+               !output.isEmpty {
+                return output
+            }
         }
 
         return nil

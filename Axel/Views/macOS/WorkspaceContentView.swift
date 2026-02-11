@@ -105,7 +105,14 @@ struct WorkspaceContentView: View {
             InboxService.shared.clearEventsForPane(paneId)
 
             if killTmux {
-                Task { await killTmuxSession(paneId: paneId) }
+                // Gather all main-actor values upfront so the kill runs entirely off the main thread
+                let axelPath = AxelSetupService.shared.executablePath
+                let env = AxelSetupService.shared.axelCommandEnvironment()
+                let recoveredSessions = SessionRecoveryService.shared.recoveredSessions
+                let sessionName = recoveredSessions.first(where: { $0.axelPaneId == paneId })?.name ?? paneId
+                Task.detached(priority: .utility) {
+                    await Self.killTmuxSessionBackground(paneId: paneId, sessionName: sessionName, axelPath: axelPath, environment: env)
+                }
             }
         }
 
@@ -132,33 +139,28 @@ struct WorkspaceContentView: View {
         return nil
     }
 
-    private func killTmuxSession(paneId: String) async {
-        _ = await AxelSetupService.shared.checkInstallation()
-        let sessionName = await resolveSessionName(for: paneId)
-        let axelPath = AxelSetupService.shared.executablePath
-
-        if await runProcess(["/usr/bin/env", axelPath, "session", "kill", sessionName, "--confirm"]) == 0 {
+    /// Kill tmux session entirely off the main thread. All values are captured upfront.
+    private nonisolated static func killTmuxSessionBackground(paneId: String, sessionName: String, axelPath: String, environment: [String: String]) async {
+        if runProcessSync(["/usr/bin/env", axelPath, "session", "kill", sessionName, "--confirm"], environment: environment) == 0 {
             return
         }
 
-        if await runProcess(["/usr/bin/env", "tmux", "kill-session", "-t", sessionName]) == 0 {
+        if runProcessSync(["/usr/bin/env", "tmux", "kill-session", "-t", sessionName], environment: environment) == 0 {
             return
         }
 
-        _ = await runProcess(["/usr/bin/env", "tmux", "kill-pane", "-t", paneId])
+        _ = runProcessSync(["/usr/bin/env", "tmux", "kill-pane", "-t", paneId], environment: environment)
     }
 
-    private func resolveSessionName(for paneId: String) async -> String {
-        await SessionRecoveryService.shared.discoverSessions()
-        return SessionRecoveryService.shared.recoveredSessions.first(where: { $0.axelPaneId == paneId })?.name ?? paneId
-    }
-
-    private func runProcess(_ args: [String]) async -> Int32 {
+    /// Run a process synchronously. Must be called off the main thread.
+    private nonisolated static func runProcessSync(_ args: [String], environment: [String: String]) -> Int32 {
         guard let executable = args.first else { return -1 }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: executable)
         process.arguments = Array(args.dropFirst())
-        AxelSetupService.shared.configureAxelProcess(process)
+        process.environment = environment
+        process.standardOutput = FileHandle.nullDevice
+        process.standardError = FileHandle.nullDevice
         do {
             try process.run()
             process.waitUntilExit()
@@ -505,13 +507,14 @@ struct WorkspaceContentView: View {
                 detailColumnView
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
                     .padding(.leading, 5)
+                    .zIndex(1)
                 TimelinePanelView(
                     workspaceId: workspace.id,
                     selection: $selectedSession,
                     onRequestClose: requestCloseSession
                 )
             }
-            .background(agentsBackgroundColor)
+            .background(.clear)
         default:
             HStack(spacing: 0) {
                 listColumnView
@@ -530,12 +533,8 @@ struct WorkspaceContentView: View {
             .transaction { transaction in
                 transaction.animation = nil
             }
-            .background(sidebarSelection == .terminals ? agentsBackgroundColor : Color.clear)
+            .background(Color.clear)
         }
-    }
-
-    private var agentsBackgroundColor: Color {
-        colorScheme == .dark ? Color(hex: "292F30")! : Color.white
     }
 
     @ViewBuilder
@@ -770,6 +769,33 @@ struct WorkspaceContentView: View {
         .toolbarBackground(.visible, for: .windowToolbar)
         .toolbarTitleDisplayMode(.inlineLarge)
         .navigationTitle(workspace.name)
+        .background(WindowBackgroundSetter(
+            color: colorScheme == .dark
+                ? NSColor(red: 0x29/255.0, green: 0x2F/255.0, blue: 0x30/255.0, alpha: 1.0)
+                : .windowBackgroundColor
+        ))
+    }
+}
+
+// MARK: - Window Background Setter
+
+/// Sets the NSWindow's backgroundColor to ensure consistent sidebar material tinting.
+/// The NavigationSplitView sidebar uses a visual effect material that is tinted by the
+/// window's background color. Without this, different detail content produces different sidebar tints.
+private struct WindowBackgroundSetter: NSViewRepresentable {
+    let color: NSColor
+
+    func makeNSView(context: NSViewRepresentableContext<Self>) -> NSView {
+        let view = NSView()
+        view.setFrameSize(.zero)
+        DispatchQueue.main.async {
+            view.window?.backgroundColor = color
+        }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: NSViewRepresentableContext<Self>) {
+        nsView.window?.backgroundColor = color
     }
 }
 
