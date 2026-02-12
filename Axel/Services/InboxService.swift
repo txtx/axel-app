@@ -835,10 +835,8 @@ final class InboxService {
                 }
             }
 
-            // Send OS notification only for inbox items (permission requests)
-            if event.event.hookEventName == "PermissionRequest" {
-                sendNotification(for: event)
-            }
+            // Send OS notification for all inbox events
+            sendNotification(for: event)
 
             print("[InboxService] Received event: \(event.title)")
         } catch {
