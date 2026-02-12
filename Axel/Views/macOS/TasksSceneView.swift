@@ -1967,16 +1967,16 @@ struct RunningTaskIndicator: View {
     var body: some View {
         ZStack {
             if isHovering {
-                // Checkmark circle on hover
+                // Inverted checkmark circle on hover
                 Button(action: { onMarkComplete?() }) {
                     ZStack {
                         Circle()
-                            .strokeBorder(Color.green.opacity(0.5), lineWidth: 1.5)
+                            .fill(accentColor)
                             .frame(width: size, height: size)
 
                         Image(systemName: "checkmark")
                             .font(.system(size: size * 0.45, weight: .bold))
-                            .foregroundStyle(.green)
+                            .foregroundStyle(.white)
                     }
                 }
                 .buttonStyle(.plain)
@@ -2033,12 +2033,21 @@ struct TaskGadget: View {
             case .completed:
                 Button(action: { onToggleComplete?() }) {
                     ZStack {
-                        Circle()
-                            .fill(accentColor)
-                            .frame(width: size, height: size)
-                        Image(systemName: "checkmark")
-                            .font(.system(size: size * 0.45, weight: .bold))
-                            .foregroundStyle(.white)
+                        if isHovering {
+                            Circle()
+                                .strokeBorder(accentColor.opacity(0.6), lineWidth: 1.5)
+                                .frame(width: size, height: size)
+                            Image(systemName: "checkmark")
+                                .font(.system(size: size * 0.45, weight: .bold))
+                                .foregroundStyle(accentColor)
+                        } else {
+                            Circle()
+                                .fill(accentColor)
+                                .frame(width: size, height: size)
+                            Image(systemName: "checkmark")
+                                .font(.system(size: size * 0.45, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
                     }
                 }
                 .buttonStyle(.plain)
@@ -2052,9 +2061,17 @@ struct TaskGadget: View {
                     textColor: textColor
                 )
             case .inReview, .aborted:
-                Circle()
-                    .strokeBorder(ringColor, lineWidth: 1.5)
-                    .frame(width: size, height: size)
+                ZStack {
+                    if isHovering {
+                        Circle()
+                            .fill(accentColor)
+                            .frame(width: size, height: size)
+                    } else {
+                        Circle()
+                            .strokeBorder(ringColor, lineWidth: 1.5)
+                            .frame(width: size, height: size)
+                    }
+                }
             }
         }
     }
@@ -2074,20 +2091,16 @@ struct QueuedTaskIndicator: View {
     var body: some View {
         ZStack {
             if isHovering {
-                // Play circle on hover - ready to start
+                // Inverted play circle on hover - ready to start
                 Button(action: { onRun?() }) {
                     ZStack {
                         Circle()
-                            .fill(accentColor.opacity(0.15))
-                            .frame(width: size, height: size)
-
-                        Circle()
-                            .strokeBorder(accentColor.opacity(0.6), lineWidth: 1.5)
+                            .fill(accentColor)
                             .frame(width: size, height: size)
 
                         Image(systemName: "play.fill")
                             .font(.system(size: size * 0.4))
-                            .foregroundStyle(accentColor)
+                            .foregroundStyle(.white)
                     }
                 }
                 .buttonStyle(.plain)
