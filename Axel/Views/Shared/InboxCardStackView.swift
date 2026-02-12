@@ -3,7 +3,11 @@ import SwiftUI
 /// Events we care about for the card stack
 private let relevantEventTypes = ["PermissionRequest"]
 
-/// A Tinder-like card stack view for inbox permission requests
+/// A Tinder-like card stack view for inbox permission requests.
+///
+/// Swipe right to approve, left to deny. Uses `CostTracker.shared.paneId(forSessionId:)`
+/// to resolve the correct paneId for response targeting (hooks may deliver wrong paneId
+/// due to the shared `.claude/settings.json` workspace-level overwrite problem).
 struct InboxCardStackView: View {
     @Binding var selection: InboxEvent?
     @State private var inboxService = InboxService.shared
@@ -289,12 +293,15 @@ struct InboxCardStackView: View {
         // Immediately mark as removed for UI
         removedIds.insert(event.id)
 
+        // Use OTEL-corrected paneId (hooks may deliver wrong paneId due to shared settings.json)
+        let correctPaneId = CostTracker.shared.paneId(forSessionId: sessionId) ?? event.paneId
+
         Task {
             do {
                 try await inboxService.sendPermissionResponse(
                     sessionId: sessionId,
                     option: option,
-                    paneId: event.paneId
+                    paneId: correctPaneId
                 )
                 await MainActor.run {
                     inboxService.resolveEvent(event.id)

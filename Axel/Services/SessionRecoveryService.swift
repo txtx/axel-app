@@ -59,6 +59,9 @@ final class SessionRecoveryService {
     /// Timestamp of last successful discovery
     private(set) var lastDiscoveryTime: Date?
 
+    /// Cached worktree info per workspace path (populated during recovery)
+    private var worktreeCache: [String: [WorktreeInfo]] = [:]
+
     private init() {}
 
     /// Discover existing axel sessions by calling `axel sessions ls --json`
@@ -126,29 +129,35 @@ final class SessionRecoveryService {
         }
     }
 
-    /// Filter sessions matching a specific workspace path
+    /// Filter sessions matching a specific workspace path (including worktree paths)
     func sessions(for workspacePath: String?) -> [RecoveredSession] {
         guard let path = workspacePath else {
             print("[SessionRecovery] No workspace path provided, returning all recovered sessions")
             return recoveredSessions
         }
 
-        // Normalize paths for comparison
-        let normalizedPath = (path as NSString).standardizingPath
-        let normalizedPathComponents = (normalizedPath as NSString).pathComponents
+        // Build all known paths: main workspace + any cached worktree paths
+        let allMatchPaths = allNormalizedPaths(for: path)
 
         let matchingSessions = recoveredSessions.filter { session in
             guard let sessionPath = session.workingDir else {
                 return false
             }
             let normalizedSessionPath = (sessionPath as NSString).standardizingPath
-            if normalizedSessionPath == normalizedPath {
-                return true
-            }
-
-            // Allow sessions started in subdirectories of the workspace.
             let sessionComponents = (normalizedSessionPath as NSString).pathComponents
-            return sessionComponents.starts(with: normalizedPathComponents)
+
+            // Check against main workspace path and all worktree paths
+            for matchPath in allMatchPaths {
+                if normalizedSessionPath == matchPath {
+                    return true
+                }
+                // Allow sessions started in subdirectories
+                let matchComponents = (matchPath as NSString).pathComponents
+                if sessionComponents.starts(with: matchComponents) {
+                    return true
+                }
+            }
+            return false
         }
 
         // Log path matching for debugging
@@ -156,18 +165,63 @@ final class SessionRecoveryService {
             let nonMatching = recoveredSessions.filter { session in
                 guard let sessionPath = session.workingDir else { return true }
                 let normalizedSessionPath = (sessionPath as NSString).standardizingPath
-                if normalizedSessionPath == normalizedPath {
-                    return false
-                }
                 let sessionComponents = (normalizedSessionPath as NSString).pathComponents
-                return !sessionComponents.starts(with: normalizedPathComponents)
+                for matchPath in allMatchPaths {
+                    if normalizedSessionPath == matchPath { return false }
+                    let matchComponents = (matchPath as NSString).pathComponents
+                    if sessionComponents.starts(with: matchComponents) { return false }
+                }
+                return true
             }
             for session in nonMatching {
-                print("[SessionRecovery] Session \(session.name.prefix(8))... path mismatch: \(session.workingDir ?? "nil") vs \(normalizedPath)")
+                print("[SessionRecovery] Session \(session.name.prefix(8))... path mismatch: \(session.workingDir ?? "nil") vs \(path)")
             }
         }
 
         return matchingSessions
+    }
+
+    /// Resolve and cache worktree paths for a workspace
+    func resolveWorktrees(for workspacePath: String) async {
+        let worktrees = await WorktreeService.shared.listWorktrees(in: workspacePath)
+        worktreeCache[workspacePath] = worktrees
+        if worktrees.count > 1 {
+            print("[SessionRecovery] Cached \(worktrees.count) worktree path(s) for \(workspacePath)")
+        }
+    }
+
+    /// All normalized paths (main workspace + worktrees) for matching
+    private func allNormalizedPaths(for workspacePath: String) -> [String] {
+        let normalizedMain = (workspacePath as NSString).standardizingPath
+        var paths = [normalizedMain]
+        if let worktrees = worktreeCache[workspacePath] {
+            for wt in worktrees {
+                let normalized = (wt.path as NSString).standardizingPath
+                if normalized != normalizedMain {
+                    paths.append(normalized)
+                }
+            }
+        }
+        return paths
+    }
+
+    /// Find the worktree branch for a session based on its working directory
+    private func worktreeBranch(forSessionPath sessionPath: String, workspacePath: String) -> String? {
+        guard let worktrees = worktreeCache[workspacePath] else { return nil }
+        let normalizedSessionPath = (sessionPath as NSString).standardizingPath
+        for wt in worktrees where !wt.isMain {
+            let normalizedWtPath = (wt.path as NSString).standardizingPath
+            if normalizedSessionPath == normalizedWtPath {
+                return wt.branch
+            }
+            // Also check subdirectories of the worktree
+            let wtComponents = (normalizedWtPath as NSString).pathComponents
+            let sessionComponents = (normalizedSessionPath as NSString).pathComponents
+            if sessionComponents.starts(with: wtComponents) {
+                return wt.branch
+            }
+        }
+        return nil
     }
 
     /// Check if a session is already tracked (exists in the set of tracked pane IDs)
@@ -188,7 +242,13 @@ final class SessionRecoveryService {
 
     /// Recover (join) untracked sessions for a workspace and register them with the session manager.
     /// Only sessions with stored port and pane_id info can be properly recovered.
-    func recoverUntrackedSessions(for workspacePath: String?, workspaceId: UUID, sessionManager: TerminalSessionManager) {
+    /// Resolves git worktrees to also discover sessions running in worktree directories.
+    func recoverUntrackedSessions(for workspacePath: String?, workspaceId: UUID, sessionManager: TerminalSessionManager) async {
+        // Resolve worktree paths so sessions in worktree directories are matched
+        if let workspacePath {
+            await resolveWorktrees(for: workspacePath)
+        }
+
         let trackedPaneIds = Set(sessionManager.sessions(for: workspaceId).compactMap { $0.paneId })
         let allUntracked = untrackedSessions(for: workspacePath, trackedPaneIds: trackedPaneIds)
         let sessionsToRecover = allUntracked.filter { $0.canRecover }
@@ -215,7 +275,15 @@ final class SessionRecoveryService {
         for session in sessionsToRecover {
             guard let port = session.port, let paneId = session.axelPaneId else { continue }
 
-            print("[SessionRecovery] Recovering \(session.name.prefix(8))... on port \(port)")
+            // Determine worktree branch from session's working directory
+            let branch: String?
+            if let sessionDir = session.workingDir, let wsPath = workspacePath {
+                branch = worktreeBranch(forSessionPath: sessionDir, workspacePath: wsPath)
+            } else {
+                branch = nil
+            }
+
+            print("[SessionRecovery] Recovering \(session.name.prefix(8))... on port \(port)\(branch.map { " (worktree: \($0))" } ?? "")")
 
             // Connect InboxService to the existing server port
             InboxService.shared.connect(paneId: paneId, port: Int(port))
@@ -231,7 +299,7 @@ final class SessionRecoveryService {
                 command: command,
                 workingDirectory: workspacePath,
                 workspaceId: workspaceId,
-                worktreeBranch: nil,
+                worktreeBranch: branch,
                 provider: .claude
             )
             print("[SessionRecovery] Created session \(newSession.id) for pane \(paneId)")
@@ -273,7 +341,7 @@ final class SessionRecoveryService {
         []
     }
 
-    func recoverUntrackedSessions(for workspacePath: String?, workspaceId: UUID, sessionManager: TerminalSessionManager) {
+    func recoverUntrackedSessions(for workspacePath: String?, workspaceId: UUID, sessionManager: TerminalSessionManager) async {
         // No-op on iOS/visionOS
     }
 }

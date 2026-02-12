@@ -34,7 +34,6 @@ struct WorkspaceContentView: View {
     @State private var authService = AuthService.shared
     @State private var syncService = SyncService.shared
     @State private var selectedSession: TerminalSession?
-    @State private var selectedInboxEvent: InboxEvent?
     @State private var selectedMember: OrganizationMember?
     @State private var selectedRecoveredSession: RecoveredSession?
     @State private var showCloseTerminalConfirmation = false
@@ -44,7 +43,6 @@ struct WorkspaceContentView: View {
     @State private var agentPickerMode: AgentPickerMode?
     @State private var floatingSession: TerminalSession?
     @State private var skillsColumnWidth: CGFloat = 280
-    @State private var inboxColumnWidth: CGFloat = 280
     @State private var terminalsColumnWidth: CGFloat = 280
     @State private var teamColumnWidth: CGFloat = 280
     @State private var contextColumnWidth: CGFloat = 280
@@ -327,7 +325,7 @@ struct WorkspaceContentView: View {
     ///   - task: Optional task to run on the new terminal
     ///   - worktreeBranch: Optional git worktree branch to use (nil = main workspace)
     ///   - gridName: Optional grid name to launch (nil = single pane)
-    private func createNewTerminal(for task: WorkTask? = nil, worktreeBranch: String? = nil, provider: AIProvider = .claude, gridName: String? = nil) {
+    private func createNewTerminal(for task: WorkTask? = nil, worktreeBranch: String? = nil, provider: AIProvider = .claude, gridName: String? = nil, isolate: Bool = false, reviewPostCompletion: Bool = false) {
         // Update task status if provided
         task?.updateStatus(.running)
 
@@ -346,6 +344,8 @@ struct WorkspaceContentView: View {
         terminal.workspace = workspace
         terminal.status = TerminalStatus.running.rawValue
         terminal.provider = provider
+        terminal.isIsolated = isolate
+        terminal.parentWorktreeBranch = isolate ? worktreeBranch : nil
         modelContext.insert(terminal)
 
         // Check if workspace needs initialization (no AXEL.md)
@@ -375,6 +375,17 @@ struct WorkspaceContentView: View {
             command += " --worktree \(branch.shellEscaped)"
         }
 
+        // Add isolation flags
+        if isolate {
+            command += " --isolate --allow-dirty"
+        }
+        if reviewPostCompletion {
+            command += " --review-post-completion"
+        }
+
+        // Always enable verbose logging for debugging
+        command += " --verbose"
+
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
@@ -384,6 +395,12 @@ struct WorkspaceContentView: View {
                 let fileUrls = task.attachments.map { $0.fileUrl }.joined(separator: ", ")
                 prompt += "\n\nAttached files: \(fileUrls)"
             }
+
+            // Add versioning prompt when review-post-completion is enabled
+            if reviewPostCompletion {
+                prompt += "\n\nWhen you complete this task, provide a commit summary following conventional commits:\n- Type: feat, fix, refactor, docs, test, chore, etc.\n- A short summary (max 72 chars)\n- A detailed description of what changed and why\n\nFormat your summary as:\nVERSIONING: {\"versioningMessage\": \"<type>: <summary>\", \"versioningDescription\": \"<description>\"}"
+            }
+
             command += " --prompt \(prompt.shellEscaped)"
         }
 
@@ -473,7 +490,6 @@ struct WorkspaceContentView: View {
         case .optimizations(.context): return contextColumnWidth
         case .terminals: return terminalsColumnWidth
         case .team: return teamColumnWidth
-        case .inbox, .none: return inboxColumnWidth
         default: return 280
         }
     }
@@ -484,8 +500,7 @@ struct WorkspaceContentView: View {
         case .optimizations(.context): return $contextColumnWidth
         case .terminals: return $terminalsColumnWidth
         case .team: return $teamColumnWidth
-        case .inbox, .none: return $inboxColumnWidth
-        default: return $inboxColumnWidth
+        default: return $skillsColumnWidth
         }
     }
 
@@ -515,6 +530,8 @@ struct WorkspaceContentView: View {
                 )
             }
             .background(.clear)
+        case .inbox:
+            InboxSceneView()
         default:
             HStack(spacing: 0) {
                 listColumnView
@@ -557,8 +574,8 @@ struct WorkspaceContentView: View {
             )
         case .team:
             TeamListView(selectedMember: $selectedMember)
-        case .inbox, .none:
-            InboxView(selection: $selectedInboxEvent)
+        case .none:
+            EmptyView()
         default:
             EmptyView()
         }
@@ -605,15 +622,11 @@ struct WorkspaceContentView: View {
             } else {
                 EmptyTeamSelectionView()
             }
-        case .inbox, .none:
-            if let event = selectedInboxEvent {
-                InboxEventDetailView(event: event, selection: $selectedInboxEvent)
-            } else {
-                ContentUnavailableView {
-                    Label("Activity", systemImage: "bolt.fill")
-                } description: {
-                    Text("Select an event to see details")
-                }
+        case .none:
+            ContentUnavailableView {
+                Label("Activity", systemImage: "bolt.fill")
+            } description: {
+                Text("Select a section from the sidebar")
             }
         default:
             EmptyView()
@@ -723,8 +736,8 @@ struct WorkspaceContentView: View {
                 showTerminal: $showTerminal,
                 onStartTerminal: { task in startTerminal(for: task) },
                 onAssignTask: assignTaskToWorker,
-                onCreateNewTerminal: { task, provider, gridName in createNewTerminal(for: task, provider: provider, gridName: gridName) },
-                onCreateWorktreeTerminal: { task, branch, provider, gridName in createNewTerminal(for: task, worktreeBranch: branch, provider: provider, gridName: gridName) }
+                onCreateNewTerminal: { task, provider, gridName in createNewTerminal(for: task, provider: provider, gridName: gridName, isolate: true, reviewPostCompletion: true) },
+                onCreateWorktreeTerminal: { task, branch, provider, gridName in createNewTerminal(for: task, worktreeBranch: branch, provider: provider, gridName: gridName, isolate: true, reviewPostCompletion: true) }
             ))
             .overlay(alignment: .bottomTrailing) { floatingTerminalOverlay }
             .modifier(WorkspaceLifecycleModifier(
@@ -750,7 +763,7 @@ struct WorkspaceContentView: View {
                 modelContext: modelContext,
                 onConsumeNextTask: consumeNextQueuedTask,
                 onCreateTerminal: { task, worktree, provider in
-                    createNewTerminal(for: task, worktreeBranch: worktree, provider: provider)
+                    createNewTerminal(for: task, worktreeBranch: worktree, provider: provider, isolate: true, reviewPostCompletion: true)
                 }
             ))
     }
@@ -961,7 +974,7 @@ private struct WorkspaceLifecycleModifier: ViewModifier {
                 // Discover and recover existing tmux sessions for this workspace
                 // Run independently of sync to avoid blocking on slow/failed connections
                 await SessionRecoveryService.shared.discoverSessions()
-                SessionRecoveryService.shared.recoverUntrackedSessions(
+                await SessionRecoveryService.shared.recoverUntrackedSessions(
                     for: workspace.path,
                     workspaceId: workspace.id,
                     sessionManager: sessionManager

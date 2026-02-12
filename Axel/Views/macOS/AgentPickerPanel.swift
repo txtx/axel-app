@@ -253,8 +253,8 @@ struct AgentPickerPanel: View {
         var items: [AgentPickerItem] = []
         items.append(.newWorktree)
         items.append(.mainWorktree)
-        // Add existing worktrees (excluding main)
-        for wt in worktrees where !wt.isMain {
+        // Add existing worktrees (excluding main and axel-tmp/ worktrees)
+        for wt in worktrees where !wt.isMain && !(wt.branch?.hasPrefix("axel-tmp/") ?? false) {
             items.append(.worktree(wt))
         }
         return items

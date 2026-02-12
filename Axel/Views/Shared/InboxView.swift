@@ -403,7 +403,11 @@ struct InboxEventListRow: View {
 
 // MARK: - Inbox Event Detail View (for detail column)
 
-/// Detail view for a selected inbox event
+/// Detail view for a selected inbox event.
+///
+/// Uses `resolvedPaneId` (OTEL-corrected) for all pane-dependent operations:
+/// terminal lookup, task queue, cost tracking, and response targeting.
+/// See `InboxService` class documentation for why raw `event.paneId` is unreliable.
 struct InboxEventDetailView: View {
     let event: InboxEvent
     @Binding var selection: InboxEvent?
@@ -454,6 +458,11 @@ struct InboxEventDetailView: View {
         inboxService.isResolved(event.id)
     }
 
+    /// The OTEL-corrected pane ID for this event (hooks may deliver wrong paneId)
+    private var resolvedPaneId: String {
+        inboxService.resolvedPaneId(for: event)
+    }
+
     /// Send permission response with selected option
     private func sendPermissionResponse(option: PermissionOption) {
         guard let sessionId = event.event.claudeSessionId else {
@@ -466,7 +475,7 @@ struct InboxEventDetailView: View {
                 try await inboxService.sendPermissionResponse(
                     sessionId: sessionId,
                     option: option,
-                    paneId: event.paneId
+                    paneId: resolvedPaneId
                 )
                 await MainActor.run {
                     inboxService.resolveEvent(event.id)
@@ -484,16 +493,47 @@ struct InboxEventDetailView: View {
     /// The current task on this terminal (for marking complete)
     @State private var currentTask: WorkTask?
 
-    /// Fetch task context and related data
-    private func fetchEventData() {
-        let paneId = event.paneId
+    /// Whether the terminal is isolated (for commit review UI)
+    @State private var isIsolatedTerminal: Bool = false
 
-        // Fetch permission request events from the same pane (in-memory)
+    /// Commits for the current event (from worktree_commits in Stop payload, or paneId fallback)
+    private var commitsForEvent: [FileCommit] {
+        // Prefer event-level commits (attached to Stop event by CLI)
+        let eventLevel = inboxService.eventCommits[event.id] ?? []
+        let paneLevel = inboxService.committedFiles[resolvedPaneId] ?? []
+        print("[InboxView] commitsForEvent: eventId=\(event.id) eventLevel=\(eventLevel.count) paneLevel=\(paneLevel.count) resolvedPaneId=\(resolvedPaneId.prefix(8)) allEventCommitKeys=\(inboxService.eventCommits.count)")
+        if !eventLevel.isEmpty {
+            return eventLevel
+        }
+        return paneLevel
+    }
+
+    /// Commit message for worktree completion (editable)
+    @State private var commitMessage: String = ""
+
+    /// Commit description for worktree completion (editable)
+    @State private var commitDescription: String = ""
+
+    /// Whether worktree completion is in progress
+    @State private var isCompletingWorktree: Bool = false
+
+    /// Error from worktree completion
+    @State private var worktreeCompleteError: String?
+
+    /// Fetch task context and related data.
+    /// Uses OTEL-corrected paneId for terminal lookups and permission grouping.
+    private func fetchEventData() {
+        let paneId = resolvedPaneId
+
+        // Fetch permission request events from the same session (group by sessionId, not paneId)
+        let sessionId = event.event.claudeSessionId
         permissionEvents = inboxService.events.filter { evt in
-            evt.paneId == paneId && evt.event.hookEventName == "PermissionRequest"
+            let matchesSession = sessionId != nil && evt.event.claudeSessionId == sessionId
+            let matchesPane = inboxService.resolvedPaneId(for: evt) == paneId
+            return (matchesSession || matchesPane) && evt.event.hookEventName == "PermissionRequest"
         }
 
-        // Fetch terminal by paneId
+        // Fetch terminal by resolved paneId
         var terminalDescriptor = FetchDescriptor<Terminal>()
         terminalDescriptor.predicate = #Predicate<Terminal> { terminal in
             terminal.paneId == paneId
@@ -503,9 +543,15 @@ struct InboxEventDetailView: View {
             // Get task and title
             currentTask = terminal.task
             taskTitle = terminal.task?.title
+            isIsolatedTerminal = terminal.isIsolated
 
             // Get workspace from task or terminal
             eventWorkspace = terminal.task?.workspace ?? terminal.workspace
+
+            // Pre-fill commit message from task title if isolated
+            if terminal.isIsolated && commitMessage.isEmpty {
+                commitMessage = terminal.task?.title ?? "chore: task changes"
+            }
 
             // Only fetch hints for completion events
             guard isCompletionEvent else { return }
@@ -544,8 +590,8 @@ struct InboxEventDetailView: View {
             }
         }
 
-        // Fetch task cost segments from CostTracker (use paneId)
-        if let tracker = costTracker.taskTracker(forPaneId: event.paneId) {
+        // Fetch task cost segments from CostTracker (use resolved paneId)
+        if let tracker = costTracker.taskTracker(forPaneId: resolvedPaneId) {
             taskSegments = tracker.segments
         }
     }
@@ -591,33 +637,60 @@ struct InboxEventDetailView: View {
                         nextTasksSection
                     }
 
+                    // Commit review section - show when there are committed files
+                    // Prefer event-level commits (worktree_commits from Stop payload) over paneId-based lookup
+                    if isCompletionEvent && !isResolved && !commitsForEvent.isEmpty {
+                        Divider()
+                        commitReviewSection
+                    }
+
                     // Confirm button for completion events (after queue section)
                     if isCompletionEvent && !isResolved {
+                        if let error = worktreeCompleteError {
+                            HStack(spacing: 6) {
+                                Image(systemName: "exclamationmark.triangle.fill")
+                                    .foregroundStyle(.red)
+                                Text(error)
+                                    .font(.caption)
+                                    .foregroundStyle(.red)
+                            }
+                            .padding(.horizontal)
+                        }
+
                         HStack {
                             Spacer()
-                            Button {
-                                // Resolve the current event
-                                inboxService.resolveEvent(event.id)
-
-                                // Mark the current task as completed
-                                if let task = currentTask {
-                                    task.updateStatus(.completed)
-                                    try? modelContext.save()
+                            if isIsolatedTerminal {
+                                // Isolated terminal: Complete & Merge button
+                                Button {
+                                    completeIsolatedWorktree()
+                                } label: {
+                                    if isCompletingWorktree {
+                                        ProgressView()
+                                            .controlSize(.small)
+                                            .padding(.trailing, 4)
+                                        Text("Merging...")
+                                    } else {
+                                        Label(
+                                            nextQueuedTasks.isEmpty ? "Complete & Merge" : "Merge and Continue",
+                                            systemImage: "arrow.triangle.merge"
+                                        )
+                                    }
                                 }
-
-                                // Trigger queue consumption via notification
-                                // This will dequeue and start the next task if one is queued
-                                #if os(macOS)
-                                inboxService.confirmTaskCompletion(forPaneId: event.paneId)
-                                #endif
-
-                                selection = nil
-                            } label: {
-                                Label(nextQueuedTasks.isEmpty ? "Mark Completed" : "Complete and Continue", systemImage: nextQueuedTasks.isEmpty ? "checkmark.circle.fill" : "arrow.right.circle.fill")
+                                .buttonStyle(.borderedProminent)
+                                .tint(.purple)
+                                .controlSize(.large)
+                                .disabled(isCompletingWorktree || commitMessage.isEmpty)
+                            } else {
+                                // Standard terminal: Mark Completed button
+                                Button {
+                                    markCompleted()
+                                } label: {
+                                    Label(nextQueuedTasks.isEmpty ? "Mark Completed" : "Complete and Continue", systemImage: nextQueuedTasks.isEmpty ? "checkmark.circle.fill" : "arrow.right.circle.fill")
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .tint(nextQueuedTasks.isEmpty ? .green : .blue)
+                                .controlSize(.large)
                             }
-                            .buttonStyle(.borderedProminent)
-                            .tint(nextQueuedTasks.isEmpty ? .green : .blue)
-                            .controlSize(.large)
                         }
                     }
 
@@ -676,7 +749,7 @@ struct InboxEventDetailView: View {
         .onAppear {
             fetchEventData()
         }
-        .onChange(of: taskQueueService.terminalQueues[event.paneId]) { _, _ in
+        .onChange(of: taskQueueService.terminalQueues[resolvedPaneId]) { _, _ in
             // Refresh queued tasks when the queue changes
             refreshQueuedTasks()
         }
@@ -686,7 +759,7 @@ struct InboxEventDetailView: View {
     private func refreshQueuedTasks() {
         guard isCompletionEvent else { return }
 
-        let paneId = event.paneId
+        let paneId = resolvedPaneId
         let queuedTaskIds = taskQueueService.tasksQueued(onTerminal: paneId)
 
         guard !queuedTaskIds.isEmpty else {
@@ -909,7 +982,164 @@ struct InboxEventDetailView: View {
         nextQueuedTasks.insert(movedTask, at: insertIndex)
 
         // Persist the reorder in TaskQueueService
-        taskQueueService.reorder(taskId: movedTask.id, toIndex: insertIndex, inTerminal: event.paneId)
+        taskQueueService.reorder(taskId: movedTask.id, toIndex: insertIndex, inTerminal: resolvedPaneId)
+    }
+
+    // MARK: - Commit Review Section (Isolated Worktrees)
+
+    @State private var expandedCommits: Set<UUID> = []
+
+    @ViewBuilder
+    private var commitReviewSection: some View {
+        let commits = commitsForEvent
+
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "arrow.triangle.merge")
+                    .foregroundStyle(.purple)
+                Text("Changes")
+                    .font(.headline)
+                Spacer()
+                Text("\(commits.count) file\(commits.count == 1 ? "" : "s") changed")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            // List of committed files with expandable diffs
+            if !commits.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(commits) { commit in
+                        VStack(alignment: .leading, spacing: 0) {
+                            // File row - tap to expand
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if expandedCommits.contains(commit.id) {
+                                        expandedCommits.remove(commit.id)
+                                    } else {
+                                        expandedCommits.insert(commit.id)
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: expandedCommits.contains(commit.id) ? "chevron.down" : "chevron.right")
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 12)
+                                        .font(.caption2)
+
+                                    Image(systemName: commit.toolName == "Write" ? "plus.circle.fill" : "pencil.circle.fill")
+                                        .foregroundStyle(commit.toolName == "Write" ? .green : .orange)
+                                        .frame(width: 16)
+
+                                    Text(commit.displayName)
+                                        .font(.system(.subheadline, design: .monospaced))
+                                        .lineLimit(1)
+
+                                    Spacer()
+
+                                    Text(commit.commitHash)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 8)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            // Expanded diff view
+                            if expandedCommits.contains(commit.id) && !commit.diff.isEmpty {
+                                RawDiffView(diff: commit.diff)
+                                    .padding(.horizontal, 8)
+                                    .padding(.bottom, 8)
+                            }
+
+                            if commit.id != commits.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+                .background(Color.primary.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                )
+            }
+
+            // Editable commit message
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Commit Message")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                TextField("feat: add new feature", text: $commitMessage)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+
+                TextField("Detailed description (optional)", text: $commitDescription, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                    .font(.system(.caption, design: .monospaced))
+            }
+        }
+    }
+
+    /// Mark a standard (non-isolated) task as completed
+    private func markCompleted() {
+        inboxService.resolveEvent(event.id)
+
+        if let task = currentTask {
+            task.updateStatus(.completed)
+            try? modelContext.save()
+        }
+
+        #if os(macOS)
+        inboxService.confirmTaskCompletion(forPaneId: resolvedPaneId)
+        #endif
+
+        selection = nil
+    }
+
+    /// Complete an isolated worktree by squash-merging to parent
+    private func completeIsolatedWorktree() {
+        isCompletingWorktree = true
+        worktreeCompleteError = nil
+
+        Task {
+            do {
+                let _ = try await inboxService.completeWorktree(
+                    forPaneId: resolvedPaneId,
+                    commitMessage: commitMessage,
+                    commitDescription: commitDescription
+                )
+
+                await MainActor.run {
+                    isCompletingWorktree = false
+
+                    // Resolve the event
+                    inboxService.resolveEvent(event.id)
+
+                    // Mark task completed
+                    if let task = currentTask {
+                        task.updateStatus(.completed)
+                        try? modelContext.save()
+                    }
+
+                    // Trigger queue consumption
+                    #if os(macOS)
+                    inboxService.confirmTaskCompletion(forPaneId: resolvedPaneId)
+                    #endif
+
+                    selection = nil
+                }
+            } catch {
+                await MainActor.run {
+                    isCompletingWorktree = false
+                    worktreeCompleteError = error.localizedDescription
+                }
+            }
+        }
     }
 
     @ViewBuilder
@@ -1699,6 +1929,55 @@ struct ToolDataView: View {
 }
 
 // MARK: - Previews
+
+// MARK: - Diff View
+
+/// Renders a unified diff with syntax-colored +/- lines
+private struct RawDiffView: View {
+    let diff: String
+
+    var body: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(diffLines.enumerated()), id: \.offset) { _, line in
+                    Text(line.text)
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(line.color)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 1)
+                        .background(line.background)
+                }
+            }
+        }
+        .frame(maxHeight: 300)
+        .background(Color(.textBackgroundColor).opacity(0.5))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+    }
+
+    private var diffLines: [RawDiffLine] {
+        diff.split(separator: "\n", omittingEmptySubsequences: false).map { line in
+            let text = String(line)
+            if text.hasPrefix("+++") || text.hasPrefix("---") {
+                return RawDiffLine(text: text, color: .secondary, background: .clear)
+            } else if text.hasPrefix("@@") {
+                return RawDiffLine(text: text, color: .purple, background: Color.purple.opacity(0.05))
+            } else if text.hasPrefix("+") {
+                return RawDiffLine(text: text, color: .green, background: Color.green.opacity(0.08))
+            } else if text.hasPrefix("-") {
+                return RawDiffLine(text: text, color: .red, background: Color.red.opacity(0.08))
+            } else {
+                return RawDiffLine(text: text, color: .primary.opacity(0.6), background: .clear)
+            }
+        }
+    }
+}
+
+private struct RawDiffLine {
+    let text: String
+    let color: Color
+    let background: Color
+}
 
 #Preview("Inbox - Card Stack") {
     @Previewable @State var selection: InboxEvent? = nil

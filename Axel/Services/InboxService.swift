@@ -3,7 +3,38 @@ import SwiftData
 import UserNotifications
 
 /// Service that connects to the axel server's SSE /inbox endpoint
-/// and streams Claude Code hook events to the app
+/// and streams Claude Code hook events to the app.
+///
+/// ## Architecture
+///
+/// Each terminal in a workspace gets its own axel-cli event server on a unique port
+/// (starting at 4318, incrementing per terminal). This service connects to each
+/// terminal's SSE endpoint independently and merges all events into a single `events` array.
+///
+/// ## The Shared Hooks Problem
+///
+/// Claude Code hooks are configured in `.claude/settings.json` at the **workspace level**.
+/// This file is shared by ALL Claude instances in the workspace. When axel creates a new
+/// terminal, it writes hooks pointing to that terminal's server (port + pane_id), **overwriting**
+/// the hooks from previous terminals.
+///
+/// This means ALL hook events (PermissionRequest, Stop, etc.) arrive at the **last terminal's**
+/// server with the **last terminal's pane_id** — regardless of which Claude session triggered them.
+///
+/// ## OTEL-Based Correction
+///
+/// Unlike hooks, OTEL telemetry uses per-process environment variables
+/// (`OTEL_EXPORTER_OTLP_METRICS_ENDPOINT`) that include the correct pane_id in the URL path.
+/// These are set at process start time and can't be overwritten by other terminals.
+///
+/// The `CostTracker` builds a reliable `sessionId → paneId` mapping from OTEL data.
+/// We use `resolvedPaneId(for:)` to correct wrong pane_ids everywhere in the system.
+///
+/// ## Key Invariant
+///
+/// **Never use `event.paneId` directly for routing or per-terminal logic.**
+/// Always use `resolvedPaneId(for:)` or `CostTracker.shared.paneId(forSessionId:)`.
+/// The raw `event.paneId` is only reliable for the last terminal created.
 @MainActor
 @Observable
 final class InboxService {
@@ -24,6 +55,13 @@ final class InboxService {
     /// Pending Stop events waiting for OTEL metrics (eventID -> sessionID)
     private var pendingStopEvents: [(eventId: UUID, sessionId: String, timestamp: Date)] = []
 
+    /// File commits tracked per pane (for review-post-completion mode, from individual file_committed events)
+    private(set) var committedFiles: [String: [FileCommit]] = [:]
+
+    /// File commits attached to Stop events (from worktree_commits in the event payload).
+    /// Keyed by event ID to avoid paneId mismatch issues.
+    private(set) var eventCommits: [UUID: [FileCommit]] = [:]
+
     /// Last snapshot values per session (for computing deltas)
     private var lastSnapshotValues: [String: MetricsSnapshot] = [:]
 
@@ -33,15 +71,19 @@ final class InboxService {
     /// Last Stop event ID per session (for auto-resolving)
     private var lastStopEventPerSession: [String: UUID] = [:]
 
-    /// Last PermissionRequest event ID per session (for auto-resolving)
+    /// Last PermissionRequest event ID per session (for auto-resolving).
+    /// **Keyed by claudeSessionId** (not paneId) to avoid cross-session interference
+    /// from the shared .claude/settings.json hooks problem.
     private var lastPermissionRequestPerSession: [String: UUID] = [:]
 
-    /// Token snapshot at time of permission request (paneId -> total tokens at request time)
-    /// Used to avoid auto-resolving based on stale OTEL data from before the request
+    /// Token snapshot at time of permission request (sessionId -> total tokens at request time).
+    /// Used to avoid auto-resolving based on stale OTEL data from before the request.
+    /// **Keyed by claudeSessionId** (not paneId).
     private var permissionRequestTokenSnapshot: [String: Int] = [:]
 
-    /// Timestamp when permission request arrived (paneId -> timestamp)
-    /// Used to add a time delay before auto-resolving
+    /// Timestamp when permission request arrived (sessionId -> timestamp).
+    /// Used to add a time delay before auto-resolving.
+    /// **Keyed by claudeSessionId** (not paneId).
     private var permissionRequestTimestamp: [String: Date] = [:]
 
     /// Minimum token increase required to auto-resolve a permission request
@@ -152,7 +194,7 @@ final class InboxService {
 
         // For permission requests, try to get the task title
         if event.event.hookEventName == "PermissionRequest" {
-            let taskTitle = getTaskTitle(forPaneId: event.paneId)
+            let taskTitle = getTaskTitle(forPaneId: resolvedPaneId(for: event))
             content.title = taskTitle ?? "Permission Required"
             content.categoryIdentifier = "PERMISSION_REQUEST"
         } else {
@@ -166,10 +208,11 @@ final class InboxService {
         content.sound = .default
 
         // Add event info to userInfo for handling taps and actions
+        // Use resolved paneId (OTEL-corrected) so notification actions target the right terminal
         var userInfo: [String: String] = [
             "eventId": event.id.uuidString,
             "eventType": event.eventType,
-            "paneId": event.paneId
+            "paneId": resolvedPaneId(for: event)
         ]
 
         if let sessionId = event.event.claudeSessionId {
@@ -374,14 +417,65 @@ final class InboxService {
         )
         print("[InboxService] Task completion confirmed for pane \(paneId.prefix(8))... - triggering queue consumption")
     }
+
+    /// Complete an isolated worktree by squash-merging commits to the parent worktree.
+    /// Calls the /worktree/complete endpoint on the terminal's server.
+    func completeWorktree(
+        forPaneId paneId: String,
+        commitMessage: String,
+        commitDescription: String
+    ) async throws -> WorktreeCompleteResponse {
+        guard let port = panePortMapping[paneId] else {
+            throw InboxServiceError.connectionFailed
+        }
+
+        let url = URL(string: "http://localhost:\(port)/worktree/complete")!
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+
+        let body: [String: String] = [
+            "commit_message": commitMessage,
+            "commit_description": commitDescription,
+        ]
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+
+        let (data, response) = try await URLSession.shared.data(for: request)
+
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw InboxServiceError.invalidResponse
+        }
+
+        guard httpResponse.statusCode == 200 else {
+            let errorBody = String(data: data, encoding: .utf8) ?? "Unknown error"
+            print("[InboxService] Worktree complete failed: \(errorBody)")
+            throw InboxServiceError.httpError(statusCode: httpResponse.statusCode)
+        }
+
+        let result = try JSONDecoder().decode(WorktreeCompleteResponse.self, from: data)
+
+        // Clear committed files for this pane after successful merge
+        committedFiles.removeValue(forKey: paneId)
+
+        print("[InboxService] Worktree completed: \(result.commit_hash) (\(result.files_changed.count) files)")
+        return result
+    }
     #endif
+
+    /// Resolve the correct paneId for an event.
+    /// Hook events may arrive with the wrong paneId due to shared .claude/settings.json.
+    /// Uses OTEL-derived session→pane mapping from CostTracker for correction.
+    func resolvedPaneId(for event: InboxEvent) -> String {
+        guard let sessionId = event.event.claudeSessionId else { return event.paneId }
+        return CostTracker.shared.paneId(forSessionId: sessionId) ?? event.paneId
+    }
 
     /// Set of pane IDs that have pending (unresolved) permission requests
     var blockedPaneIds: Set<String> {
         var blocked = Set<String>()
         for event in events {
             if event.event.hookEventName == "PermissionRequest" && !resolvedEventIds.contains(event.id) {
-                blocked.insert(event.paneId)
+                blocked.insert(resolvedPaneId(for: event))
             }
         }
         return blocked
@@ -389,13 +483,13 @@ final class InboxService {
 
     /// Count of unresolved events for a specific pane
     func unresolvedEventCount(forPaneId paneId: String) -> Int {
-        events.filter { $0.paneId == paneId && !resolvedEventIds.contains($0.id) }.count
+        events.filter { resolvedPaneId(for: $0) == paneId && !resolvedEventIds.contains($0.id) }.count
     }
 
     /// Count of unresolved permission requests for a specific pane
     func unresolvedPermissionRequestCount(forPaneId paneId: String) -> Int {
         events.filter {
-            $0.paneId == paneId &&
+            resolvedPaneId(for: $0) == paneId &&
             $0.event.hookEventName == "PermissionRequest" &&
             !resolvedEventIds.contains($0.id)
         }.count
@@ -403,21 +497,26 @@ final class InboxService {
 
     /// Clear all events for a specific pane (resolve them and remove from list)
     func clearEventsForPane(_ paneId: String) {
-        // Mark all events for this pane as resolved
-        for event in events where event.paneId == paneId {
+        // Mark all events for this pane as resolved (using resolved paneId comparison)
+        for event in events where resolvedPaneId(for: event) == paneId {
             resolvedEventIds.insert(event.id)
         }
         // Remove events for this pane from the list
-        events.removeAll { $0.paneId == paneId }
-        // Clean up related tracking state
-        lastStopEventPerSession = lastStopEventPerSession.filter { _, eventId in
-            !events.contains { $0.id == eventId && $0.paneId == paneId }
+        events.removeAll { resolvedPaneId(for: $0) == paneId }
+        // Clean up related tracking state (keys are now sessionId-based)
+        lastStopEventPerSession = lastStopEventPerSession.filter { sessionId, _ in
+            CostTracker.shared.paneId(forSessionId: sessionId) != paneId
         }
-        lastPermissionRequestPerSession = lastPermissionRequestPerSession.filter { _, eventId in
-            !events.contains { $0.id == eventId && $0.paneId == paneId }
+        lastPermissionRequestPerSession = lastPermissionRequestPerSession.filter { sessionId, _ in
+            CostTracker.shared.paneId(forSessionId: sessionId) != paneId
         }
-        permissionRequestTokenSnapshot.removeValue(forKey: paneId)
-        permissionRequestTimestamp.removeValue(forKey: paneId)
+        // Clean up token snapshots/timestamps for sessions mapped to this pane
+        for (sessionId, _) in permissionRequestTokenSnapshot {
+            if CostTracker.shared.paneId(forSessionId: sessionId) == paneId {
+                permissionRequestTokenSnapshot.removeValue(forKey: sessionId)
+                permissionRequestTimestamp.removeValue(forKey: sessionId)
+            }
+        }
         print("[InboxService] Cleared all events for pane \(paneId.prefix(8))...")
     }
 
@@ -441,6 +540,11 @@ final class InboxService {
 
     // MARK: - SSE Streaming
 
+    /// Connect to a terminal's SSE `/inbox` endpoint and stream events.
+    ///
+    /// Reads the byte stream line-by-line, accumulating SSE `data:` fields until
+    /// a double-newline delimiter signals a complete event. Auto-reconnects with
+    /// a 5-second backoff on disconnection.
     private func streamEvents(paneId: String, port: Int) async {
         let inboxURL = URL(string: "http://localhost:\(port)/inbox")!
         print("[InboxService] Connecting to \(inboxURL)")
@@ -525,6 +629,24 @@ final class InboxService {
         }
     }
 
+    /// Parse a raw JSON string from SSE and add it to the events array.
+    ///
+    /// ## Event Types
+    /// - `metrics_update`: Parsed OTEL data from the CLI. Updates token counts and costs.
+    /// - `unknown_hook` (with `hook_event_name`): Claude Code hook events.
+    ///   The Rust server can't parse `hook_event_name` from Claude's JSON so it labels
+    ///   the event type as `"unknown_hook"`, but the raw payload (with `hook_event_name`
+    ///   intact) is forwarded to us. We parse it as `InboxEvent` successfully.
+    ///
+    /// ## PermissionRequest Handling
+    /// - Keyed by `claudeSessionId` to avoid cross-session interference
+    /// - Auto-resolves previous permission request from the same session
+    /// - Snapshots token count + timestamp for delayed auto-resolve via OTEL activity
+    ///
+    /// ## Stop Event Handling
+    /// - Auto-resolves previous Stop and all pending permissions for the session
+    /// - Only shows completion screen if the terminal has a running task
+    /// - Queues for OTEL metrics snapshot (metrics arrive ~10s after Stop)
     private func parseAndAddEvent(_ jsonString: String) {
         guard let data = jsonString.data(using: .utf8) else {
             print("[InboxService] Failed to convert string to data")
@@ -542,6 +664,35 @@ final class InboxService {
         if eventType == "metrics_update" {
             let paneId = json["pane_id"] as? String
             handleMetricsUpdate(json, paneId: paneId)
+            return
+        }
+
+        // Handle file_committed events (from review-post-completion mode)
+        if eventType == "file_committed" {
+            if let paneId = json["pane_id"] as? String,
+               let eventData = json["event"] as? [String: Any] {
+                let commit = FileCommit(
+                    commitHash: eventData["commit_hash"] as? String ?? "",
+                    filePath: eventData["file_path"] as? String ?? "",
+                    message: eventData["message"] as? String ?? "",
+                    toolName: eventData["tool_name"] as? String ?? "",
+                    diff: eventData["diff"] as? String ?? "",
+                    timestamp: Date()
+                )
+                // Store under both raw paneId and all known resolved paneIds for this server.
+                // The Stop event may resolve to a different paneId due to OTEL session mapping.
+                var storedPaneIds = Set([paneId])
+                // Also store under paneIds that map to this server's connection
+                for (connPaneId, _) in activeConnections where connPaneId == paneId {
+                    storedPaneIds.insert(connPaneId)
+                }
+                for id in storedPaneIds {
+                    var paneCommits = committedFiles[id] ?? []
+                    paneCommits.append(commit)
+                    committedFiles[id] = paneCommits
+                }
+                print("[InboxService] File committed: \(commit.displayName) (\(commit.commitHash)) on pane \(paneId.prefix(8))")
+            }
             return
         }
 
@@ -573,36 +724,41 @@ final class InboxService {
 
             // Track permission requests for step tracking and auto-resolve previous ones
             if event.event.hookEventName == "PermissionRequest" {
-                let paneId = event.paneId
+                // Use claudeSessionId as the tracking key (not paneId) because
+                // .claude/settings.json hooks are workspace-wide: all events
+                // arrive with the last terminal's paneId, so using paneId would
+                // cause different sessions' permission requests to auto-resolve each other.
+                let sessionKey = event.event.claudeSessionId ?? event.paneId
+                let resolvedPaneId = CostTracker.shared.paneId(forSessionId: sessionKey) ?? event.paneId
 
-                // Auto-resolve previous permission request from this pane
-                if let previousEventId = lastPermissionRequestPerSession[paneId] {
+                // Auto-resolve previous permission request from this session
+                if let previousEventId = lastPermissionRequestPerSession[sessionKey] {
                     resolvedEventIds.insert(previousEventId)
                 }
-                lastPermissionRequestPerSession[paneId] = event.id
+                lastPermissionRequestPerSession[sessionKey] = event.id
 
                 // Use claudeSessionId for metrics if available, otherwise paneId
-                let metricsId = event.event.claudeSessionId ?? paneId
+                let metricsId = event.event.claudeSessionId ?? event.paneId
                 let metrics = self.metrics(for: metricsId)
 
                 // Snapshot current token count and timestamp for auto-resolve logic
-                permissionRequestTokenSnapshot[paneId] = metrics.inputTokens + metrics.outputTokens
-                permissionRequestTimestamp[paneId] = Date()
+                permissionRequestTokenSnapshot[sessionKey] = metrics.inputTokens + metrics.outputTokens
+                permissionRequestTimestamp[sessionKey] = Date()
 
                 metrics.recordPermissionRequest(
                     toolName: event.event.toolName ?? "Unknown",
                     filePath: event.event.toolInput?["file_path"]?.value as? String
                 )
 
-                // Update CostTracker with permission request (use paneId)
+                // Update CostTracker with permission request (use resolved paneId)
                 CostTracker.shared.recordPermissionRequest(
-                    forPaneId: paneId,
+                    forPaneId: resolvedPaneId,
                     toolName: event.event.toolName,
                     filePath: event.event.toolInput?["file_path"]?.value as? String
                 )
 
-                // Persist as Hint for Supabase sync (use paneId to find terminal)
-                persistPermissionRequestAsHint(event: event, paneId: paneId)
+                // Persist as Hint for Supabase sync
+                persistPermissionRequestAsHint(event: event, paneId: resolvedPaneId)
             }
 
             // Queue Stop events to wait for OTEL metrics (which arrive ~10s later)
@@ -615,10 +771,8 @@ final class InboxService {
                 }
                 lastStopEventPerSession[sessionId] = event.id
 
-                // Skip showing completion screen if no running task (user is interacting manually with LLM)
-                if !hasRunningTask(forPaneId: event.paneId) {
-                    resolvedEventIds.insert(event.id)
-                }
+                // Resolve the correct paneId via OTEL mapping (hooks may send wrong paneId)
+                let resolvedPaneId = CostTracker.shared.paneId(forSessionId: sessionId) ?? event.paneId
 
                 // Auto-resolve all pending permission requests for this session
                 for existingEvent in events {
@@ -628,18 +782,65 @@ final class InboxService {
                         resolvedEventIds.insert(existingEvent.id)
                     }
                 }
-                lastPermissionRequestPerSession.removeValue(forKey: event.paneId)
-                permissionRequestTokenSnapshot.removeValue(forKey: event.paneId)
-                permissionRequestTimestamp.removeValue(forKey: event.paneId)
+                // Use sessionId as key (matches the key used in PermissionRequest tracking above)
+                lastPermissionRequestPerSession.removeValue(forKey: sessionId)
+                permissionRequestTokenSnapshot.removeValue(forKey: sessionId)
+                permissionRequestTimestamp.removeValue(forKey: sessionId)
 
-                // Finalize task in CostTracker (use paneId)
-                CostTracker.shared.finalizeTask(forPaneId: event.paneId)
+                // Finalize task in CostTracker (use resolved paneId)
+                CostTracker.shared.finalizeTask(forPaneId: resolvedPaneId)
 
                 // NOTE: We do NOT post .taskCompletedOnTerminal here.
                 // Queue consumption is triggered when the user validates the Stop event
                 // in the inbox via confirmTaskCompletion(forPaneId:).
 
                 pendingStopEvents.append((eventId: event.id, sessionId: sessionId, timestamp: Date()))
+
+                // Parse worktree_commits if present (attached by CLI for review-post-completion)
+                let hasWorktreeKey = json["worktree_commits"] != nil
+                let debugMsg = "[InboxService] Stop event: hasWorktreeKey=\(hasWorktreeKey), eventId=\(event.id), keys=\(Array(json.keys).sorted())"
+                print(debugMsg)
+                // Write to file for debugging (print goes to Xcode console which may not be visible)
+                if let data = (debugMsg + "\n").data(using: .utf8) {
+                    let logPath = FileManager.default.temporaryDirectory.appendingPathComponent("axel-inbox-debug.log")
+                    if let handle = try? FileHandle(forWritingTo: logPath) {
+                        handle.seekToEndOfFile()
+                        handle.write(data)
+                        handle.closeFile()
+                    } else {
+                        try? data.write(to: logPath)
+                    }
+                }
+                if let commitsArray = json["worktree_commits"] as? [[String: Any]] {
+                    let commits = commitsArray.compactMap { commitData -> FileCommit? in
+                        guard let hash = commitData["commit_hash"] as? String,
+                              let filePath = commitData["file_path"] as? String,
+                              let message = commitData["message"] as? String else { return nil }
+                        return FileCommit(
+                            commitHash: hash,
+                            filePath: filePath,
+                            message: message,
+                            toolName: commitData["tool_name"] as? String ?? "",
+                            diff: commitData["diff"] as? String ?? "",
+                            timestamp: Date()
+                        )
+                    }
+                    let parseMsg = "[InboxService] Parsed \(commits.count) worktree commits from Stop event (eventId=\(event.id))"
+                    print(parseMsg)
+                    if let data = (parseMsg + "\n").data(using: .utf8) {
+                        let logPath = FileManager.default.temporaryDirectory.appendingPathComponent("axel-inbox-debug.log")
+                        if let handle = try? FileHandle(forWritingTo: logPath) {
+                            handle.seekToEndOfFile()
+                            handle.write(data)
+                            handle.closeFile()
+                        } else {
+                            try? data.write(to: logPath)
+                        }
+                    }
+                    if !commits.isEmpty {
+                        eventCommits[event.id] = commits
+                    }
+                }
             }
 
             // Send OS notification only for inbox items (permission requests)
@@ -657,7 +858,21 @@ final class InboxService {
     // MARK: - Metrics Update Handling
 
     /// Handle a `metrics_update` event from the CLI.
-    /// The CLI has already parsed the raw OTEL payload into a flat JSON structure.
+    ///
+    /// The CLI receives raw OTEL protobuf from Claude Code's built-in telemetry,
+    /// parses it into a flat JSON structure, and sends it as an SSE event.
+    /// Unlike hook events, the paneId here is **correct** because the CLI extracts it
+    /// from the OTEL endpoint URL path (set via per-process env var).
+    ///
+    /// This method also registers the session→pane mapping in CostTracker,
+    /// which is the source of truth for correcting hook event paneIds.
+    ///
+    /// ## Auto-Resolve Logic
+    /// After receiving metrics, checks if any pending permission requests should be
+    /// auto-resolved. A request is auto-resolved when:
+    /// 1. At least `autoResolveDelaySeconds` (15s) have passed since the request
+    /// 2. At least `autoResolveTokenThreshold` (100) new tokens have been generated
+    /// This indicates Claude has continued working (user approved via CLI/elsewhere).
     private func handleMetricsUpdate(_ json: [String: Any], paneId: String?) {
         guard let eventData = json["event"] as? [String: Any] else {
             print("[InboxService] metrics_update: missing event payload")
@@ -722,12 +937,13 @@ final class InboxService {
         )
 
         // Auto-resolve pending permission requests when significant token activity after delay
-        if let paneId = CostTracker.shared.paneId(forSessionId: metricsId) ?? paneId,
-           let pendingEventId = lastPermissionRequestPerSession[paneId],
+        // Use metricsId (sessionId) as the key to match PermissionRequest tracking
+        let sessionKey = metricsId
+        if let pendingEventId = lastPermissionRequestPerSession[sessionKey],
            !resolvedEventIds.contains(pendingEventId) {
             let currentTokens = metrics.inputTokens + metrics.outputTokens
-            let snapshotTokens = permissionRequestTokenSnapshot[paneId] ?? 0
-            let requestTime = permissionRequestTimestamp[paneId] ?? .distantPast
+            let snapshotTokens = permissionRequestTokenSnapshot[sessionKey] ?? 0
+            let requestTime = permissionRequestTimestamp[sessionKey] ?? .distantPast
             let timeSinceRequest = Date().timeIntervalSince(requestTime)
 
             let hasEnoughTime = timeSinceRequest >= autoResolveDelaySeconds
@@ -735,10 +951,10 @@ final class InboxService {
 
             if hasEnoughTime && hasEnoughTokens {
                 resolvedEventIds.insert(pendingEventId)
-                lastPermissionRequestPerSession.removeValue(forKey: paneId)
-                permissionRequestTokenSnapshot.removeValue(forKey: paneId)
-                permissionRequestTimestamp.removeValue(forKey: paneId)
-                print("[InboxService] Auto-resolved permission request for pane \(paneId.prefix(8))... due to token activity")
+                lastPermissionRequestPerSession.removeValue(forKey: sessionKey)
+                permissionRequestTokenSnapshot.removeValue(forKey: sessionKey)
+                permissionRequestTimestamp.removeValue(forKey: sessionKey)
+                print("[InboxService] Auto-resolved permission request for session \(sessionKey.prefix(8))... due to token activity")
             }
         }
 
@@ -773,11 +989,19 @@ final class InboxService {
         case questionResponse = "question_response"
     }
 
-    /// Send a permission response to the axel server
+    /// Send a permission response to the axel-cli server's `/outbox` endpoint.
+    ///
+    /// The server receives the JSON payload, looks up the correct tmux pane from
+    /// the session→pane OTEL mapping, and injects the response text via `tmux send-keys`.
+    ///
+    /// **Important**: Pass the OTEL-corrected paneId (via `resolvedPaneId(for:)` or
+    /// `CostTracker.shared.paneId(forSessionId:)`), not the raw `event.paneId`.
+    /// The server also performs its own correction using the same OTEL mapping.
+    ///
     /// - Parameters:
-    ///   - sessionId: The Claude session ID
-    ///   - option: The selected permission option
-    ///   - paneId: The terminal pane ID for routing
+    ///   - sessionId: The Claude session ID (unique per Claude process)
+    ///   - option: The selected permission option (contains responseText to type into terminal)
+    ///   - paneId: The terminal pane ID for routing (should be OTEL-corrected)
     func sendPermissionResponse(sessionId: String, option: PermissionOption, paneId: String? = nil) async throws {
         let serverPort = port(for: paneId)
         let outboxURL = URL(string: "http://localhost:\(serverPort)/outbox")!
@@ -1049,4 +1273,28 @@ enum InboxServiceError: LocalizedError {
             return "Failed to connect to server"
         }
     }
+}
+
+/// A file commit tracked during review-post-completion mode
+struct FileCommit: Identifiable {
+    let id = UUID()
+    let commitHash: String
+    let filePath: String
+    let message: String
+    let toolName: String
+    let diff: String
+    let timestamp: Date
+
+    /// Short display name (file basename)
+    var displayName: String {
+        URL(fileURLWithPath: filePath).lastPathComponent
+    }
+}
+
+/// Response from /worktree/complete endpoint
+struct WorktreeCompleteResponse: Codable {
+    let commit_hash: String
+    let files_changed: [String]
+    let insertions: Int
+    let deletions: Int
 }

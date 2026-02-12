@@ -31,6 +31,12 @@ final class Terminal {
     /// nil means the terminal is in the main workspace (no worktree).
     var worktreeBranch: String?
 
+    /// Whether this terminal is running in an isolated worktree.
+    var isIsolated: Bool = false
+
+    /// The parent worktree branch to merge back to (when isIsolated is true).
+    var parentWorktreeBranch: String?
+
     /// AI provider for this terminal session (claude or codex).
     var providerRaw: String = AIProvider.claude.rawValue
 

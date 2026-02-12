@@ -1,6 +1,26 @@
 import Foundation
 
-/// Represents an event received from the axel server's SSE /inbox endpoint
+/// Represents an event received from the axel server's SSE `/inbox` endpoint.
+///
+/// ## JSON Structure (from server)
+/// ```json
+/// {
+///   "timestamp": "2025-01-01T00:00:00Z",
+///   "event_type": "unknown_hook",   // Rust can't parse hook_event_name → falls back
+///   "pane_id": "abc-123-...",        // ⚠️ May be wrong (see below)
+///   "event": { ... }                 // Raw Claude Code hook payload
+/// }
+/// ```
+///
+/// ## Important: `paneId` Reliability
+///
+/// **`paneId` may be wrong** due to shared `.claude/settings.json` hooks. All events
+/// from all Claude instances in a workspace may carry the same (last terminal's) paneId.
+///
+/// Use `InboxService.resolvedPaneId(for:)` or `CostTracker.shared.paneId(forSessionId:)`
+/// to get the correct pane ID for routing, lookups, and response targeting.
+///
+/// The `event.claudeSessionId` is always correct and unique per Claude process.
 struct InboxEvent: Identifiable, Codable, Hashable {
     let id: UUID
 
@@ -13,8 +33,11 @@ struct InboxEvent: Identifiable, Codable, Hashable {
     }
     let timestamp: Date
     let eventType: String
-    /// The pane ID (UUID string) that identifies which terminal this event came from.
-    /// This is extracted from the URL path in the axel server.
+    /// The pane ID (UUID string) from the URL path in the axel server.
+    ///
+    /// **⚠️ WARNING: This may be wrong.** Due to shared `.claude/settings.json` hooks,
+    /// all events from all Claude instances may carry the last terminal's pane ID.
+    /// Use `InboxService.resolvedPaneId(for:)` instead for routing and lookups.
     let paneId: String
     let event: InboxEventPayload
 
@@ -52,11 +75,25 @@ struct InboxEvent: Identifiable, Codable, Hashable {
     }
 }
 
-/// The inner event payload from Claude Code hooks
+/// The inner event payload from Claude Code hooks.
+///
+/// This is the raw JSON body that Claude Code sends to the hook command's stdin.
+/// Key fields:
+/// - `hookEventName`: The hook type ("PermissionRequest", "Stop", "PreToolUse", etc.)
+///   Maps from `"hook_event_name"` in JSON. Note: the Rust server can't parse this
+///   (it expects `"type"` via serde rename), so `event_type` falls back to `"unknown_hook"`.
+/// - `claudeSessionId`: Unique per Claude process. Maps from `"session_id"` in JSON.
+///   **This is always correct** and should be used as the primary key for per-session tracking.
+/// - `toolName`, `toolInput`: Present for tool-related hooks (PermissionRequest, PreToolUse, PostToolUse).
+/// - `permissionRequest`, `permissionSuggestions`: Present for PermissionRequest events.
 struct InboxEventPayload: Codable {
+    /// The hook event type: "PermissionRequest", "Stop", "PreToolUse", "PostToolUse", etc.
     let hookEventName: String?
+    /// Working directory of the Claude Code process
     let cwd: String?
     let permissionMode: String?
+    /// Claude session ID — unique per Claude Code process, always correct.
+    /// Use this (not `paneId`) as the primary key for per-session tracking.
     let claudeSessionId: String?
     let transcriptPath: String?
 
