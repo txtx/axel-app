@@ -62,6 +62,10 @@ final class InboxService {
     /// Keyed by event ID to avoid paneId mismatch issues.
     private(set) var eventCommits: [UUID: [FileCommit]] = [:]
 
+    /// Versioning info extracted from the agent's transcript (attached to Stop events).
+    /// Keyed by event ID. Contains (commitMessage, commitDescription).
+    private(set) var eventVersioning: [UUID: (message: String, description: String)] = [:]
+
     /// Last snapshot values per session (for computing deltas)
     private var lastSnapshotValues: [String: MetricsSnapshot] = [:]
 
@@ -420,10 +424,15 @@ final class InboxService {
 
     /// Complete an isolated worktree by squash-merging commits to the parent worktree.
     /// Calls the /worktree/complete endpoint on the terminal's server.
+    ///
+    /// - Parameter keepWorktree: If true, the worktree is reset to the parent's HEAD
+    ///   instead of being removed. This keeps the directory alive so the same Claude
+    ///   session can continue working for chained tasks.
     func completeWorktree(
         forPaneId paneId: String,
         commitMessage: String,
-        commitDescription: String
+        commitDescription: String,
+        keepWorktree: Bool = false
     ) async throws -> WorktreeCompleteResponse {
         guard let port = panePortMapping[paneId] else {
             throw InboxServiceError.connectionFailed
@@ -434,9 +443,10 @@ final class InboxService {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
 
-        let body: [String: String] = [
+        let body: [String: Any] = [
             "commit_message": commitMessage,
             "commit_description": commitDescription,
+            "keep_worktree": keepWorktree,
         ]
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
 
@@ -797,20 +807,6 @@ final class InboxService {
                 pendingStopEvents.append((eventId: event.id, sessionId: sessionId, timestamp: Date()))
 
                 // Parse worktree_commits if present (attached by CLI for review-post-completion)
-                let hasWorktreeKey = json["worktree_commits"] != nil
-                let debugMsg = "[InboxService] Stop event: hasWorktreeKey=\(hasWorktreeKey), eventId=\(event.id), keys=\(Array(json.keys).sorted())"
-                print(debugMsg)
-                // Write to file for debugging (print goes to Xcode console which may not be visible)
-                if let data = (debugMsg + "\n").data(using: .utf8) {
-                    let logPath = FileManager.default.temporaryDirectory.appendingPathComponent("axel-inbox-debug.log")
-                    if let handle = try? FileHandle(forWritingTo: logPath) {
-                        handle.seekToEndOfFile()
-                        handle.write(data)
-                        handle.closeFile()
-                    } else {
-                        try? data.write(to: logPath)
-                    }
-                }
                 if let commitsArray = json["worktree_commits"] as? [[String: Any]] {
                     let commits = commitsArray.compactMap { commitData -> FileCommit? in
                         guard let hash = commitData["commit_hash"] as? String,
@@ -825,21 +821,17 @@ final class InboxService {
                             timestamp: Date()
                         )
                     }
-                    let parseMsg = "[InboxService] Parsed \(commits.count) worktree commits from Stop event (eventId=\(event.id))"
-                    print(parseMsg)
-                    if let data = (parseMsg + "\n").data(using: .utf8) {
-                        let logPath = FileManager.default.temporaryDirectory.appendingPathComponent("axel-inbox-debug.log")
-                        if let handle = try? FileHandle(forWritingTo: logPath) {
-                            handle.seekToEndOfFile()
-                            handle.write(data)
-                            handle.closeFile()
-                        } else {
-                            try? data.write(to: logPath)
-                        }
-                    }
+                    print("[InboxService] Parsed \(commits.count) worktree commits from Stop event")
                     if !commits.isEmpty {
                         eventCommits[event.id] = commits
                     }
+                }
+
+                // Parse versioning info if present (extracted from agent's transcript by CLI)
+                if let versioningMessage = json["versioning_message"] as? String, !versioningMessage.isEmpty {
+                    let versioningDescription = json["versioning_description"] as? String ?? ""
+                    eventVersioning[event.id] = (message: versioningMessage, description: versioningDescription)
+                    print("[InboxService] Parsed versioning: \(versioningMessage)")
                 }
             }
 

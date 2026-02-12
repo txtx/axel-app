@@ -40,6 +40,7 @@ struct WorkspaceContentView: View {
     @State private var closeTargetSession: TerminalSession?
     @State private var closeKillTmuxSession = false
     @State private var showTerminalInspector = false
+    @State private var replayBootAnimation = false
     @State private var agentPickerMode: AgentPickerMode?
     @State private var floatingSession: TerminalSession?
     @State private var skillsColumnWidth: CGFloat = 280
@@ -316,7 +317,7 @@ struct WorkspaceContentView: View {
             return
         }
 
-        // Run the task
+        // Run the task on the same session (preserves Claude's conversation context)
         runTaskOnWorker(task, worker: session)
     }
 
@@ -638,7 +639,7 @@ struct WorkspaceContentView: View {
     @ToolbarContentBuilder
     private var toolbarContent: some ToolbarContent {
         ToolbarItem(placement: .principal) {
-            OrbView(workspace: workspace, showTerminal: $showTerminal)
+            OrbView(workspace: workspace, showTerminal: $showTerminal, replayBoot: $replayBootAnimation)
         }
 
 //        ToolbarItemGroup(placement: .primaryAction) {
@@ -740,6 +741,13 @@ struct WorkspaceContentView: View {
                 onCreateWorktreeTerminal: { task, branch, provider, gridName in createNewTerminal(for: task, worktreeBranch: branch, provider: provider, gridName: gridName, isolate: true, reviewPostCompletion: true) }
             ))
             .overlay(alignment: .bottomTrailing) { floatingTerminalOverlay }
+            .background(
+                Button("") {
+                    replayBootAnimation.toggle()
+                }
+                .keyboardShortcut("l", modifiers: .command)
+                .hidden()
+            )
             .modifier(WorkspaceLifecycleModifier(
                 workspace: workspace,
                 selectedTask: $selectedTask,
@@ -1121,6 +1129,7 @@ struct OrbView: View {
 
     let workspace: Workspace
     @Binding var showTerminal: Bool
+    @Binding var replayBoot: Bool
     @Environment(\.colorScheme) private var colorScheme
     @State private var costTracker = CostTracker.shared
     @State private var shouldPlayBoot = false
@@ -1156,11 +1165,20 @@ struct OrbView: View {
             if !Self.hasPlayedBootAnimation {
                 Self.hasPlayedBootAnimation = true
                 shouldPlayBoot = true
-                // Reset after animation completes to prevent replays
-                // if SwiftUI preserves @State across view recreations
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
                     shouldPlayBoot = false
                 }
+            }
+        }
+        .onChange(of: replayBoot) {
+            guard replayBoot else { return }
+            shouldPlayBoot = false
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                shouldPlayBoot = true
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3.5) {
+                shouldPlayBoot = false
+                replayBoot = false
             }
         }
     }

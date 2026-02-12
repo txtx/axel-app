@@ -226,6 +226,12 @@ private struct InboxEventCardView: View {
     @State private var permissionEvents: [InboxEvent] = []
     @State private var nextQueuedTasks: [WorkTask] = []
     @State private var taskSegments: [TaskSegment] = []
+    @State private var isIsolatedTerminal: Bool = false
+    @State private var commitMessage: String = ""
+    @State private var commitDescription: String = ""
+    @State private var isCompletingWorktree: Bool = false
+    @State private var worktreeCompleteError: String?
+    @State private var expandedCommits: Set<UUID> = []
 
     private var metricsSnapshot: MetricsSnapshot? {
         inboxService.eventMetricsSnapshots[event.id]
@@ -241,6 +247,15 @@ private struct InboxEventCardView: View {
 
     private var isResolved: Bool {
         inboxService.isResolved(event.id)
+    }
+
+    /// Commits for the current event (from worktree_commits in Stop payload, or paneId fallback)
+    private var commitsForEvent: [FileCommit] {
+        let eventLevel = inboxService.eventCommits[event.id] ?? []
+        let resolvedPaneId = inboxService.resolvedPaneId(for: event)
+        let paneLevel = inboxService.committedFiles[resolvedPaneId] ?? []
+        if !eventLevel.isEmpty { return eventLevel }
+        return paneLevel
     }
 
     var body: some View {
@@ -292,27 +307,59 @@ private struct InboxEventCardView: View {
                 inlinePermissionButtons
             }
 
+            // Commit review section for isolated worktrees
+            if isCompletionEvent && !isResolved && !commitsForEvent.isEmpty {
+                Divider()
+                commitReviewSection
+            }
+
             // Completion confirm button
             if isCompletionEvent && !isResolved {
+                if let error = worktreeCompleteError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.red)
+                        Text(error)
+                            .font(.caption)
+                            .foregroundStyle(.red)
+                    }
+                }
+
                 HStack {
                     Spacer()
-                    Button {
-                        inboxService.resolveEvent(event.id)
-                        if let task = currentTask {
-                            task.updateStatus(.completed)
-                            try? modelContext.save()
+                    if isIsolatedTerminal {
+                        Button {
+                            completeIsolatedWorktree()
+                        } label: {
+                            if isCompletingWorktree {
+                                ProgressView()
+                                    .controlSize(.small)
+                                    .padding(.trailing, 4)
+                                Text("Merging...")
+                            } else {
+                                Label(
+                                    nextQueuedTasks.isEmpty ? "Complete & Merge" : "Merge and Continue",
+                                    systemImage: "arrow.triangle.merge"
+                                )
+                            }
                         }
-                        let resolvedPane = inboxService.resolvedPaneId(for: event)
-                        inboxService.confirmTaskCompletion(forPaneId: resolvedPane)
-                    } label: {
-                        Label(
-                            nextQueuedTasks.isEmpty ? "Mark Completed" : "Complete and Continue",
-                            systemImage: nextQueuedTasks.isEmpty ? "checkmark.circle.fill" : "arrow.right.circle.fill"
-                        )
+                        .buttonStyle(.borderedProminent)
+                        .tint(.purple)
+                        .controlSize(.large)
+                        .disabled(isCompletingWorktree || commitMessage.isEmpty)
+                    } else {
+                        Button {
+                            markCompleted()
+                        } label: {
+                            Label(
+                                nextQueuedTasks.isEmpty ? "Mark Completed" : "Complete and Continue",
+                                systemImage: nextQueuedTasks.isEmpty ? "checkmark.circle.fill" : "arrow.right.circle.fill"
+                            )
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .tint(nextQueuedTasks.isEmpty ? .green : .blue)
+                        .controlSize(.large)
                     }
-                    .buttonStyle(.borderedProminent)
-                    .tint(nextQueuedTasks.isEmpty ? .green : .blue)
-                    .controlSize(.large)
                 }
             }
         }
@@ -700,6 +747,146 @@ private struct InboxEventCardView: View {
         }
     }
 
+    // MARK: - Commit Review Section
+
+    @ViewBuilder
+    private var commitReviewSection: some View {
+        let commits = commitsForEvent
+
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Image(systemName: "arrow.triangle.merge")
+                    .foregroundStyle(.purple)
+                Text("Changes")
+                    .font(.headline)
+                Spacer()
+                Text("\(commits.count) file\(commits.count == 1 ? "" : "s") changed")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            if !commits.isEmpty {
+                VStack(alignment: .leading, spacing: 0) {
+                    ForEach(commits) { commit in
+                        VStack(alignment: .leading, spacing: 0) {
+                            Button {
+                                withAnimation(.easeInOut(duration: 0.2)) {
+                                    if expandedCommits.contains(commit.id) {
+                                        expandedCommits.remove(commit.id)
+                                    } else {
+                                        expandedCommits.insert(commit.id)
+                                    }
+                                }
+                            } label: {
+                                HStack(spacing: 8) {
+                                    Image(systemName: expandedCommits.contains(commit.id) ? "chevron.down" : "chevron.right")
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 12)
+                                        .font(.caption2)
+
+                                    Image(systemName: commit.toolName == "Write" ? "plus.circle.fill" : "pencil.circle.fill")
+                                        .foregroundStyle(commit.toolName == "Write" ? .green : .orange)
+                                        .frame(width: 16)
+
+                                    Text(commit.displayName)
+                                        .font(.system(.subheadline, design: .monospaced))
+                                        .lineLimit(1)
+
+                                    Spacer()
+
+                                    Text(commit.commitHash)
+                                        .font(.system(.caption2, design: .monospaced))
+                                        .foregroundStyle(.tertiary)
+                                }
+                                .padding(.vertical, 6)
+                                .padding(.horizontal, 8)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+
+                            if expandedCommits.contains(commit.id) && !commit.diff.isEmpty {
+                                RawDiffView(diff: commit.diff)
+                                    .padding(.horizontal, 8)
+                                    .padding(.bottom, 8)
+                            }
+
+                            if commit.id != commits.last?.id {
+                                Divider()
+                            }
+                        }
+                    }
+                }
+                .background(Color.primary.opacity(0.03))
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(Color.primary.opacity(0.06), lineWidth: 1)
+                )
+            }
+
+            // Editable commit message
+            VStack(alignment: .leading, spacing: 6) {
+                Text("Commit Message")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+
+                TextField("feat: add new feature", text: $commitMessage)
+                    .textFieldStyle(.roundedBorder)
+                    .font(.system(.body, design: .monospaced))
+
+                TextField("Detailed description (optional)", text: $commitDescription, axis: .vertical)
+                    .textFieldStyle(.roundedBorder)
+                    .lineLimit(2...4)
+                    .font(.system(.caption, design: .monospaced))
+            }
+        }
+    }
+
+    // MARK: - Completion Actions
+
+    private func markCompleted() {
+        inboxService.resolveEvent(event.id)
+        if let task = currentTask {
+            task.updateStatus(.completed)
+            try? modelContext.save()
+        }
+        let resolvedPane = inboxService.resolvedPaneId(for: event)
+        inboxService.confirmTaskCompletion(forPaneId: resolvedPane)
+    }
+
+    private func completeIsolatedWorktree() {
+        isCompletingWorktree = true
+        worktreeCompleteError = nil
+        let resolvedPane = inboxService.resolvedPaneId(for: event)
+        let hasMoreTasks = !nextQueuedTasks.isEmpty
+
+        Task {
+            do {
+                let _ = try await inboxService.completeWorktree(
+                    forPaneId: resolvedPane,
+                    commitMessage: commitMessage,
+                    commitDescription: commitDescription,
+                    keepWorktree: hasMoreTasks
+                )
+
+                await MainActor.run {
+                    isCompletingWorktree = false
+                    inboxService.resolveEvent(event.id)
+                    if let task = currentTask {
+                        task.updateStatus(.completed)
+                        try? modelContext.save()
+                    }
+                    inboxService.confirmTaskCompletion(forPaneId: resolvedPane)
+                }
+            } catch {
+                await MainActor.run {
+                    isCompletingWorktree = false
+                    worktreeCompleteError = error.localizedDescription
+                }
+            }
+        }
+    }
+
     // MARK: - Helpers
 
     private var headerIcon: String {
@@ -796,19 +983,19 @@ private struct InboxEventCardView: View {
         if let terminal = try? modelContext.fetch(terminalDescriptor).first {
             currentTask = terminal.task
             taskTitle = terminal.task?.title
+            isIsolatedTerminal = terminal.isIsolated
 
-            guard isCompletionEvent else { return }
-
-            let terminalId = terminal.id
-            let taskId = terminal.task?.id
-            let hintDescriptor = FetchDescriptor<Hint>(
-                sortBy: [SortDescriptor(\Hint.createdAt, order: .reverse)]
-            )
-            if let allHints = try? modelContext.fetch(hintDescriptor) {
-                _ = allHints.filter { hint in
-                    hint.terminal?.id == terminalId || (taskId != nil && hint.task?.id == taskId)
+            // Pre-fill commit message from versioning (extracted from agent's transcript) or task title
+            if terminal.isIsolated && commitMessage.isEmpty {
+                if let versioning = inboxService.eventVersioning[event.id] {
+                    commitMessage = versioning.message
+                    commitDescription = versioning.description
+                } else {
+                    commitMessage = terminal.task?.title ?? "chore: task changes"
                 }
             }
+
+            guard isCompletionEvent else { return }
         }
 
         guard isCompletionEvent else { return }
