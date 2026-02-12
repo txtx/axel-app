@@ -1611,6 +1611,8 @@ struct WorkspaceCreateTaskView: View {
             Spacer()
 
             HStack(spacing: 16) {
+                Spacer()
+
                 Button {
                     createTask()
                 } label: {
@@ -1640,6 +1642,7 @@ struct WorkspaceCreateTaskView: View {
                 .keyboardShortcut(.return, modifiers: .command)
             }
             .padding(16)
+            .frame(maxWidth: .infinity)
             .background(.bar)
         }
         .frame(width: 480, height: 180)
