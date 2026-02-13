@@ -126,7 +126,7 @@ final class TaskMetrics {
 }
 
 /// A point-in-time snapshot of metrics (for completion events)
-struct MetricsSnapshot {
+struct MetricsSnapshot: Codable {
     let inputTokens: Int
     let outputTokens: Int
     let cacheReadTokens: Int

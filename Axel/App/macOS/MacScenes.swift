@@ -48,7 +48,7 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
 
     // MARK: - UNUserNotificationCenterDelegate
 
-    /// Handle notification action responses (Approve/Reject buttons)
+    /// Handle notification action responses (Approve/Reject buttons and default tap)
     func userNotificationCenter(
         _ center: UNUserNotificationCenter,
         didReceive response: UNNotificationResponse,
@@ -66,6 +66,20 @@ class AppDelegate: NSObject, NSApplicationDelegate, UNUserNotificationCenterDele
                 InboxService.shared.handleNotificationAction(
                     actionIdentifier: actionIdentifier,
                     userInfo: userInfo
+                )
+            }
+        }
+
+        // Navigate to workspace inbox when user taps the notification body (not approve/reject buttons)
+        if actionIdentifier == UNNotificationDefaultActionIdentifier,
+           let workspaceIdString = userInfo["workspaceId"] as? String,
+           let workspaceId = UUID(uuidString: workspaceIdString) {
+            Task { @MainActor in
+                NSApp.activate(ignoringOtherApps: true)
+                NotificationCenter.default.post(
+                    name: .navigateToWorkspaceInbox,
+                    object: nil,
+                    userInfo: ["workspaceId": workspaceId]
                 )
             }
         }
@@ -177,6 +191,9 @@ extension Notification.Name {
     /// Posted when a task's status changes from running - used to trigger session cleanup
     /// userInfo: ["taskId": UUID]
     static let taskNoLongerRunning = Notification.Name("taskNoLongerRunning")
+    /// Posted when user taps a macOS notification to navigate to a workspace's inbox
+    /// userInfo: ["workspaceId": UUID]
+    static let navigateToWorkspaceInbox = Notification.Name("navigateToWorkspaceInbox")
     
     // MARK: - Scripting Notifications (moved from ScriptingSupport.swift)
     /// Posted when AppleScript requests starting a new agent

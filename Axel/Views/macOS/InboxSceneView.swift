@@ -23,6 +23,7 @@ struct InboxSceneView: View {
     @State private var selectedPickerIndex = 0
     @Environment(\.terminalSessionManager) private var sessionManager
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.colorScheme) private var colorScheme
 
     /// All relevant pending events (permission requests and completions)
     private var allEvents: [InboxEvent] {
@@ -108,7 +109,7 @@ struct InboxSceneView: View {
                 }
             }
         }
-        .background(.background)
+        .background(colorScheme == .dark ? Color(hex: "292F30")! : Color.white)
         .focusable()
         .focusEffectDisabled()
         .onKeyPress(.leftArrow) {

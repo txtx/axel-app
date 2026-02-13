@@ -139,6 +139,7 @@ final class InboxService {
         decoder.dateDecodingStrategy = .iso8601
         requestNotificationPermissions()
         registerNotificationCategories()
+        loadPersistedStopEvents()
     }
 
     // MARK: - Notifications
@@ -223,6 +224,11 @@ final class InboxService {
             userInfo["sessionId"] = sessionId
         }
 
+        // Include workspaceId for deeplink navigation when notification is tapped
+        if let workspaceId = getWorkspaceId(forPaneId: resolvedPaneId(for: event)) {
+            userInfo["workspaceId"] = workspaceId.uuidString
+        }
+
         content.userInfo = userInfo
 
         let request = UNNotificationRequest(
@@ -239,6 +245,25 @@ final class InboxService {
                 print("[InboxService] Failed to send notification: \(error)")
             }
         }
+    }
+
+    /// Get the workspace ID for a given paneId by querying the Terminal → Workspace relationship
+    private func getWorkspaceId(forPaneId paneId: String) -> UUID? {
+        guard let context = modelContext else { return nil }
+
+        do {
+            let descriptor = FetchDescriptor<Terminal>(
+                predicate: #Predicate { $0.paneId == paneId }
+            )
+            if let terminal = try context.fetch(descriptor).first,
+               let workspace = terminal.workspace {
+                return workspace.id
+            }
+        } catch {
+            print("[InboxService] Failed to fetch workspace ID: \(error)")
+        }
+
+        return nil
     }
 
     /// Get the task title for a given paneId by querying the Terminal
@@ -396,11 +421,13 @@ final class InboxService {
         lastPermissionRequestPerSession.removeAll()
         permissionRequestTokenSnapshot.removeAll()
         permissionRequestTimestamp.removeAll()
+        saveStopEventsToDisk()
     }
 
     /// Mark an event as resolved (confirmed by user)
     func resolveEvent(_ eventId: UUID) {
         resolvedEventIds.insert(eventId)
+        saveStopEventsToDisk()
     }
 
     /// Check if an event is resolved
@@ -527,6 +554,7 @@ final class InboxService {
                 permissionRequestTimestamp.removeValue(forKey: sessionId)
             }
         }
+        saveStopEventsToDisk()
         print("[InboxService] Cleared all events for pane \(paneId.prefix(8))...")
     }
 
@@ -835,8 +863,15 @@ final class InboxService {
                 }
             }
 
-            // Send OS notification for all inbox events
-            sendNotification(for: event)
+            // Only send OS notifications for permission requests and task completions
+            if event.event.hookEventName == "PermissionRequest" || event.event.hookEventName == "Stop" {
+                sendNotification(for: event)
+            }
+
+            // Persist unresolved Stop events to disk so they survive app restart
+            if event.event.hookEventName == "Stop" {
+                saveStopEventsToDisk()
+            }
 
             print("[InboxService] Received event: \(event.title)")
         } catch {
@@ -969,6 +1004,9 @@ final class InboxService {
         }
 
         pendingStopEvents.removeAll()
+
+        // Re-save now that metrics snapshots are available
+        saveStopEventsToDisk()
     }
 
     // MARK: - Outbox (Sending Responses)
@@ -1246,6 +1284,94 @@ extension InboxService {
     }
 }
 
+// MARK: - Stop Event Persistence
+
+/// Bundled data for a persisted Stop event
+private struct PersistedStopEvent: Codable {
+    let event: InboxEvent
+    let metricsSnapshot: MetricsSnapshot?
+    let commits: [FileCommit]?
+    let versioningMessage: String?
+    let versioningDescription: String?
+}
+
+extension InboxService {
+    /// File URL for persisted stop events
+    private static var stopEventsFileURL: URL {
+        let appSupport = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first!
+        let dir = appSupport.appendingPathComponent("Axel", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir.appendingPathComponent("pending_stop_events.json")
+    }
+
+    /// Load persisted Stop events from disk on startup
+    func loadPersistedStopEvents() {
+        let fileURL = Self.stopEventsFileURL
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+
+        do {
+            let data = try Data(contentsOf: fileURL)
+            let decoder = JSONDecoder()
+            decoder.dateDecodingStrategy = .iso8601
+            let persisted = try decoder.decode([PersistedStopEvent].self, from: data)
+
+            for item in persisted {
+                // Skip if already present (shouldn't happen, but be safe)
+                guard !events.contains(where: { $0.id == item.event.id }) else { continue }
+
+                events.append(item.event)
+
+                if let snapshot = item.metricsSnapshot {
+                    eventMetricsSnapshots[item.event.id] = snapshot
+                }
+                if let commits = item.commits, !commits.isEmpty {
+                    eventCommits[item.event.id] = commits
+                }
+                if let msg = item.versioningMessage, !msg.isEmpty {
+                    eventVersioning[item.event.id] = (
+                        message: msg,
+                        description: item.versioningDescription ?? ""
+                    )
+                }
+            }
+
+            // Sort newest first (events loaded from disk may be older)
+            events.sort { $0.timestamp > $1.timestamp }
+
+            print("[InboxService] Loaded \(persisted.count) persisted Stop events from disk")
+        } catch {
+            print("[InboxService] Failed to load persisted Stop events: \(error)")
+        }
+    }
+
+    /// Persist all unresolved Stop events to disk
+    func saveStopEventsToDisk() {
+        let unresolvedStops = events.filter { event in
+            event.event.hookEventName == "Stop" && !resolvedEventIds.contains(event.id)
+        }
+
+        let persisted = unresolvedStops.map { event in
+            PersistedStopEvent(
+                event: event,
+                metricsSnapshot: eventMetricsSnapshots[event.id],
+                commits: eventCommits[event.id],
+                versioningMessage: eventVersioning[event.id]?.message,
+                versioningDescription: eventVersioning[event.id]?.description
+            )
+        }
+
+        do {
+            let encoder = JSONEncoder()
+            encoder.dateEncodingStrategy = .iso8601
+            let data = try encoder.encode(persisted)
+            try data.write(to: Self.stopEventsFileURL, options: .atomic)
+            print("[InboxService] Persisted \(persisted.count) Stop events to disk")
+        } catch {
+            print("[InboxService] Failed to persist Stop events: \(error)")
+        }
+    }
+}
+
 // MARK: - Errors
 
 enum InboxServiceError: LocalizedError {
@@ -1266,7 +1392,7 @@ enum InboxServiceError: LocalizedError {
 }
 
 /// A file commit tracked during review-post-completion mode
-struct FileCommit: Identifiable {
+struct FileCommit: Identifiable, Codable {
     let id = UUID()
     let commitHash: String
     let filePath: String

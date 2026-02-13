@@ -384,9 +384,6 @@ struct WorkspaceContentView: View {
             command += " --review-post-completion"
         }
 
-        // Always enable verbose logging for debugging
-        command += " --verbose"
-
         if let task = task {
             var prompt = task.title
             if let description = task.taskDescription, !description.isEmpty {
@@ -1049,6 +1046,17 @@ private struct WorkspaceNotificationModifier: ViewModifier {
             }
             .onReceive(NotificationCenter.default.publisher(for: .showInbox)) { _ in
                 sidebarSelection = .inbox(.pending)
+            }
+            .onReceive(NotificationCenter.default.publisher(for: .navigateToWorkspaceInbox)) { notification in
+                // Deeplink from macOS notification tap — only respond if this is the target workspace
+                guard let userInfo = notification.userInfo,
+                      let targetWorkspaceId = userInfo["workspaceId"] as? UUID,
+                      targetWorkspaceId == workspace.id else { return }
+                sidebarSelection = .inbox(.pending)
+                // Bring this workspace window to the front
+                if let window = NSApp.windows.first(where: { $0.isVisible && $0.title.contains(workspace.name) }) {
+                    window.makeKeyAndOrderFront(nil)
+                }
             }
             .onReceive(NotificationCenter.default.publisher(for: .showSkills)) { _ in
                 sidebarSelection = .optimizations(.skills)

@@ -85,11 +85,11 @@
 		A1000001201A0110 /* EmptyStateView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0110 /* EmptyStateView.swift */; };
 		A1000001201A0111 /* TaskUndoManager.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0111 /* TaskUndoManager.swift */; };
 		A1000001201A0112 /* TasksSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0112 /* TasksSceneView.swift */; };
-		A1000001201A0117 /* InboxSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0117 /* InboxSceneView.swift */; };
 		A1000001201A0113 /* AIProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0113 /* AIProvider.swift */; };
 		A1000001201A0114 /* TasksSceneViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0114 /* TasksSceneViewModel.swift */; };
 		A1000001201A0115 /* TasksSceneViewModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0115 /* TasksSceneViewModelTests.swift */; };
 		A1000001201A0116 /* AIProviderUI.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0116 /* AIProviderUI.swift */; };
+		A1000001201A0117 /* InboxSceneView.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0117 /* InboxSceneView.swift */; };
 		A1000001201A0200 /* TaskQueueService.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0200 /* TaskQueueService.swift */; };
 		A1000001201A0ABC /* TerminalCloseConfirmationSheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = A1000001101A0ABC /* TerminalCloseConfirmationSheet.swift */; };
 		A100000120A10030 /* TaskAssignee.swift in Sources */ = {isa = PBXBuildFile; fileRef = A100000110A10030 /* TaskAssignee.swift */; };
@@ -140,6 +140,7 @@
 		04E9C8657F1187F40A1EC1DB /* AutomergeModelTests.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AutomergeModelTests.swift; sourceTree = "<group>"; };
 		0718CEBFCE1BBD5BFDA68441 /* LayoutService.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = LayoutService.swift; sourceTree = "<group>"; };
 		23797E4E4415996BCCFE8E45 /* Cocoa.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Cocoa.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.sdk/System/Library/Frameworks/Cocoa.framework; sourceTree = DEVELOPER_DIR; };
+		34D7BABA1A73CC084A8AF4AA /* TimelinePanelView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TimelinePanelView.swift; sourceTree = "<group>"; };
 		4312E5CD2F3668720093897C /* IOSContentView_Simple.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSContentView_Simple.swift; sourceTree = "<group>"; };
 		4312E5CF2F36695D0093897C /* IOSContentView_Clean.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSContentView_Clean.swift; sourceTree = "<group>"; };
 		4312E5D12F3669DB0093897C /* IOSContentView_Fixed.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IOSContentView_Fixed.swift; sourceTree = "<group>"; };
@@ -151,7 +152,6 @@
 		61605B448288B219FBB6F529 /* AgentsListView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentsListView.swift; sourceTree = "<group>"; };
 		6238124A78A2C3A74FCFEDBB /* WorktreeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorktreeService.swift; sourceTree = "<group>"; };
 		6313768DC4AC4264A7D8D87B /* AgentsSceneView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentsSceneView.swift; sourceTree = "<group>"; };
-		34D7BABA1A73CC084A8AF4AA /* TimelinePanelView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = TimelinePanelView.swift; sourceTree = "<group>"; };
 		86858D2EBCB04868D3E1B813 /* RecoveredSessionsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = RecoveredSessionsView.swift; sourceTree = "<group>"; };
 		95700AD843F5BBA9BA003E57 /* AgentPickerPanel.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AgentPickerPanel.swift; sourceTree = "<group>"; };
 		9C177CAE09A36E267719D856 /* SessionStatusService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SessionStatusService.swift; sourceTree = "<group>"; };
@@ -218,11 +218,11 @@
 		A1000001101A0110 /* EmptyStateView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EmptyStateView.swift; sourceTree = "<group>"; };
 		A1000001101A0111 /* TaskUndoManager.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskUndoManager.swift; sourceTree = "<group>"; };
 		A1000001101A0112 /* TasksSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksSceneView.swift; sourceTree = "<group>"; };
-		A1000001101A0117 /* InboxSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxSceneView.swift; sourceTree = "<group>"; };
 		A1000001101A0113 /* AIProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProvider.swift; sourceTree = "<group>"; };
 		A1000001101A0114 /* TasksSceneViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksSceneViewModel.swift; sourceTree = "<group>"; };
 		A1000001101A0115 /* TasksSceneViewModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TasksSceneViewModelTests.swift; sourceTree = "<group>"; };
 		A1000001101A0116 /* AIProviderUI.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AIProviderUI.swift; sourceTree = "<group>"; };
+		A1000001101A0117 /* InboxSceneView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxSceneView.swift; sourceTree = "<group>"; };
 		A1000001101A0200 /* TaskQueueService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskQueueService.swift; sourceTree = "<group>"; };
 		A1000001101A0ABC /* TerminalCloseConfirmationSheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalCloseConfirmationSheet.swift; sourceTree = "<group>"; };
 		A100000110A10030 /* TaskAssignee.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TaskAssignee.swift; sourceTree = "<group>"; };
@@ -239,17 +239,7 @@
 /* End PBXFileReference section */
 
 /* Begin PBXFileSystemSynchronizedRootGroup section */
-		43E774732F298D900093DEC6 /* AxelUITests */ = {
-			isa = PBXFileSystemSynchronizedRootGroup;
-			exceptions = (
-			);
-			explicitFileTypes = {
-			};
-			explicitFolders = (
-			);
-			path = AxelUITests;
-			sourceTree = "<group>";
-		};
+		43E774732F298D900093DEC6 /* AxelUITests */ = {isa = PBXFileSystemSynchronizedRootGroup; explicitFileTypes = {}; explicitFolders = (); path = AxelUITests; sourceTree = "<group>"; };
 /* End PBXFileSystemSynchronizedRootGroup section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -639,9 +629,9 @@
 			);
 			mainGroup = A1000001401A0001;
 			packageReferences = (
-				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */,
+				43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */,
 				43BD82702F1D5F650092A96C /* XCRemoteSwiftPackageReference "supabase-swift" */,
-				43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "GhosttyKit" */,
+				43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */,
 				43BD827E2F1D70000092A96C /* XCRemoteSwiftPackageReference "Sparkle" */,
 			);
 			productRefGroup = A1000001401A0003 /* Products */;
@@ -816,7 +806,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.15;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -838,7 +828,7 @@
 				DEVELOPMENT_TEAM = 8ZJ55A62XN;
 				GENERATE_INFOPLIST_FILE = YES;
 				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
-				MARKETING_VERSION = 0.1.15;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = md.axel.AxelUITests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SDKROOT = iphoneos;
@@ -868,7 +858,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.15;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -894,7 +884,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.15;
+				MARKETING_VERSION = 0.2.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.axel.AxelTests;
 				PRODUCT_MODULE_NAME = AxelTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -1068,7 +1058,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.15;
+				MARKETING_VERSION = 0.2.0;
 				"OTHER_LDFLAGS[sdk=macosx*]" = (
 					"-lc++",
 					"-framework",
@@ -1128,7 +1118,7 @@
 					"@executable_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 15.6;
-				MARKETING_VERSION = 0.1.15;
+				MARKETING_VERSION = 0.2.0;
 				"OTHER_LDFLAGS[sdk=macosx*]" = (
 					"-lc++",
 					"-framework",
@@ -1189,11 +1179,11 @@
 /* End XCConfigurationList section */
 
 /* Begin XCLocalSwiftPackageReference section */
-		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */ = {
+		43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/AutomergeWrapper;
 		};
-		43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "GhosttyKit" */ = {
+		43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */ = {
 			isa = XCLocalSwiftPackageReference;
 			relativePath = Packages/GhosttyKit;
 		};
@@ -1226,7 +1216,7 @@
 		};
 		43BD82742F1D63F40092A96C /* AutomergeWrapper */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "AutomergeWrapper" */;
+			package = 43BD82762F1D5F650092A96C /* XCLocalSwiftPackageReference "Packages/AutomergeWrapper" */;
 			productName = AutomergeWrapper;
 		};
 		43BD827F2F1D70000092A96C /* Sparkle */ = {
@@ -1236,7 +1226,7 @@
 		};
 		43BD82822F1D90000092A96C /* GhosttyKit */ = {
 			isa = XCSwiftPackageProductDependency;
-			package = 43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "GhosttyKit" */;
+			package = 43BD82812F1D90000092A96C /* XCLocalSwiftPackageReference "Packages/GhosttyKit" */;
 			productName = GhosttyKit;
 		};
 /* End XCSwiftPackageProductDependency section */
